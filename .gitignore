@@ -1,0 +1,38 @@
+# === Maven 构建产物(不入库)===
+target/
+tmp_jar/
+
+# === Maven Wrapper 临时 ===
+.mvn/wrapper/MavenWrapperDownloader.java.bak
+
+# === IDE ===
+.idea/
+*.iml
+.vscode/
+*.ipr
+*.iws
+.eclipse/
+.classpath
+.project
+.settings/
+nbproject/
+
+# === 操作系统 ===
+.DS_Store
+Thumbs.db
+
+# === 日志与临时 ===
+*.log
+*.tmp
+*.bak
+*.swp
+*~
+
+# === 敏感配置(遵循 AGENTS.md §0.2/§7.3,凭据走 .env 不入库)===
+.env
+.env.*
+!.env.example
+
+# === 一次性验证脚本与临时数据(AGENTS.md §6.1 任务结束清理)===
+scratch/
+demo-output/

@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JIAN · 需求与接口说明书</title>
+<!--
+  ┌─ What : JIAN 项目说明文档(单文件自包含 HTML)
+  │  Why  : 7 个分册 + 200+ 方法分散在 md 中,翻阅/检索困难;需要一份可视化门户
+  │  Who  : 面向需求方、实现者、日后使用者
+  │  When : 2026-08-01 创建;随需求迭代与代码实现持续更新
+  │  Where: jian/doc/index.html
+  │  How  : 数据驱动渲染 —— MODULES/API_GROUPS 为数据,render() 模板化输出
+  │         日后新增函数接口,只需往 API_GROUPS 数组里加一项,无需改 HTML 结构
+  -->
+<style>
+/* ============== 设计令牌(主题变量) ============== */
+:root{
+  --bg:#ffffff; --bg-soft:#f6f8fa; --bg-card:#ffffff; --bg-code:#f0f2f5;
+  --fg:#1f2328; --fg-soft:#57606a; --fg-mute:#8b949e;
+  --border:#d0d7de; --border-soft:#eaeef2;
+  --accent:#2563eb; --accent-soft:#dbeafe; --accent-fg:#1e40af;
+  --green:#16a34a; --green-soft:#dcfce7;
+  --amber:#d97706; --amber-soft:#fef3c7;
+  --red:#dc2626; --red-soft:#fee2e2;
+  --purple:#7c3aed; --purple-soft:#ede9fe;
+  --shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);
+  --shadow-lg:0 8px 24px rgba(0,0,0,.08);
+  --radius:8px;
+}
+[data-theme="dark"]{
+  --bg:#0d1117; --bg-soft:#161b22; --bg-card:#161b22; --bg-code:#1c2128;
+  --fg:#e6edf3; --fg-soft:#9198a1; --fg-mute:#6e7681;
+  --border:#30363d; --border-soft:#21262d;
+  --accent:#58a6ff; --accent-soft:#1f2a40; --accent-fg:#79c0ff;
+  --green:#3fb950; --green-soft:#0d2818;
+  --amber:#d29922; --amber-soft:#3a2c00;
+  --red:#f85149; --red-soft:#3a0d0d;
+  --purple:#bc8cff; --purple-soft:#2a1a40;
+  --shadow:0 1px 3px rgba(0,0,0,.3);
+  --shadow-lg:0 8px 24px rgba(0,0,0,.4);
+}
+
+/* ============== 基础排版 ============== */
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei","Hiragino Sans GB",Roboto,Helvetica,Arial,sans-serif;
+  background:var(--bg);color:var(--fg);line-height:1.65;font-size:15px;
+  -webkit-font-smoothing:antialiased;
+}
+code,pre,.mono{font-family:"SF Mono",SFMono-Regular,Consolas,"Liberation Mono",Menlo,monospace;font-size:13px}
+
+/* ============== 顶部栏 ============== */
+.topbar{
+  position:sticky;top:0;z-index:100;height:56px;
+  display:flex;align-items:center;gap:16px;padding:0 20px;
+  background:var(--bg);border-bottom:1px solid var(--border);
+  backdrop-filter:saturate(180%) blur(8px);
+}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:17px;white-space:nowrap}
+.brand .logo{
+  width:30px;height:30px;border-radius:7px;
+  background:linear-gradient(135deg,var(--accent),var(--purple));
+  color:#fff;display:flex;align-items:center;justify-content:center;
+  font-size:15px;font-weight:800;letter-spacing:-.5px;
+}
+.brand .ver{font-size:11px;font-weight:500;color:var(--fg-mute);background:var(--bg-soft);padding:2px 7px;border-radius:10px;border:1px solid var(--border-soft)}
+.search-wrap{flex:1;max-width:480px;position:relative}
+.search-wrap input{
+  width:100%;height:34px;padding:0 12px 0 34px;
+  background:var(--bg-soft);border:1px solid var(--border);border-radius:6px;
+  color:var(--fg);font-size:14px;outline:none;transition:.15s;
+}
+.search-wrap input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.search-wrap input::placeholder{color:var(--fg-mute)}
+.search-wrap .ico{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--fg-mute);font-size:14px;pointer-events:none}
+.topbar .spacer{flex:1}
+.btn-ghost{
+  height:34px;padding:0 12px;border-radius:6px;border:1px solid var(--border);
+  background:var(--bg);color:var(--fg-soft);cursor:pointer;font-size:13px;
+  display:inline-flex;align-items:center;gap:6px;transition:.15s;
+}
+.btn-ghost:hover{background:var(--bg-soft);color:var(--fg)}
+
+/* ============== 主布局 ============== */
+.layout{display:flex;align-items:flex-start;max-width:1400px;margin:0 auto}
+.sidebar{
+  position:sticky;top:56px;flex:0 0 240px;max-height:calc(100vh - 56px);
+  overflow-y:auto;padding:20px 12px 40px 20px;
+  border-right:1px solid var(--border-soft);
+}
+.sidebar nav{display:flex;flex-direction:column;gap:1px}
+.sidebar .nav-group{margin-top:14px}
+.sidebar .nav-group:first-child{margin-top:0}
+.sidebar .nav-label{font-size:11px;font-weight:700;color:var(--fg-mute);text-transform:uppercase;letter-spacing:.6px;padding:4px 8px;margin-bottom:2px}
+.sidebar a{
+  display:block;padding:6px 10px;border-radius:5px;color:var(--fg-soft);
+  text-decoration:none;font-size:13.5px;transition:.1s;border-left:2px solid transparent;
+}
+.sidebar a:hover{background:var(--bg-soft);color:var(--fg)}
+.sidebar a.active{background:var(--accent-soft);color:var(--accent-fg);font-weight:600;border-left-color:var(--accent)}
+
+/* ============== 内容区 ============== */
+.content{flex:1;min-width:0;padding:28px 40px 80px}
+section{margin-bottom:48px;scroll-margin-top:72px}
+h1{font-size:30px;margin:0 0 8px;letter-spacing:-.5px}
+h2{font-size:22px;margin:36px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--border-soft);scroll-margin-top:72px}
+h3{font-size:17px;margin:24px 0 10px;color:var(--fg)}
+h4{font-size:14.5px;margin:18px 0 8px;color:var(--fg-soft);font-weight:600}
+p{margin:8px 0}
+.lead{font-size:16px;color:var(--fg-soft);max-width:780px}
+a.inline{color:var(--accent);text-decoration:none}
+a.inline:hover{text-decoration:underline}
+ul,ol{padding-left:22px}
+li{margin:3px 0}
+
+/* ============== 通用组件 ============== */
+.tag{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;line-height:1.6;vertical-align:1px}
+.tag.green{background:var(--green-soft);color:var(--green)}
+.tag.amber{background:var(--amber-soft);color:var(--amber)}
+.tag.red{background:var(--red-soft);color:var(--red)}
+.tag.purple{background:var(--purple-soft);color:var(--purple)}
+.tag.blue{background:var(--accent-soft);color:var(--accent-fg)}
+.tag.gray{background:var(--bg-soft);color:var(--fg-soft);border:1px solid var(--border-soft)}
+
+.kbd{display:inline-block;padding:1px 6px;background:var(--bg-soft);border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;font-family:inherit;font-size:12px;color:var(--fg-soft)}
+
+.note{padding:12px 16px;border-radius:var(--radius);background:var(--accent-soft);border-left:3px solid var(--accent);margin:14px 0;font-size:14px}
+.note.warn{background:var(--amber-soft);border-left-color:var(--amber)}
+.note.tip{background:var(--green-soft);border-left-color:var(--green)}
+
+code{background:var(--bg-code);padding:1px 6px;border-radius:4px;color:var(--fg);font-size:12.5px;border:1px solid var(--border-soft)}
+pre{
+  background:var(--bg-code);padding:14px 16px;border-radius:var(--radius);
+  overflow-x:auto;border:1px solid var(--border-soft);margin:12px 0;
+}
+pre code{background:none;padding:0;border:none;font-size:13px;line-height:1.6}
+
+/* ============== 表格 ============== */
+.tbl-wrap{overflow-x:auto;margin:14px 0;border:1px solid var(--border-soft);border-radius:var(--radius)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;background:var(--bg-card)}
+th,td{padding:9px 14px;text-align:left;border-bottom:1px solid var(--border-soft)}
+th{background:var(--bg-soft);font-weight:600;color:var(--fg);white-space:nowrap}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--bg-soft)}
+td code{font-size:12px}
+
+/* ============== 模块卡片 ============== */
+.module-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:16px;margin-top:16px}
+.module-card{
+  background:var(--bg-card);border:1px solid var(--border);border-radius:10px;
+  padding:18px;box-shadow:var(--shadow);transition:.15s;display:flex;flex-direction:column;
+}
+.module-card:hover{box-shadow:var(--shadow-lg);border-color:var(--accent);transform:translateY(-1px)}
+.module-card .mc-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+.module-card .mc-name{font-size:16px;font-weight:700;font-family:monospace;color:var(--accent-fg)}
+.module-card .mc-desc{color:var(--fg-soft);font-size:13.5px;margin:6px 0 12px;flex:1}
+.module-card .mc-meta{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.module-card .mc-stats{display:flex;gap:18px;font-size:12px;color:var(--fg-mute);border-top:1px dashed var(--border-soft);padding-top:10px}
+.module-card .mc-stats b{color:var(--fg);font-size:14px;display:block}
+.module-card .mc-dep{font-size:12px;color:var(--fg-mute);margin-top:8px;font-family:monospace;word-break:break-all}
+
+/* ============== 依赖图 ============== */
+.dep-diagram{background:var(--bg-code);border:1px solid var(--border-soft);border-radius:var(--radius);padding:18px;overflow-x:auto;font-family:monospace;font-size:13px;line-height:1.5;color:var(--fg-soft);white-space:pre}
+
+/* ============== 里程碑时间线 ============== */
+.timeline{position:relative;padding-left:28px;margin:16px 0}
+.timeline::before{content:'';position:absolute;left:8px;top:6px;bottom:6px;width:2px;background:var(--border)}
+.timeline .tl-item{position:relative;margin-bottom:18px}
+.timeline .tl-item::before{content:'';position:absolute;left:-26px;top:6px;width:12px;height:12px;border-radius:50%;background:var(--accent);border:2px solid var(--bg);box-shadow:0 0 0 2px var(--accent-soft)}
+.timeline .tl-name{font-weight:700;color:var(--fg)}
+.timeline .tl-body{color:var(--fg-soft);font-size:13.5px;margin-top:3px}
+
+/* ============== 方法卡片(API 参考) ============== */
+.method-card{
+  background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px 18px;margin:12px 0;box-shadow:var(--shadow);transition:.15s;
+}
+.method-card:hover{border-color:var(--accent)}
+.mc-id{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.mc-sig{font-family:monospace;font-size:13.5px;background:var(--bg-code);padding:6px 10px;border-radius:5px;color:var(--fg);border:1px solid var(--border-soft);flex:1;min-width:0;overflow-x:auto}
+.mc-summary{color:var(--fg-soft);font-size:13.5px;margin:6px 0 10px}
+.mc-section{margin-top:10px}
+.mc-section-title{font-size:11px;font-weight:700;color:var(--fg-mute);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
+.mc-params{width:100%;font-size:12.5px}
+.mc-params th{font-size:11px}
+.api-placeholder{
+  border:2px dashed var(--border);border-radius:var(--radius);padding:18px;text-align:center;
+  color:var(--fg-mute);font-size:13.5px;background:var(--bg-soft);
+}
+
+/* ============== 折叠面板 ============== */
+details{border:1px solid var(--border-soft);border-radius:var(--radius);padding:0;margin:10px 0;background:var(--bg-card)}
+details[open]{box-shadow:var(--shadow)}
+summary{padding:12px 16px;cursor:pointer;font-weight:600;font-size:14px;list-style:none;display:flex;align-items:center;justify-content:space-between}
+summary::-webkit-details-marker{display:none}
+summary::after{content:'▸';color:var(--fg-mute);transition:.15s;font-size:12px}
+details[open] summary::after{transform:rotate(90deg)}
+details .det-body{padding:0 16px 14px}
+
+/* ============== 顶部 Hero ============== */
+.hero{background:linear-gradient(135deg,var(--accent-soft),var(--purple-soft));border-radius:14px;padding:28px 32px;margin-bottom:32px;border:1px solid var(--border-soft)}
+.hero h1{margin-top:0}
+.hero .hero-tags{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.hero .hero-stats{display:flex;gap:32px;margin-top:18px;flex-wrap:wrap}
+.hero .hero-stats div b{font-size:24px;color:var(--accent-fg);display:block}
+.hero .hero-stats div span{font-size:12px;color:var(--fg-soft)}
+
+/* ============== 高亮(搜索) ============== */
+mark{background:#ffe066;color:#000;padding:0 2px;border-radius:2px}
+[data-theme="dark"] mark{background:#7c3aed;color:#fff}
+
+/* ============== 隐藏(搜索过滤) ============== */
+.hidden{display:none!important}
+
+/* ============== 响应式 ============== */
+@media (max-width:960px){
+  .sidebar{display:none}
+  .content{padding:20px}
+  .topbar{padding:0 14px}
+}
+
+/* ============== 滚动条美化 ============== */
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:5px;border:2px solid var(--bg)}
+::-webkit-scrollbar-thumb:hover{background:var(--fg-mute)}
+</style>
+</head>
+<body>
+
+<!-- ==================== 顶部栏 ==================== -->
+<header class="topbar">
+  <div class="brand">
+    <div class="logo">简</div>
+    <span>JIAN</span>
+    <span class="ver">v1.0 · 发布版</span>
+  </div>
+  <div class="search-wrap">
+    <span class="ico">🔍</span>
+    <input id="search" type="search" placeholder="搜索方法 / 模块 / 关键词(如 readCsv、groupby、Styler)…" autocomplete="off">
+  </div>
+  <div class="spacer"></div>
+  <button class="btn-ghost" id="theme-toggle" title="切换主题">
+    <span id="theme-icon">🌙</span><span>主题</span>
+  </button>
+</header>
+
+<!-- ==================== 主布局 ==================== -->
+<div class="layout">
+
+  <!-- 左侧导航 -->
+  <aside class="sidebar">
+    <nav id="nav">
+      <div class="nav-group" data-nav-group="overview">
+        <div class="nav-label">总览</div>
+        <a href="#overview">项目定位</a>
+        <a href="#three-libs">三库切分</a>
+        <a href="#deps">依赖全景</a>
+        <a href="#roadmap">开发路线</a>
+        <a href="#milestones">里程碑</a>
+      </div>
+      <div class="nav-group" data-nav-group="modules">
+        <div class="nav-label">模块分册</div>
+        <a href="#m-core">jian-core</a>
+        <a href="#m-io">jian-io</a>
+        <a href="#m-viz">jian-viz</a>
+        <a href="#m-export">jian-export</a>
+        <a href="#m-dsl">jian-dsl</a>
+        <a href="#m-sql">jian-sql</a>
+        <a href="#m-num">jian-num</a>
+      </div>
+      <div class="nav-group" data-nav-group="reference">
+        <div class="nav-label">接口参考</div>
+        <a href="#api-quick">顶层 API 速查</a>
+        <a href="#api-ref">方法目录(扩展中)</a>
+      </div>
+      <div class="nav-group" data-nav-group="config">
+        <div class="nav-label">配置与决策</div>
+        <a href="#config">配置 / 安全</a>
+        <a href="#exceptions">异常清单</a>
+        <a href="#decisions">关键决策</a>
+        <a href="#versioning">版本与维护</a>
+      </div>
+    </nav>
+  </aside>
+
+  <!-- 右侧内容 -->
+  <main class="content" id="content">
+
+    <!-- ============= Hero ============= -->
+    <div class="hero" id="overview" data-search="jian 玉简 DataFrame pandas sqlalchemy numpy JVM Java 吉安">
+      <h1>JIAN · 需求与接口说明书</h1>
+      <p class="lead">以 <b>玉简</b> 之器,容数据之变;以 <b>简化</b> 之桥,渡语言之隙;以 <b>简约</b> 之道,立长久之基;以 <b>吉安</b> 之愿,佑用者之祥。<br>JVM 上的轻量数据栈,API 风格向 <code>pandas</code> / <code>sqlalchemy</code> / <code>numpy</code> 靠拢。</p>
+      <div class="hero-tags">
+        <span class="tag blue">JDK 17 LTS</span>
+        <span class="tag green">3 个独立库</span>
+        <span class="tag purple">22 个子模块</span>
+        <span class="tag amber">≈ 14,200 行</span>
+        <span class="tag gray">单机 · 千万行级</span>
+      </div>
+      <div class="hero-stats">
+        <div><b>200+</b><span>DataFrame 方法</span></div>
+        <div><b>17</b><span>种图表</span></div>
+        <div><b>12</b><span>种 IO 格式</span></div>
+        <div><b>7</b><span>种数据库</span></div>
+        <div><b>3</b><span>档 DSL</span></div>
+      </div>
+    </div>
+
+    <section id="overview-detail">
+      <h2>项目定位</h2>
+      <p>在 JVM 上提供一套<b>以数据导入导出与数据分析为目的</b>(不追求极致运行速度)的轻量工具栈。三个相互独立的库按需引用,引哪个用哪个,不引就不加载。</p>
+
+      <div class="note tip">
+        <b>命名由来</b> · <code>jian</code> = 拼音「简」= <b>J</b>ava <b>I</b>ntegrated <b>A</b>Nalysis。一字四关:玉简(数据之器)→ 简化(Python↔Java 之桥)→ 简约(不争极速)→ 吉安(ji·an,愿用者吉祥安康)。
+      </div>
+
+      <h3>不做什么(明确排除)</h3>
+      <ul>
+        <li>❌ 分布式 / 集群计算(那是 Spark / Flink 的领地)</li>
+        <li>❌ GPU 加速、极致性能优化</li>
+        <li>❌ 深度学习框架(PyTorch / TensorFlow)</li>
+        <li>❌ 实时流处理</li>
+        <li>❌ jian-num 不追求 1:1 复刻 numpy(只做 pandas 需要的子集)</li>
+      </ul>
+    </section>
+
+    <!-- ============= 三库切分 ============= -->
+    <section id="three-libs">
+      <h2>三库切分</h2>
+      <p>三个库<b>解耦</b>:<code>jian-core</code> 不强依赖 <code>jian-sql</code>;<code>jian-sql</code> 不依赖 <code>jian</code>;<code>jian-num</code> 完全独立。</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>库</th><th>对标 Python</th><th>核心职责</th><th>依赖关系</th></tr></thead>
+          <tbody>
+            <tr><td><b>jian</b></td><td>pandas</td><td>表格结构(DataFrame/Series)+ 变换 + IO(6 库 + 3 格式)+ 可视化 + 导出</td><td>可选依赖 jian-num</td></tr>
+            <tr><td><b>jian-sql</b></td><td>sqlalchemy</td><td>连接管理、SQL 表达式、ORM、为 jian 喂数据</td><td>不依赖 jian</td></tr>
+            <tr><td><b>jian-num</b></td><td>numpy(子集)</td><td>pandas/统计分析会用到的数值与统计能力</td><td>不依赖任何</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============= 依赖全景 ============= -->
+    <section id="deps">
+      <h2>依赖全景图</h2>
+      <p>用户代码按需引 jar;叶子模块依赖 core,core 不反向依赖任何叶子。运行时按需加载:用户不引 <code>jian-io-excel</code>,JVM 不会加载 POI 的类。</p>
+      <div style="text-align:center;margin:20px 0">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520" style="max-width:900px;width:100%;font-family:monospace;font-size:13px">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/>
+    </marker>
+  </defs>
+
+  <!-- 用户代码 -->
+  <rect x="300" y="10" width="300" height="36" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+  <text x="450" y="33" text-anchor="middle" fill="#1e40af" font-weight="bold">用户代码 (your app)</text>
+
+  <!-- 连接线:用户 → 三库 -->
+  <line x1="380" y1="46" x2="200" y2="75" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="450" y1="46" x2="450" y2="75" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="520" y1="46" x2="700" y2="75" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- 三个库(宽度统一 240,间距均匀) -->
+  <rect x="80" y="80" width="240" height="40" rx="6" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+  <text x="200" y="105" text-anchor="middle" fill="#15803d" font-weight="bold">jian 库</text>
+
+  <rect x="330" y="80" width="240" height="40" rx="6" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+  <text x="450" y="105" text-anchor="middle" fill="#92400e" font-weight="bold">jian-sql 库</text>
+
+  <rect x="580" y="80" width="240" height="40" rx="6" fill="#f5f3ff" stroke="#7c3aed" stroke-width="2"/>
+  <text x="700" y="105" text-anchor="middle" fill="#6d28d9" font-weight="bold">jian-num 库</text>
+
+  <!-- 连接线:库 → 核心层 -->
+  <line x1="200" y1="120" x2="200" y2="150" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="450" y1="120" x2="450" y2="150" stroke="#d97706" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="700" y1="120" x2="700" y2="150" stroke="#7c3aed" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- ===== jian 库内部(宽度 240,居中 200) ===== -->
+  <rect x="80" y="155" width="240" height="36" rx="5" fill="#dbeafe" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="200" y="178" text-anchor="middle" fill="#1e40af" font-weight="bold">jian-core</text>
+
+  <text x="200" y="208" text-anchor="middle" fill="#6b7280" font-size="11">纯 JDK 17 (零外部依赖)</text>
+
+  <!-- 叶子层:3 个小框,每个 76 宽,横向并排(80~320 范围内) -->
+  <rect x="80" y="225" width="76" height="28" rx="4" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
+  <text x="118" y="244" text-anchor="middle" fill="#15803d" font-size="11">io (12格式)</text>
+
+  <rect x="162" y="225" width="76" height="28" rx="4" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
+  <text x="200" y="244" text-anchor="middle" fill="#15803d" font-size="11">viz/export</text>
+
+  <rect x="244" y="225" width="76" height="28" rx="4" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
+  <text x="282" y="244" text-anchor="middle" fill="#15803d" font-size="11">dsl(SQL)</text>
+
+  <!-- 连接 core → 3 个叶子 -->
+  <line x1="150" y1="191" x2="118" y2="225" stroke="#2563eb" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#arrow)"/>
+  <line x1="200" y1="191" x2="200" y2="225" stroke="#2563eb" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#arrow)"/>
+  <line x1="250" y1="191" x2="282" y2="225" stroke="#2563eb" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#arrow)"/>
+
+  <!-- 叶子外部依赖 -->
+  <text x="200" y="272" text-anchor="middle" fill="#6b7280" font-size="11">POI/Jackson/jsoup/XChart</text>
+  <text x="200" y="286" text-anchor="middle" fill="#6b7280" font-size="11">parquet/orc/hadoop/protobuf</text>
+
+  <!-- jian-facade -->
+  <rect x="100" y="300" width="200" height="28" rx="4" fill="#dbeafe" stroke="#2563eb" stroke-width="1"/>
+  <text x="200" y="319" text-anchor="middle" fill="#1e40af">jian-facade</text>
+
+  <!-- ===== jian-sql 库内部 ===== -->
+  <rect x="340" y="155" width="220" height="28" rx="4" fill="#fef3c7" stroke="#fbbf24" stroke-width="1"/>
+  <text x="450" y="174" text-anchor="middle" fill="#92400e">sql-engine (HikariCP)</text>
+  <rect x="340" y="190" width="220" height="28" rx="4" fill="#fef3c7" stroke="#fbbf24" stroke-width="1"/>
+  <text x="450" y="209" text-anchor="middle" fill="#92400e">sql-expr (jOOQ)</text>
+  <rect x="340" y="225" width="220" height="28" rx="4" fill="#fef3c7" stroke="#fbbf24" stroke-width="1"/>
+  <text x="450" y="244" text-anchor="middle" fill="#92400e">sql-orm (Session)</text>
+  <rect x="340" y="260" width="220" height="28" rx="4" fill="#fef3c7" stroke="#fbbf24" stroke-width="1"/>
+  <text x="450" y="279" text-anchor="middle" fill="#92400e">sql-bridge (RS→DF)</text>
+  <text x="450" y="304" text-anchor="middle" fill="#6b7280" font-size="11">JDBC: PG/MySQL/SQLite/H2/Oracle</text>
+
+  <!-- ===== jian-num 库内部 ===== -->
+  <rect x="590" y="155" width="220" height="28" rx="4" fill="#f5f3ff" stroke="#a78bfa" stroke-width="1"/>
+  <text x="700" y="174" text-anchor="middle" fill="#6d28d9">jian-num (Ndarray/Stats)</text>
+  <rect x="590" y="190" width="220" height="28" rx="4" fill="#f5f3ff" stroke="#a78bfa" stroke-width="1"/>
+  <text x="700" y="209" text-anchor="middle" fill="#6d28d9">num-bridge (SPI)</text>
+  <text x="700" y="232" text-anchor="middle" fill="#6b7280" font-size="11">Commons Math 3.6.1</text>
+
+  <!-- ===== 底部说明 ===== -->
+  <line x1="20" y1="345" x2="880" y2="345" stroke="#d1d5db" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="450" y="365" text-anchor="middle" fill="#374151" font-size="12">
+    <tspan font-weight="bold">三库完全独立</tspan> · 按需引 jar · 不引不加载
+  </text>
+  <text x="450" y="385" text-anchor="middle" fill="#6b7280" font-size="11">
+    SPI: core 内置兜底,引 jian-dsl / jian-num-bridge 自动升级
+  </text>
+  <text x="450" y="405" text-anchor="middle" fill="#6b7280" font-size="11">
+    jian-facade: 引一个 jar 得全部能力;也可只引具体 io 子模块
+  </text>
+</svg>
+
+
+      </div>
+
+      <h3>复用的成熟积木(均已核实活跃度)</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>积木</th><th>用途</th><th>版本</th><th>用在</th></tr></thead>
+          <tbody>
+            <tr><td>Commons CSV</td><td>CSV 读写</td><td>1.12.0</td><td>jian-io</td></tr>
+            <tr><td>Apache POI</td><td>Excel 读写</td><td>5.5.1</td><td>jian-io / export</td></tr>
+            <tr><td>Jackson</td><td>JSON 读写</td><td>2.18.x</td><td>jian-io</td></tr>
+            <tr><td>jsoup</td><td>HTML 解析</td><td>1.22.2</td><td>jian-io</td></tr>
+            <tr><td>各 JDBC 驱动</td><td>PG/MySQL/SQLite/H2/Oracle/Access</td><td>—</td><td>jian-io-sql / jian-sql</td></tr>
+            <tr><td>XChart</td><td>图表绘制</td><td>4.0.3</td><td>jian-viz</td></tr>
+            <tr><td>jOOQ (OSS)</td><td>SQL 表达式</td><td>3.21.6</td><td>jian-sql</td></tr>
+            <tr><td>HikariCP</td><td>连接池</td><td>5.1.0 / 6.x</td><td>jian-sql</td></tr>
+            <tr><td>Commons Math</td><td>描述统计</td><td>3.6.1</td><td>jian-num</td></tr>
+            <tr><td>JUnit 5</td><td>测试(仅测试期)</td><td>5.10.x</td><td>全部</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============= 路线图 ============= -->
+    <section id="roadmap">
+      <h2>开发路线图</h2>
+      <p>依赖驱动,串行推进。</p>
+      <div class="timeline">
+        <div class="tl-item"><div class="tl-name">第 1 步 · jian-num <span class="tag gray">最简单</span></div><div class="tl-body">零依赖,练手 + 给 jian-core 用</div></div>
+        <div class="tl-item"><div class="tl-name">第 2 步 · jian-core <span class="tag amber">最重</span></div><div class="tl-body">所有 jian 子模块的基石</div></div>
+        <div class="tl-item"><div class="tl-name">第 3 步 · jian-io-csv</div><div class="tl-body">让 core 能读数据,形成最小闭环(此时已有可用 MVP)</div></div>
+        <div class="tl-item"><div class="tl-name">第 4 步 · jian-io-json / excel / sql</div><div class="tl-body">并行铺开主流格式</div></div>
+        <div class="tl-item"><div class="tl-name">第 5 步 · jian-viz → 第 6 步 · jian-export</div><div class="tl-body">数据能看、能导出</div></div>
+        <div class="tl-item"><div class="tl-name">第 7 步 · jian-sql <span class="tag blue">独立线</span></div><div class="tl-body">可任意时点插入,不阻塞主线</div></div>
+        <div class="tl-item"><div class="tl-name">第 8 步 · 联调 + 示例 + 打包发布</div><div class="tl-body">文档、示例、Maven Central 发布</div></div>
+      </div>
+    </section>
+
+    <!-- ============= 里程碑 ============= -->
+    <section id="milestones">
+      <h2>里程碑</h2>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>里程碑</th><th>包含</th><th>能干什么</th></tr></thead>
+          <tbody>
+            <tr><td><b>M0</b> jian-num MVP</td><td>jian-num</td><td>描述统计、分位数、随机数</td></tr>
+            <tr><td><b>M1</b> core 基础</td><td>core §3.1-3.8</td><td>读写变换、统计</td></tr>
+            <tr><td><b>M2</b> core 高级</td><td>§3.9-3.12 + GroupBy + 窗口 + Resampler</td><td>pivot/merge/时间序列/rolling</td></tr>
+            <tr><td><b>M3</b> jian MVP</td><td>M2 + io-csv/excel/json + 基础 viz + export</td><td>读 CSV/Excel → 变换 → 出图/HTML</td></tr>
+            <tr><td><b>M4</b> jian 全功能</td><td>12 格式 io + 17 图 + Styler</td><td>全部 pandas 等价能力</td></tr>
+            <tr><td><b>M5</b> jian-sql</td><td>engine / expr / orm</td><td>完整数据库交互</td></tr>
+            <tr><td><b>M6</b> 发布版</td><td>全部 + 文档 + 示例 + 打包</td><td>可对外分发</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============= 模块卡片 ============= -->
+    <section id="modules">
+      <h2>模块分册</h2>
+      <p>以下 7 个分册相互独立,无耦合。每个可单独实现、单独打包、单独测试。</p>
+      <div class="module-grid" id="module-grid"><!-- JS 渲染 --></div>
+    </section>
+
+    <!-- ============= 顶层 API 速查 ============= -->
+    <section id="api-quick">
+      <h2>顶层 API 速查</h2>
+      <p>用户日常最常用的入口。每条对应一个方法卡,含完整签名/参数/可运行示例。</p>
+      <div id="api-quick-grid"><!-- JS 渲染 --></div>
+    </section>
+
+    <!-- ============= API 参考(日后扩展) ============= -->
+    <section id="api-ref">
+      <h2>方法目录 <span class="tag gray" style="font-size:11px">扩展中</span></h2>
+      <p>这是<b>接口参考区</b>。每个方法卡含完整签名、参数说明、可运行示例代码和异常列表。</p>
+      <div id="api-ref-list"><!-- JS 渲染 --></div>
+
+      <div class="api-placeholder" id="api-template" style="display:none;">
+        <!-- 开发者备注:新增方法卡往 API_REF 数组加一项,字段 { id, module, sig, since, status, summary, params[], returns, example, throws[] } -->
+      </div>
+    </section>
+
+    <!-- ============= 配置与安全 ============= -->
+    <section id="config">
+      <h2>配置与安全</h2>
+
+      <h3>凭据管理(.env,红线)</h3>
+      <p>遵循零本机绑定原则,数据库连接串、API Key 一律走 <code>.env</code> 或环境变量,<b>严禁硬编码</b>进任何源码、脚本、SKILL.md。</p>
+      <pre><code># .env 示例(不入库、不入 jar)
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=analysis
+DB_PASSWORD=your_secret_here
+DB_NAME=demo
+
+# DSL 方言(可选):oracle | postgresql | mysql
+JIAN_SQL_DIALECT=oracle</code></pre>
+
+      <h3>jian-dsl 方言切换</h3>
+      <p>方言通过 <code>SqlDialect</code> 变量传入,支持三态:单次调用参数 / 全局默认 / 环境变量。</p>
+      <pre><code>// 方式 A:全局默认(进程级)
+Jian.setDefaultDialect(SqlDialect.ORACLE);
+
+// 方式 B:单次调用显式指定(覆盖全局)
+df.sql(SqlDialect.POSTGRESQL, "SELECT * FROM this LIMIT 10");
+
+// 方式 C:环境变量 JIAN_SQL_DIALECT
+Jian.setDefaultDialect(SqlDialect.fromEnv());</code></pre>
+
+      <h3>按需加载与降级</h3>
+      <p>用户只引需要的 jar,未引的不会触发类加载。调用未引 jar 的功能时,抛带安装提示的 <code>ModuleNotLoadedException</code>,而非 <code>NoClassDefFoundError</code>。</p>
+      <div class="note warn"><b>示例</b>:用户引了 <code>jian-core</code> 但没引 <code>jian-io-excel</code>,调 <code>readExcel</code> → 抛 <code>"请引 org.apache.poi:poi-ooxml:5.5.1"</code>,不崩溃。</div>
+
+      <h3>跨平台(零本机绑定)</h3>
+      <ul>
+        <li>不写死绝对路径、用户名、盘符;用 <code>System.getProperty("user.home")</code> / <code>System.getenv()</code> 探测</li>
+        <li>调用外部程序(剪贴板的 xclip/pbcopy/clip)按目标平台动态确认可执行文件名与后缀</li>
+        <li>jar 仓库 / 缓存目录走环境变量(<code>${JAR_HOME}</code>),平台无关默认值</li>
+      </ul>
+    </section>
+
+    <!-- ============= 异常清单 ============= -->
+    <section id="exceptions">
+      <h2>异常清单(统一)</h2>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>异常</th><th>触发场景</th><th>典型提示</th></tr></thead>
+          <tbody>
+            <tr><td><code>ColumnNotFoundException</code></td><td>列不存在</td><td>带现有列提示</td></tr>
+            <tr><td><code>TypeMismatchException</code></td><td>类型不匹配</td><td>带期望/实际</td></tr>
+            <tr><td><code>ModuleNotLoadedException</code></td><td>调未引 jar 的功能</td><td>"请引 xxx.jar"</td></tr>
+            <tr><td><code>UnsupportedFormatException</code></td><td>Tier 2 冷门格式</td><td>"Feather 暂未实现"</td></tr>
+            <tr><td><code>JianSqlException</code></td><td>SQL 连接/执行失败</td><td>DbType + 脱敏 URL</td></tr>
+            <tr><td><code>QueryException</code></td><td>DSL 语法/语义错</td><td>带行列号、中文友好</td></tr>
+            <tr><td><code>SingularMatrixException</code></td><td>矩阵奇异不可逆</td><td>提示用 leastSquares</td></tr>
+            <tr><td><code>SecurityException</code></td><td>只读模式执行写操作</td><td>"只读模式禁止写"</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============= 关键决策 ============= -->
+    <section id="decisions">
+      <h2>关键决策记录(2026-08-01 评审通过)</h2>
+      <details open>
+        <summary>1. JDK 基线 · JDK 17 LTS</summary>
+        <div class="det-body">
+          <p>向下兼容 17+,本机更高版本 JDK 同样可跑。API 风格自由使用 JDK 17 特性:<code>record</code> / <code>sealed</code> / pattern matching for switch / 文本块。</p>
+          <p class="note tip"><b>统一性</b>:三个库(jian / jian-sql / jian-num)与全部 7 个分册均使用 <b>JDK 17</b> 基线,不混用 21。</p>
+        </div>
+      </details>
+      <details>
+        <summary>2. 构建工具 · Maven 多模块(破例引入)</summary>
+        <div class="det-body"><p>本项目 22 个子模块,手工管理 jar 依赖会失控。Maven 仅用于<b>构建期</b>依赖管理,<b>不要求最终用户装 Maven</b>(产物仍是 jar)。</p></div>
+      </details>
+      <details>
+        <summary>3. 打包形态 · 每个子模块一个 jar</summary>
+        <div class="det-body"><p>细粒度,严格按需加载。用户只引需要的 jar,不引不加载。DSL 用自写 Pratt + 正则解析(零运行时依赖),不嵌入任何外部脚本引擎。</p></div>
+      </details>
+      <details>
+        <summary>4. 功能范围 · 大面对齐 pandas 3.x</summary>
+        <div class="det-body">
+          <ul>
+            <li>IO:12 类 Tier 1 格式全实现(Tier 2 冷门格式不在范围)</li>
+            <li>图表:13 种全做(10 种 plot + 3 种 plotting;radviz/andrews/parallel_coordinates/bootstrap 高维图 v2 规划)</li>
+            <li>样式:Styler 子系统全功能,HTML + Excel + LaTeX 三输出</li>
+          </ul>
+        </div>
+      </details>
+      <details>
+        <summary>5. DSL 不嵌入任何外部脚本引擎</summary>
+        <div class="det-body"><p>L1/L2/L3 全部自写 Pratt parser + 正则子句切分(零运行时依赖)。支持 SELECT/WHERE/GROUP BY/HAVING/ORDER BY/LIMIT/JOIN 4种/UNION ALL/子查询2层。与 pandas/polars 的做法一致——保证 jar 自包含、可独立分发。</p></div>
+      </details>
+      <details>
+        <summary>6. DSL 方言 · Oracle 基线 + PG/MySQL 兼容</summary>
+        <div class="det-body"><p>用一份 grammar 吃下三种方言(<code>ROWNUM</code>/<code>LIMIT</code>/<code>FETCH FIRST</code>、<code>NVL</code>/<code>COALESCE</code>/<code>IFNULL</code>、<code>SYSDATE</code>/<code>NOW</code> 等都在 visitor 层归一化)。方言通过 <code>SqlDialect</code> 变量切换。</p></div>
+      </details>
+      <details>
+        <summary>7. Commons Math 选 3.6.1 而非 4.0</summary>
+        <div class="det-body"><p>3.6.1 自 2016 年稳定 10 年,jian-num 用途(mean/sum/std/percentile/...)避开所有已知问题;4.0 至今 beta 且把单 jar 拆成 5 个,引入成本反而高。</p></div>
+      </details>
+    </section>
+
+    <!-- ============= 版本与维护 ============= -->
+    <section id="versioning">
+      <h2>版本与维护说明</h2>
+      <div class="note">
+        <b>本文档定位</b>:本 HTML 既是<b>需求门户</b>,也是<b>日后函数接口参考</b>。<br><br>
+        <b>数据驱动渲染</b>:所有内容(模块卡 / API 速查 / 方法目录)由文件末尾 <code>&lt;script&gt;</code> 中的数据数组(<code>MODULES</code> / <code>API_QUICK</code> / <code>API_REF</code>)驱动。日后补充接口时,只需往数组里加一项,无需改 HTML 结构。<br><br>
+        <b>方法卡状态色</b>:<span class="tag gray">planned 规划</span> <span class="tag amber">alpha 开发</span> <span class="tag purple">beta 测试</span> <span class="tag green">stable 稳定</span><br><br>
+        <b>配套文档</b>:同目录 <code>00-overview.md</code> ~ <code>07-jian-dsl.md</code> 为详细需求分册;本 HTML 是其可视化门户,冲突时以分册为准。
+      </div>
+
+      <details open style="margin-top:20px;border:1px solid var(--border);border-radius:8px;padding:12px 16px;background:var(--bg-soft)">
+        <summary style="cursor:pointer;font-weight:bold;color:var(--fg-soft);font-size:14px">⚠️ 免责声明（必读）</summary>
+        <div style="margin-top:12px;font-size:12.5px;color:var(--fg-mute);line-height:1.7">
+          <p>本项目由 <b>AI 工具辅助开发</b>，免费分发，不附带任何形式的担保。</p>
+          <p><b>AI 生成内容</b>：需求文档、设计、代码均由 AI 辅助生成，可能存在错误或未经验证的内容。使用者须自行核实、评估、测试。</p>
+          <p><b>"按现状"提供</b>：不收取费用，不提供任何明示或默示担保（适销性、特定用途适用性、非侵权、准确性、可靠性等）。</p>
+          <p><b>仅用于学习与交流</b>：验证 JVM 上对标 pandas/numpy/sqlalchemy 的可行性，非商业产品。不建议直接用于生产环境。</p>
+          <p><b>不保证维护</b>：作者无义务持续维护、修复或更新。使用者须做好"无人维护"的准备。</p>
+          <p><b>使用者自行承担全部安全风险</b>，包括但不限于：</p>
+          <ul style="margin:4px 0 4px 20px">
+            <li><b>凭据泄露</b>：示例中可能展示连接方式，照搬配置提交到版本库或部署到不可信环境的后果由使用者承担</li>
+            <li><b>数据隐私</b>：不担保满足 GDPR、个人信息保护法等合规要求</li>
+            <li><b>第三方依赖</b>：依赖 POI/Jackson/jOOQ/Commons Math 等，不担保无漏洞或供应链攻击风险</li>
+            <li><b>数据精度</b>：Excel 等格式存在固有限制（>15 位整数精度丢失），不担保数据转换绝对准确</li>
+          </ul>
+          <p><b>不承担任何后果</b>：因使用本项目产生的任何直接或间接损失（数据丢失、业务中断、凭据泄露、合规违规、第三方索赔等），作者概不负责。</p>
+          <p><b>数据无价，自行备份</b>：操作前请做好完整备份。</p>
+          <p style="margin-top:8px;font-weight:bold">下载、安装、使用、复制、分发或以任何方式利用本项目，即视为已阅读、理解并无条件接受本免责声明的全部条款。</p>
+        </div>
+      </details>
+
+      <p style="color:var(--fg-mute);font-size:13px;margin-top:20px;text-align:center;font-style:italic">
+        以玉简之器,容数据之变;以简化之桥,渡语言之隙;以简约之道,立长久之基;以吉安之愿,佑用者之祥。
+      </p>
+      <p style="color:var(--fg-mute);font-size:12.5px;margin-top:16px">© 2026 JIAN · 作者 zc · 最后更新 2026-08-02 · 单文件自包含 · 零外链依赖</p>
+    </section>
+
+  </main>
+</div>
+
+<!-- ==================== 数据驱动:模块与 API ==================== -->
+<script src="modules.js"></script>
+<script src="api-quick.js"></script>
+<script src="api-ref.js"></script>
+<script src="render.js"></script>
+</script>
+
+</body>
+</html>

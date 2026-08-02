@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>jian</groupId>
+    <artifactId>jian-parent</artifactId>
+    <version>1.0.0</version>
+    <relativePath>../../pom.xml</relativePath>
+  </parent>
+  <artifactId>jian-sql-engine</artifactId>
+  <name>jian-sql-engine</name>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.zaxxer</groupId>
+      <artifactId>HikariCP</artifactId>
+    </dependency>
+    <!-- Engine.dsl()/sql() 入口需要 jian-sql-expr(jian-sql-expr 不依赖 engine,无环)-->
+    <dependency>
+      <groupId>jian</groupId>
+      <artifactId>jian-sql-expr</artifactId>
+    </dependency>
+    <!-- 测试用 H2(用户实际使用时按需引对应驱动)-->
+    <dependency>
+      <groupId>com.h2database</groupId>
+      <artifactId>h2</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>

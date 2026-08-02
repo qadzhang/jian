@@ -1,0 +1,488 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  jian 顶层 parent pom
+  ┌─ What : 聚合 jian / jian-sql / jian-num 三库的全部子模块,统一 JDK/编码/插件/依赖版本
+  │  Why  : 规范 AGENTS.md §2.1 破例引入 Maven 多模块;18+ 子模块必须集中管控版本与构建
+  │  Who  : 由 ./mvnw 与各子模块的 <parent> 引用
+  │  When : 顶层 install/compile/test 时聚合构建;子模块可单独 -pl 构建
+  │  Where: jian/pom.xml(项目根,随项目分发)
+  │  How  : 数据走向:./mvnw install → 读 parent 的 modules → 逐子模块构建 → jar 落各子模块 target/。
+  │         关键变量变化:
+  │           - jian.version:项目统一版本(当前 1.0.0),所有子模块 ${project.version} 引用;
+  │           - 各外部库版本集中在 properties,由 dependencyManagement 锁定,
+  │             子模块引依赖不写 version → 全局唯一版本(AGENTS.md §2.6 仲裁)。
+  │         逻辑路线:
+  │           路径 A(顶层 ./mvnw install)→ 按 modules 顺序聚合构建所有子模块;
+  │           路径 B(单子模块 ./mvnw -pl jian-core -am compile)→ 只构建 core 及其依赖;
+  │           路径 C(子模块未引某外部库)→ 该子模块 jar 不含该库,符合按需加载(§4.2)。
+  -->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!-- ======================== 坐标 ======================== -->
+  <groupId>jian</groupId>
+  <artifactId>jian-parent</artifactId>
+  <version>1.0.0</version>
+  <packaging>pom</packaging>
+  <name>jian-parent</name>
+  <description>jian / jian-sql / jian-num —— JVM 上对标 pandas / sqlalchemy / numpy 子集的轻量数据栈</description>
+
+  <!-- ======================== 子模块聚合(物理按库分组,逻辑单一 parent)======================== -->
+  <!-- 物理目录按三库分组(jian/ jian-sql/ jian-num/),便于组织;
+       逻辑上所有子模块共用顶层 jian-parent 一个 parent(无中间 group parent,避免 artifactId 冲突)。
+       顺序遵循总览 §5.1 依赖驱动:num → core → io → viz/export → dsl → sql -->
+  <modules>
+    <!-- ===== jian-num 库(完全独立,M0 第一步)===== -->
+    <module>jian-num/jian-num</module>
+
+    <!-- ===== jian 库:core 基石(M1/M2)===== -->
+    <module>jian/jian-core</module>
+
+    <!-- ===== jian 库:io 各格式(M3/M4,彼此独立,单向依赖 core)===== -->
+    <module>jian/jian-io-csv</module>
+    <module>jian/jian-io-excel</module>
+    <module>jian/jian-io-json</module>
+    <module>jian/jian-io-html</module>
+    <module>jian/jian-io-xml</module>
+    <module>jian/jian-io-sql</module>
+    <module>jian/jian-io-parquet</module>
+    <module>jian/jian-io-orc</module>
+    <module>jian/jian-io-pickle</module>
+    <module>jian/jian-io-clipboard</module>
+    <module>jian/jian-io-latex</module>
+
+    <!-- ===== jian 库:可视化与导出(M3/M4)===== -->
+    <module>jian/jian-viz</module>
+    <module>jian/jian-export</module>
+
+    <!-- ===== jian 库:DSL + num 桥接(M6)===== -->
+    <module>jian/jian-dsl</module>
+    <module>jian/jian-num-bridge</module>
+
+    <!-- ===== jian-sql 库(独立于 jian,M5)===== -->
+    <module>jian-sql/jian-sql-engine</module>
+    <module>jian-sql/jian-sql-expr</module>
+    <module>jian-sql/jian-sql-orm</module>
+    <module>jian-sql/jian-sql-bridge</module>
+
+    <!-- ===== 顶层 Jian 门面(聚合所有 io 入口,统一 API)===== -->
+    <module>jian/jian-facade</module>
+  </modules>
+
+  <!-- ======================== 全局属性 ======================== -->
+  <properties>
+    <!-- JDK 基线:17 LTS(AGENTS.md §1.2 强制;向下兼容 17+)-->
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+    <!-- ===== 外部依赖版本(总览 §2.3,均按原生 artifact 精细引用,非 uber)===== -->
+    <commons-csv.version>1.12.0</commons-csv.version>
+    <poi.version>5.5.1</poi.version>              <!-- 用 poi-ooxml 原生,非 uber -->
+    <jackson.version>2.18.2</jackson.version>
+    <jsoup.version>1.18.3</jsoup.version>
+    <xchart.version>4.0.3</xchart.version>
+    <vectorgraphics2d.version>0.13</vectorgraphics2d.version>
+    <commons-math3.version>3.6.1</commons-math3.version>
+
+    <!-- ===== JDBC 驱动(均按需引,运行时由 ServiceLoader 探测)===== -->
+    <postgresql.version>42.7.4</postgresql.version>
+    <mysql-connector.version>9.1.0</mysql-connector.version>
+    <sqlite-jdbc.version>3.46.1.3</sqlite-jdbc.version>
+    <h2.version>2.3.232</h2.version>
+    <ojdbc8.version>23.6.0.24.10</ojdbc8.version>
+    <ucanaccess.version>5.0.1</ucanaccess.version>
+
+    <!-- ===== jOOQ + 连接池(jian-sql)===== -->
+    <jooq.version>3.21.6</jooq.version>
+    <hikaricp.version>6.2.1</hikaricp.version>
+
+    <!-- ===== Parquet/ORC(M4)===== -->
+    <parquet.version>1.14.4</parquet.version>
+    <hadoop.version>3.3.6</hadoop.version>
+    <orc.version>1.9.5</orc.version>
+    <hive-storage-api.version>2.8.1</hive-storage-api.version>
+    <avro.version>1.12.0</avro.version>
+
+    <!-- ===== 日志/测试 ===== -->
+    <slf4j.version>2.0.16</slf4j.version>
+    <junit.version>5.11.3</junit.version>
+    <assertj.version>3.26.3</assertj.version>
+
+    <!-- ===== 插件版本 ===== -->
+    <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
+    <maven-surefire-plugin.version>3.5.2</maven-surefire-plugin.version>
+    <maven-jar-plugin.version>3.4.2</maven-jar-plugin.version>
+    <maven-source-plugin.version>3.3.1</maven-source-plugin.version>
+    <maven-javadoc-plugin.version>3.11.1</maven-javadoc-plugin.version>
+    <!-- 严禁使用 shade/assembly 做包整合(AGENTS.md §2.5 红线)-->
+  </properties>
+
+  <!-- ======================== 依赖版本统一锁定 ======================== -->
+  <!-- 子模块引这些依赖时不写 <version>,由本节统一仲裁 -->
+  <dependencyManagement>
+    <dependencies>
+      <!-- ===== jian 内部模块 ===== -->
+      <dependency>
+        <groupId>jian</groupId>
+        <artifactId>jian-core</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>jian</groupId>
+        <artifactId>jian-num</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>jian</groupId>
+        <artifactId>jian-num-bridge</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>jian</groupId>
+        <artifactId>jian-io-csv</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>jian</groupId>
+        <artifactId>jian-io-excel</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>jian</groupId>
+        <artifactId>jian-io-json</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>jian</groupId>
+        <artifactId>jian-io-html</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>jian</groupId>
+        <artifactId>jian-io-xml</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>jian</groupId>
+        <artifactId>jian-io-sql</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>jian</groupId>
+        <artifactId>jian-io-parquet</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>jian</groupId>
+        <artifactId>jian-io-orc</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>jian</groupId>
+        <artifactId>jian-io-pickle</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>jian</groupId>
+        <artifactId>jian-io-clipboard</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>jian</groupId>
+        <artifactId>jian-io-latex</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>jian</groupId>
+        <artifactId>jian-viz</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>jian</groupId>
+        <artifactId>jian-export</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>jian</groupId>
+        <artifactId>jian-dsl</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>jian</groupId>
+        <artifactId>jian-sql-engine</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>jian</groupId>
+        <artifactId>jian-sql-expr</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>jian</groupId>
+        <artifactId>jian-sql-orm</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>jian</groupId>
+        <artifactId>jian-sql-bridge</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+
+      <!-- ===== 外部:CSV ===== -->
+      <dependency>
+        <groupId>org.apache.commons</groupId>
+        <artifactId>commons-csv</artifactId>
+        <version>${commons-csv.version}</version>
+      </dependency>
+
+      <!-- ===== 外部:Excel(POI 原生 artifact,非 uber;传递依赖由 Maven 自动拉)===== -->
+      <dependency>
+        <groupId>org.apache.poi</groupId>
+        <artifactId>poi-ooxml</artifactId>
+        <version>${poi.version}</version>
+      </dependency>
+
+      <!-- ===== 外部:Jackson(JSON + XML,统一 BOM 锁版本)===== -->
+      <dependency>
+        <groupId>com.fasterxml.jackson</groupId>
+        <artifactId>jackson-bom</artifactId>
+        <version>${jackson.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+
+      <!-- ===== 外部:HTML 解析 ===== -->
+      <dependency>
+        <groupId>org.jsoup</groupId>
+        <artifactId>jsoup</artifactId>
+        <version>${jsoup.version}</version>
+      </dependency>
+
+      <!-- ===== 外部:图表(XChart)===== -->
+      <dependency>
+        <groupId>org.knowm.xchart</groupId>
+        <artifactId>xchart</artifactId>
+        <version>${xchart.version}</version>
+      </dependency>
+      <!-- XChart 的 SVG 输出依赖 vectorgraphics2d(精细引用,非 uber;规范 §2.5)-->
+      <dependency>
+        <groupId>de.erichseifert.vectorgraphics2d</groupId>
+        <artifactId>VectorGraphics2D</artifactId>
+        <version>${vectorgraphics2d.version}</version>
+      </dependency>
+
+      <!-- ===== 外部:统计(Commons Math 3.6.1,规范 §9 决策 9)===== -->
+      <dependency>
+        <groupId>org.apache.commons</groupId>
+        <artifactId>commons-math3</artifactId>
+        <version>${commons-math3.version}</version>
+      </dependency>
+
+      <!-- ANTLR4 已弃用(L3 SQL 用自写 Pratt + 正则版,功能完整;见 doc/07 §9) -->
+
+      <!-- ===== 外部:JDBC 驱动 ===== -->
+      <dependency>
+        <groupId>org.postgresql</groupId>
+        <artifactId>postgresql</artifactId>
+        <version>${postgresql.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.mysql</groupId>
+        <artifactId>mysql-connector-j</artifactId>
+        <version>${mysql-connector.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.xerial</groupId>
+        <artifactId>sqlite-jdbc</artifactId>
+        <version>${sqlite-jdbc.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.h2database</groupId>
+        <artifactId>h2</artifactId>
+        <version>${h2.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.oracle.database.jdbc</groupId>
+        <artifactId>ojdbc8</artifactId>
+        <version>${ojdbc8.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>net.sf.ucanaccess</groupId>
+        <artifactId>ucanaccess</artifactId>
+        <version>${ucanaccess.version}</version>
+      </dependency>
+
+      <!-- ===== 外部:jOOQ + HikariCP(jian-sql)===== -->
+      <dependency>
+        <groupId>org.jooq</groupId>
+        <artifactId>jooq</artifactId>
+        <version>${jooq.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.zaxxer</groupId>
+        <artifactId>HikariCP</artifactId>
+        <version>${hikaricp.version}</version>
+      </dependency>
+
+      <!-- ===== 外部:Parquet/ORC(M4)===== -->
+      <dependency>
+        <groupId>org.apache.parquet</groupId>
+        <artifactId>parquet-avro</artifactId>
+        <version>${parquet.version}</version>
+      </dependency>
+      <!-- Hadoop Common:parquet-avro 的 API 间接引用 org.apache.hadoop.fs.Path 等。
+           jian-io-parquet 是可选模块,用户引 parquet 才会带入此依赖(符合 §4.2 按需加载)。
+           仅用其 Path/Configuration 等轻量类,不启动 Hadoop 运行时(规范 §3.7 去 Hadoop 化)。 -->
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-common</artifactId>
+        <version>${hadoop.version}</version>
+      </dependency>
+      <!-- parquet-avro 的 AvroParquetReader/Writer 运行时引用 MapReduce FileInputFormat -->
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-mapreduce-client-core</artifactId>
+        <version>${hadoop.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.avro</groupId>
+        <artifactId>avro</artifactId>
+        <version>${avro.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.orc</groupId>
+        <artifactId>orc-core</artifactId>
+        <version>${orc.version}</version>
+      </dependency>
+      <!-- ORC 1.7.x 的 VectorizedRowBatch 等 vector 类在 hive-storage-api 2.7.0(此组合不依赖 Hadoop)-->
+      <dependency>
+        <groupId>org.apache.hive</groupId>
+        <artifactId>hive-storage-api</artifactId>
+        <version>${hive-storage-api.version}</version>
+      </dependency>
+
+      <!-- ===== 外部:日志门面(全部可选)===== -->
+      <dependency>
+        <groupId>org.slf4j</groupId>
+        <artifactId>slf4j-api</artifactId>
+        <version>${slf4j.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.slf4j</groupId>
+        <artifactId>slf4j-simple</artifactId>
+        <version>${slf4j.version}</version>
+      </dependency>
+
+      <!-- ===== 外部:测试 ===== -->
+      <dependency>
+        <groupId>org.junit</groupId>
+        <artifactId>junit-bom</artifactId>
+        <version>${junit.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.assertj</groupId>
+        <artifactId>assertj-core</artifactId>
+        <version>${assertj.version}</version>
+        <scope>test</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <!-- ======================== 全局依赖(所有子模块继承)======================== -->
+  <dependencies>
+    <!-- 测试库全模块可用(规范 §1.1:测试用 JUnit 5)-->
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <!-- ======================== 构建配置 ======================== -->
+  <build>
+    <pluginManagement>
+      <plugins>
+        <!-- 编译:强制 UTF-8 防中文乱码(AGENTS.md §1.2)-->
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-compiler-plugin</artifactId>
+          <version>${maven-compiler-plugin.version}</version>
+          <configuration>
+            <release>${maven.compiler.release}</release>
+            <encoding>UTF-8</encoding>
+            <parameters>true</parameters>
+            <compilerArgs>
+              <arg>-Xlint:all</arg>
+              <arg>-Xlint:-options</arg>
+            </compilerArgs>
+          </configuration>
+        </plugin>
+
+        <!-- 测试:JUnit 5 平台,headless 防图表测试卡死 -->
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-surefire-plugin</artifactId>
+          <version>${maven-surefire-plugin.version}</version>
+          <configuration>
+            <systemPropertyVariables>
+              <java.awt.headless>true</java.awt.headless>
+              <file.encoding>UTF-8</file.encoding>
+            </systemPropertyVariables>
+            <argLine>-Dfile.encoding=UTF-8 -Djava.awt.headless=true</argLine>
+          </configuration>
+        </plugin>
+
+        <!-- 打 jar:带实现信息 -->
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-jar-plugin</artifactId>
+          <version>${maven-jar-plugin.version}</version>
+          <configuration>
+            <archive>
+              <manifest>
+                <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+                <addDefaultSpecificationEntries>true</addDefaultSpecificationEntries>
+              </manifest>
+            </archive>
+            <skipIfEmpty>true</skipIfEmpty>
+          </configuration>
+        </plugin>
+
+        <!-- 源码 jar(分发友好)-->
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-source-plugin</artifactId>
+          <version>${maven-source-plugin.version}</version>
+          <executions>
+            <execution>
+              <id>attach-sources</id>
+              <goals><goal>jar-no-fork</goal></goals>
+            </execution>
+          </executions>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+
+</project>

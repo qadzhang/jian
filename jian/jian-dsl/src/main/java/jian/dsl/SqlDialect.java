@@ -1,0 +1,35 @@
+package jian.dsl;
+
+// ┌─ What : SqlDialect —— L3 SQL 方言变量(对齐规范 07 §2.4 Oracle/PG/MySQL 三方言)
+// │  Why  : 规范 §2.4;分页/空值/日期等方言差异通过此变量影响默认行为
+// │  Who  : 由 Dsl.sql(df, sql, dialect) 接收
+// │  When : L3 SQL 执行
+/**
+ * L3 SQL 方言变量(规范 §2.4)。
+ *
+ * <p>三方言:Oracle(基线)/ PostgreSQL / MySQL。三者主要语法(分页/空值/日期/字符串连接)
+ * jian-dsl L3 都认(visitor 层归一化处理),本枚举仅影响默认行为(如未加引号标识符大小写、空值函数优先级)。
+ */
+public enum SqlDialect {
+    /** Oracle 基线:标识符大小写敏感;ROWNUM/FETCH FIRST 分页;NVL 空值;|| 连接。 */
+    ORACLE,
+    /** PostgreSQL:LIMIT/FETCH FIRST 分页;COALESCE 空值;|| 连接。 */
+    POSTGRESQL,
+    /** MySQL:LIMIT 分页;IFNULL/COALESCE;CONCAT 连接;标识符默认不敏感。 */
+    MYSQL,
+    /** 通用默认(等同 ORACLE 基线)。 */
+    DEFAULT;
+
+    /** 从环境变量 JIAN_SQL_DIALECT 读(对齐规范 §2.4 方式 C);默认 DEFAULT。 */
+    public static SqlDialect fromEnv() {
+        String v = System.getenv("JIAN_SQL_DIALECT");
+        if (v == null) v = System.getProperty("jian.sql.dialect");
+        if (v == null) return DEFAULT;
+        return valueOf(v.toUpperCase());
+    }
+
+    /** 标识符是否大小写敏感。 */
+    public boolean caseSensitive() {
+        return this != MYSQL;
+    }
+}

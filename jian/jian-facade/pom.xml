@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>jian</groupId>
+    <artifactId>jian-parent</artifactId>
+    <version>1.0.0</version>
+    <relativePath>../../pom.xml</relativePath>
+  </parent>
+  <artifactId>jian-facade</artifactId>
+  <name>jian-facade</name>
+  <description>顶层 Jian 门面:聚合所有 io/viz/export 入口,用户引此一个 jar 即可访问全部能力</description>
+
+  <dependencies>
+    <!-- 引此模块会把全部 jian 子模块(及传递依赖)带入 classpath。
+         若要按需加载,用户可改为只引具体 io 子模块(规范 §4.2)。-->
+    <dependency><groupId>jian</groupId><artifactId>jian-core</artifactId></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-csv</artifactId></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-json</artifactId></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-excel</artifactId></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-html</artifactId></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-xml</artifactId></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-sql</artifactId></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-parquet</artifactId></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-orc</artifactId></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-pickle</artifactId></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-clipboard</artifactId></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-latex</artifactId></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-export</artifactId></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-viz</artifactId></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-dsl</artifactId></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-sql-engine</artifactId></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-sql-bridge</artifactId></dependency>
+    <!-- 测试 -->
+    <dependency><groupId>com.h2database</groupId><artifactId>h2</artifactId><scope>test</scope></dependency>
+  </dependencies>
+</project>

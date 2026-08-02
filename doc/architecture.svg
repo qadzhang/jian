@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520" style="max-width:900px;width:100%;font-family:monospace;font-size:13px">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/>
+    </marker>
+  </defs>
+
+  <!-- 用户代码 -->
+  <rect x="300" y="10" width="300" height="36" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+  <text x="450" y="33" text-anchor="middle" fill="#1e40af" font-weight="bold">用户代码 (your app)</text>
+
+  <!-- 连接线:用户 → 三库 -->
+  <line x1="380" y1="46" x2="200" y2="75" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="450" y1="46" x2="450" y2="75" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="520" y1="46" x2="700" y2="75" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- 三个库(宽度统一 240,间距均匀) -->
+  <rect x="80" y="80" width="240" height="40" rx="6" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+  <text x="200" y="105" text-anchor="middle" fill="#15803d" font-weight="bold">jian 库</text>
+
+  <rect x="330" y="80" width="240" height="40" rx="6" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+  <text x="450" y="105" text-anchor="middle" fill="#92400e" font-weight="bold">jian-sql 库</text>
+
+  <rect x="580" y="80" width="240" height="40" rx="6" fill="#f5f3ff" stroke="#7c3aed" stroke-width="2"/>
+  <text x="700" y="105" text-anchor="middle" fill="#6d28d9" font-weight="bold">jian-num 库</text>
+
+  <!-- 连接线:库 → 核心层 -->
+  <line x1="200" y1="120" x2="200" y2="150" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="450" y1="120" x2="450" y2="150" stroke="#d97706" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="700" y1="120" x2="700" y2="150" stroke="#7c3aed" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- ===== jian 库内部(宽度 240,居中 200) ===== -->
+  <rect x="80" y="155" width="240" height="36" rx="5" fill="#dbeafe" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="200" y="178" text-anchor="middle" fill="#1e40af" font-weight="bold">jian-core</text>
+
+  <text x="200" y="208" text-anchor="middle" fill="#6b7280" font-size="11">纯 JDK 17 (零外部依赖)</text>
+
+  <!-- 叶子层:3 个小框,每个 76 宽,横向并排(80~320 范围内) -->
+  <rect x="80" y="225" width="76" height="28" rx="4" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
+  <text x="118" y="244" text-anchor="middle" fill="#15803d" font-size="11">io (12格式)</text>
+
+  <rect x="162" y="225" width="76" height="28" rx="4" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
+  <text x="200" y="244" text-anchor="middle" fill="#15803d" font-size="11">viz/export</text>
+
+  <rect x="244" y="225" width="76" height="28" rx="4" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
+  <text x="282" y="244" text-anchor="middle" fill="#15803d" font-size="11">dsl(SQL)</text>
+
+  <!-- 连接 core → 3 个叶子 -->
+  <line x1="150" y1="191" x2="118" y2="225" stroke="#2563eb" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#arrow)"/>
+  <line x1="200" y1="191" x2="200" y2="225" stroke="#2563eb" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#arrow)"/>
+  <line x1="250" y1="191" x2="282" y2="225" stroke="#2563eb" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#arrow)"/>
+
+  <!-- 叶子外部依赖 -->
+  <text x="200" y="272" text-anchor="middle" fill="#6b7280" font-size="11">POI/Jackson/jsoup/XChart</text>
+  <text x="200" y="286" text-anchor="middle" fill="#6b7280" font-size="11">parquet/orc/hadoop/protobuf</text>
+
+  <!-- jian-facade -->
+  <rect x="100" y="300" width="200" height="28" rx="4" fill="#dbeafe" stroke="#2563eb" stroke-width="1"/>
+  <text x="200" y="319" text-anchor="middle" fill="#1e40af">jian-facade</text>
+
+  <!-- ===== jian-sql 库内部 ===== -->
+  <rect x="340" y="155" width="220" height="28" rx="4" fill="#fef3c7" stroke="#fbbf24" stroke-width="1"/>
+  <text x="450" y="174" text-anchor="middle" fill="#92400e">sql-engine (HikariCP)</text>
+  <rect x="340" y="190" width="220" height="28" rx="4" fill="#fef3c7" stroke="#fbbf24" stroke-width="1"/>
+  <text x="450" y="209" text-anchor="middle" fill="#92400e">sql-expr (jOOQ)</text>
+  <rect x="340" y="225" width="220" height="28" rx="4" fill="#fef3c7" stroke="#fbbf24" stroke-width="1"/>
+  <text x="450" y="244" text-anchor="middle" fill="#92400e">sql-orm (Session)</text>
+  <rect x="340" y="260" width="220" height="28" rx="4" fill="#fef3c7" stroke="#fbbf24" stroke-width="1"/>
+  <text x="450" y="279" text-anchor="middle" fill="#92400e">sql-bridge (RS→DF)</text>
+  <text x="450" y="304" text-anchor="middle" fill="#6b7280" font-size="11">JDBC: PG/MySQL/SQLite/H2/Oracle</text>
+
+  <!-- ===== jian-num 库内部 ===== -->
+  <rect x="590" y="155" width="220" height="28" rx="4" fill="#f5f3ff" stroke="#a78bfa" stroke-width="1"/>
+  <text x="700" y="174" text-anchor="middle" fill="#6d28d9">jian-num (Ndarray/Stats)</text>
+  <rect x="590" y="190" width="220" height="28" rx="4" fill="#f5f3ff" stroke="#a78bfa" stroke-width="1"/>
+  <text x="700" y="209" text-anchor="middle" fill="#6d28d9">num-bridge (SPI)</text>
+  <text x="700" y="232" text-anchor="middle" fill="#6b7280" font-size="11">Commons Math 3.6.1</text>
+
+  <!-- ===== 底部说明 ===== -->
+  <line x1="20" y1="345" x2="880" y2="345" stroke="#d1d5db" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="450" y="365" text-anchor="middle" fill="#374151" font-size="12">
+    <tspan font-weight="bold">三库完全独立</tspan> · 按需引 jar · 不引不加载
+  </text>
+  <text x="450" y="385" text-anchor="middle" fill="#6b7280" font-size="11">
+    SPI: core 内置兜底,引 jian-dsl / jian-num-bridge 自动升级
+  </text>
+  <text x="450" y="405" text-anchor="middle" fill="#6b7280" font-size="11">
+    jian-facade: 引一个 jar 得全部能力;也可只引具体 io 子模块
+  </text>
+</svg>
