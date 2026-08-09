@@ -10,7 +10,17 @@ const API_QUICK = [
     { sig:'df.query("age > 18 && city in (\'SH\',\'BJ\')")', mod:"jian-core", status:"beta" },
     { sig:'df.eval("total = price * qty")', mod:"jian-dsl", status:"beta" },
     { sig:'df.sql("SELECT ... FROM this")', mod:"jian-dsl", status:"beta" },
-    { sig:'df.groupBy("dept").agg(spec)', mod:"jian-core", status:"alpha" }
+    { sig:'df.groupBy("dept").agg(spec)', mod:"jian-core", status:"alpha" },
+    { sig:'df.idxmax("v") / df.sample(10, false, 42L) / df.isin(1,2,3)', mod:"jian-core", status:"alpha" },
+    { sig:'df.colCorr("x","y") / df.colSkew("v") / df.colKurt("v") / df.corrMatrix()', mod:"jian-core", status:"alpha" },
+    { sig:'df.colCumsum("v","cs") / df.colDiff("v",1,"d") / df.colRank("v","average","rk")', mod:"jian-core", status:"alpha" },
+    { sig:'df.pivot("date","city","temp") / df.explode("tags") / df.stack(idCols,valueCols)', mod:"jian-core", status:"alpha" },
+    { sig:'df.mergeAsof(right, "ts") / df.join(right, "id", "left")', mod:"jian-core", status:"alpha" },
+    { sig:'df.resample("ts","1D").sum() / .mean() / .ohlc("price")', mod:"jian-core", status:"alpha" },
+    { sig:'df.interpolate() / df.where(mask, 0) / df.mask(mask, 0)', mod:"jian-core", status:"alpha" },
+    { sig:'df.astype("v", DType.BOOL/DATETIME/DATE) (7种)', mod:"jian-core", status:"alpha" },
+    { sig:'df.tzLocalize("ts","UTC") / df.tzConvert("ts","Asia/Shanghai")', mod:"jian-core", status:"alpha" },
+    { sig:'series.argmax() / .argmin() / .tolist() / .between(1,10) / .hasnans()', mod:"jian-core", status:"alpha" }
   ]},
   { group:"写出", items:[
     { sig:'Jian.write(df, "out.csv/.tsv/.orc/.jpk")', mod:"jian-facade", status:"beta" },

@@ -17,7 +17,7 @@
       <groupId>jian</groupId>
       <artifactId>jian-core</artifactId>
     </dependency>
-    <!-- 测试用 H2 + SQLite 内存库(用户实际使用时按需引对应驱动 jar)-->
+    <!-- 测试用 H2 + SQLite + PostgreSQL(用户实际使用时按需引对应驱动 jar)-->
     <dependency>
       <groupId>com.h2database</groupId>
       <artifactId>h2</artifactId>
@@ -26,6 +26,11 @@
     <dependency>
       <groupId>org.xerial</groupId>
       <artifactId>sqlite-jdbc</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>

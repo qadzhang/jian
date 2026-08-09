@@ -2,6 +2,9 @@
 target/
 tmp_jar/
 
+# shade 插件自动生成的精简 pom(每次 build 重新生成,不入库)
+dependency-reduced-pom.xml
+
 # === Maven Wrapper 临时 ===
 .mvn/wrapper/MavenWrapperDownloader.java.bak
 
@@ -36,3 +39,24 @@ Thumbs.db
 # === 一次性验证脚本与临时数据(AGENTS.md §6.1 任务结束清理)===
 scratch/
 demo-output/
+
+# === AI/Agent 工具运行时产物(本机环境产物,与项目本身无关,不入库)===
+# ZCode/Agent 会话镜像
+.omo/
+.claude/
+.zcode/
+# AI agent 工作树镜像
+.claude/worktrees/
+
+# === 测试框架运行时缓存(可重建,不入库)===
+# jqwik(PBT)失败用例数据库
+.jqwik-database
+.jqwik-database.lock
+# Python Hypothesis(PBT)缓存
+.hypothesis/
+# pytest 缓存
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+.cli-ai-sessions.md

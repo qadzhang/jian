@@ -270,11 +270,13 @@ class DslTest {
     void L1_空值函数nvl() {
         DataFrame df = DataFrame.of(Schema.of("a", DType.DOUBLE, "b", DType.DOUBLE),
                 new Object[][]{{1.0, 2.0}, {null, 3.0}, {null, null}});
-        // nvl(a, b):取第一个非 null
+        // nvl(a, b):取第一个非缺失
         DataFrame r = Dsl.eval(df, "v = nvl(a, b)");
         assertThat(r.getColumn("v").get(0)).isEqualTo(1.0);
         assertThat(r.getColumn("v").get(1)).isEqualTo(3.0);
-        assertThat(r.getColumn("v").get(2)).isNull();
+        // 第 3 行 a/b 都缺失 → nvl 返回 null,但赋给 DOUBLE 列后内部用 NaN 表示缺失
+        // (AGENTS.md §3.5),用 isNull() 判断而非 get()==null
+        assertThat(r.getColumn("v").isNull(2)).isTrue();
     }
 
     @Test

@@ -111,14 +111,35 @@
     <junit.version>5.11.3</junit.version>
     <assertj.version>3.26.3</assertj.version>
 
+    <!--
+      ===== 共享 jar 仓库位置(可移植)=====
+      jqwik 1.10.x 被作者投毒(见 jian-core/pom.xml 注释),只能用 1.9.3 system scope jar。
+      默认 ${user.home}/tools/jar(跨平台,无本机路径绑定);
+      其它机器/CI 可用 -Djar.home=/path/to/jars 或在 ~/.m2/settings.xml 设 <jar.home> 覆盖。
+    -->
+    <jar.home>${user.home}/tools/jar</jar.home>
+
     <!-- ===== 插件版本 ===== -->
     <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
     <maven-surefire-plugin.version>3.5.2</maven-surefire-plugin.version>
     <maven-jar-plugin.version>3.4.2</maven-jar-plugin.version>
     <maven-source-plugin.version>3.3.1</maven-source-plugin.version>
     <maven-javadoc-plugin.version>3.11.1</maven-javadoc-plugin.version>
-    <!-- 严禁使用 shade/assembly 做包整合(AGENTS.md §2.5 红线)-->
+    <!-- fat jar 用 shade(仅 -Pfat 激活,默认 thin;AGENTS.md §2.5 已放宽为"子模块禁,顶层三库允许") -->
+    <maven-shade-plugin.version>3.6.0</maven-shade-plugin.version>
   </properties>
+
+  <profiles>
+    <!-- -Pfat:激活三个聚合模块(jian/jian-num/jian-sql),打 fat jar(含全部依赖) -->
+    <profile>
+      <id>fat</id>
+      <modules>
+        <module>jian</module>
+        <module>jian-num</module>
+        <module>jian-sql</module>
+      </modules>
+    </profile>
+  </profiles>
 
   <!-- ======================== 依赖版本统一锁定 ======================== -->
   <!-- 子模块引这些依赖时不写 <version>,由本节统一仲裁 -->
@@ -470,6 +491,29 @@
             </execution>
           </executions>
         </plugin>
+
+        <!-- AI 友好:把 src/main/ai-doc/module.md 复制到 jar 的 META-INF/ai/module.md -->
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-resources-plugin</artifactId>
+          <version>3.3.1</version>
+          <executions>
+            <execution>
+              <id>copy-ai-doc</id>
+              <phase>process-resources</phase>
+              <goals><goal>copy-resources</goal></goals>
+              <configuration>
+                <outputDirectory>${project.build.outputDirectory}/META-INF/ai</outputDirectory>
+                <resources>
+                  <resource>
+                    <directory>src/main/ai-doc</directory>
+                    <includes><include>module.md</include></includes>
+                  </resource>
+                </resources>
+              </configuration>
+            </execution>
+          </executions>
+        </plugin>
       </plugins>
     </pluginManagement>
 
@@ -481,6 +525,35 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
+      </plugin>
+      <!-- 激活 sources jar(AI 友好:让 jar 自带源码,便于 AI 读 @param/@return) -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-source-plugin</artifactId>
+      </plugin>
+      <!-- 激活 AI 友好元数据(module.md 复制到 META-INF/ai/) -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-resources-plugin</artifactId>
+      </plugin>
+      <!-- 激活 javadoc jar(AI 友好:让 jar 自带结构化 HTML javadoc) -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-javadoc-plugin</artifactId>
+        <version>${maven-javadoc-plugin.version}</version>
+        <configuration>
+          <encoding>UTF-8</encoding>
+          <docencoding>UTF-8</docencoding>
+          <charset>UTF-8</charset>
+          <failOnError>false</failOnError>
+          <doclint>none</doclint>
+        </configuration>
+        <executions>
+          <execution>
+            <id>attach-javadocs</id>
+            <goals><goal>jar</goal></goals>
+          </execution>
+        </executions>
       </plugin>
     </plugins>
   </build>

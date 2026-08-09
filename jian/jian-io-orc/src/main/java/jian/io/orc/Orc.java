@@ -43,9 +43,26 @@ public final class Orc {
 
     private Orc() {}
 
+    /**
+     * 按 String 路径读 ORC 的 builder。
+     * @param path String ORC 文件路径,需为合法可读文件,不允许 null
+     * @return OrcReader 配置器,调用 .go() 执行读取
+     */
     public static OrcReader read(String path) { return new OrcReader(Path.of(path)); }
+
+    /**
+     * 按 Path 路径读 ORC 的 builder。
+     * @param path Path ORC 文件路径对象,需为合法可读文件,不允许 null
+     * @return OrcReader 配置器,调用 .go() 执行读取
+     */
     public static OrcReader read(Path path) { return new OrcReader(path); }
 
+    /**
+     * 写 ORC 的 builder。
+     * @param df DataFrame 要写出的数据帧,不允许 null;列类型按 jian DType 映射为 ORC 类型
+     * @param path String 输出 ORC 文件路径,需为合法可写路径,不允许 null
+     * @return OrcWriter 配置器,调用 .go() 执行写出
+     */
     public static OrcWriter write(DataFrame df, String path) {
         return new OrcWriter(df, Path.of(path));
     }

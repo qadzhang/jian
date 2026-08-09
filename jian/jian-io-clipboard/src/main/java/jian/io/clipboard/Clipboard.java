@@ -47,7 +47,11 @@ public final class Clipboard {
 
     // ======================== 写(DF → 剪贴板)========================
 
-    /** 把 DataFrame 写入剪贴板(TSV 格式,粘贴到 Excel 自动分列)。 */
+    /**
+     * 把 DataFrame 写入剪贴板(TSV 格式,粘贴到 Excel 自动分列)。
+     * @param df DataFrame 要写入剪贴板的数据帧,不允许 null
+     * @throws IOException 写出过程发生 IO 错误时抛出(注:剪贴板命令不可用时不抛,降级到内存变量并打 warning)
+     */
     public static void write(DataFrame df) throws IOException {
         // 转 TSV
         StringBuilder sb = new StringBuilder();
@@ -93,11 +97,17 @@ public final class Clipboard {
         }
         try {
             ProcessBuilder pb = new ProcessBuilder(cmd);
+            // 把 stderr 重定向到单独的丢弃文件,避免子进程写满 stderr pipe 缓冲区(典型 64KB)
+            // 导致阻塞——尤其当 xclip/xsel 在无 X server 环境下大量报错时(2026-08-09 修复)。
+            pb.redirectError(ProcessBuilder.Redirect.DISCARD);
             Process p = pb.start();
-            p.getOutputStream().write(text.getBytes(StandardCharsets.UTF_8));
-            p.getOutputStream().close();
-            int code = p.waitFor();
-            return code == 0;
+            // Web 安全修复(2026-08-08):try-with-resources 关闭输出流 + waitFor 带超时(防挂死)
+            try (var pOut = p.getOutputStream()) {
+                pOut.write(text.getBytes(StandardCharsets.UTF_8));
+            }
+            boolean finished = p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) p.destroyForcibly();
+            return finished && p.exitValue() == 0;
         } catch (InterruptedException e) { // 恢复中断标志
             Thread.currentThread().interrupt();  // 恢复中断标志
             return false;
@@ -120,10 +130,18 @@ public final class Clipboard {
             return "";
         }
         try {
-            Process p = new ProcessBuilder(cmd).start();
-            String text = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-            p.waitFor();
-            return text;
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            // 把 stderr 丢弃(见 writeText 同款修复):防子进程 stderr 写满缓冲区阻塞 stdout 读取。
+            pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+            Process p = pb.start();
+            // Web 安全修复(2026-08-08):关闭 Process 的 InputStream + waitFor 带超时(防 native FD 泄漏 + 挂死)
+            try (var is = p.getInputStream()) {
+                String text = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+                if (!p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                    p.destroyForcibly();
+                }
+                return text;
+            }
         } catch (InterruptedException e) { // 恢复中断标志
             Thread.currentThread().interrupt();  // 恢复中断标志
             return "";

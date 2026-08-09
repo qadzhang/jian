@@ -1,6 +1,7 @@
 package jian.core;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,10 +26,12 @@ public final class DataFrameReshape {
      * <p>语义:对 (index, columns) 组合聚合 value 列,把 columns 维的不同值散开成多列。
      *
      * @param df 目标
-     * @param index 行分组列(可以是 1 列;多列 v2 支持)
-     * @param columns 散开成列的分组列
-     * @param values 被聚合的值列
-     * @param aggFn 聚合函数(mean/sum/count/min/max/first/last...)
+     * @param df      DataFrame 目标表,非 null
+     * @param index   String 行分组列名(单列;多列 v2 支持);必须存在;非 null
+     * @param columns String 散开成列的分组列名;必须存在;非 null
+     * @param values  String 被聚合的值列名;必须存在;非 null
+     * @param aggFn   String 聚合函数:mean/sum/count/min/max/first/last/nunique;非 null
+     * @return DataFrame 行 = index 列的不同值,列 = index 列名 + 各 columns 列值;单元格 = 聚合结果
      */
     public static DataFrame pivotTable(DataFrame df, String index, String columns,
                                        String values, String aggFn) {
@@ -87,9 +90,10 @@ public final class DataFrameReshape {
 
     /**
      * 宽转长(对齐 pandas.melt):每行的指定 value 列各产生一行,id_vars 重复。
-     *
-     * @param idVars 标识列(保留)
-     * @param valueVars 被展平的值列(列名 → value 列,值 → value 列内容)
+     * @param df        DataFrame 目标表,非 null
+     * @param idVars    String[] 标识列(每行保留这些列的值);必须存在;非 null(允许空数组)
+     * @param valueVars String[] 被展平的值列(列名进 "variable" 列,值进 "value" 列);必须存在;非 null
+     * @return DataFrame 列 = idVars + ["variable","value"];行数 = df.rowCount() * valueVars.length
      */
     public static DataFrame melt(DataFrame df, String[] idVars, String[] valueVars) {
         List<String> outCols = new ArrayList<>();
@@ -112,7 +116,12 @@ public final class DataFrameReshape {
         return DataFrame.of(schema, data);
     }
 
-    /** 转置(对齐 pandas df.T):行列互换。 */
+    /**
+     * 转置(对齐 pandas df.T):行列互换。
+     * @param df DataFrame 目标表,非 null
+     * @return DataFrame 行列互换后的新表:新行数 = 原 columnCount;新列数 = 原 rowCount + 1;
+     *         第一列 "_index" 存原列名;后续列名 "0"/"1"/... 存原行号
+     */
     public static DataFrame transpose(DataFrame df) {
         int rows = df.rowCount();
         int cols = df.columnCount();
@@ -135,6 +144,12 @@ public final class DataFrameReshape {
         return DataFrame.ofColumns(toMap(newNames, data));
     }
 
+    /**
+     * 列名+列数据 → Map 工具(私有)。
+     * @param names     List&lt;String&gt; 列名
+     * @param colsByRow Object[][] 按行组织的列数据
+     * @return Map&lt;String,Object[]&gt; 列名→列数据
+     */
     private static Map<String, Object[]> toMap(List<String> names, Object[][] colsByRow) {
         Map<String, Object[]> m = new LinkedHashMap<>();
         for (int c = 0; c < names.size(); c++) {
@@ -147,6 +162,10 @@ public final class DataFrameReshape {
 
     /**
      * 去重(对齐 pandas drop_duplicates):按 subset 列去重,keep="first"/"last"/false。
+     * @param df     DataFrame 目标表,非 null
+     * @param subset String[] 参与判重的列名;null=全部列;数组中列名必须存在
+     * @param keep   String 保留策略:"first"=首条;"last"=末条;"false"=重复全删(只保留唯一行);null 视为 "first"
+     * @return DataFrame 去重后的新表(行数 ≤ df.rowCount();列不变)
      */
     public static DataFrame dropDuplicates(DataFrame df, String[] subset, String keep) {
         int n = df.rowCount();
@@ -182,6 +201,55 @@ public final class DataFrameReshape {
         return df.filter(keepMask);
     }
 
+    // ┌─ What : duplicated —— 重复行掩码(对齐 pandas DataFrame.duplicated)
+    // │  Why  : 与 dropDuplicates 同算法不同产出(掩码 vs 去重后的表),按 §3.1.1.1 内聚到此
+    // │  Who  : 由 DataFrame.duplicated 单行委托
+    // │  When : 2026-08-09 阶段 A
+    // │  How  : ① keep="none":出现 ≥2 次的行全标 true
+    //         ② keep="first"(默认):首次出现 false,后续 true
+    //         ③ keep="last":末次出现 false,之前的重复 true
+    /**
+     * 重复行掩码(对齐 pandas DataFrame.duplicated)。
+     * <p>策略:
+     * <ul>
+     *   <li>keep="first"(默认):首次出现 false,后续重复 true</li>
+     *   <li>keep="last":末次出现 false,之前的重复 true</li>
+     *   <li>keep="none":所有出现 ≥ 2 次的行全部标 true(都不保留)</li>
+     * </ul>
+     * @param df     DataFrame 目标表,非 null
+     * @param subset String[] 参与判重的列名;null/空 表示全部列
+     * @param keep   String "first"(默认)/ "last"/ "none"(注意:pandas 用 false,jian 用 "none" 字符串)
+     * @return boolean[] 长度 == rowCount();true 表示该行是"重复行"
+     */
+    public static boolean[] duplicated(DataFrame df, String[] subset, String keep) {
+        int n = df.rowCount();
+        if (n == 0) return new boolean[0];
+        String[] cols = (subset == null || subset.length == 0)
+            ? df.columnNames().toArray(new String[0]) : subset;
+        String keepMode = keep == null ? "first" : keep;
+
+        // keep="none":出现 ≥ 2 次的签名 → 所有该签名的行都判重
+        if ("none".equals(keepMode) || "false".equalsIgnoreCase(keepMode)) {
+            Map<String, Integer> cnt = new HashMap<>();
+            for (int i = 0; i < n; i++) cnt.merge(keyOf(df, i, cols), 1, Integer::sum);
+            boolean[] out = new boolean[n];
+            for (int i = 0; i < n; i++) out[i] = cnt.get(keyOf(df, i, cols)) >= 2;
+            return out;
+        }
+
+        // keep="first" / "last":要保留的下标集合(签名 → 唯一保留下标)
+        boolean[] out = new boolean[n];
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        if ("first".equals(keepMode)) {
+            for (int i = 0; i < n; i++) out[i] = !seen.add(keyOf(df, i, cols));
+        } else if ("last".equals(keepMode)) {
+            for (int i = n - 1; i >= 0; i--) out[i] = !seen.add(keyOf(df, i, cols));
+        } else {
+            throw new IllegalArgumentException("duplicated keep 取值:first/last/none,实际:" + keepMode);
+        }
+        return out;
+    }
+
     private static String keyOf(DataFrame df, int r, String[] subset) {
         StringBuilder sb = new StringBuilder();
         for (String c : subset) sb.append(df.get(r, c)).append('\0');
@@ -205,5 +273,269 @@ public final class DataFrameReshape {
             case "last": return c.get(idx[idx.length - 1]);
             default: throw new IllegalArgumentException("pivotTable/dropDuplicates 不支持的聚合:" + fn);
         }
+    }
+
+    // ======================== 阶段 C 重塑扩展(2026-08-09;按 §3.1.1.1 内聚到此类)========================
+
+    // ┌─ What : pivot —— 简单透视(无聚合,严格 1:1 映射,重复键抛异常)
+    // │  Why  : 与 pivotTable 同源但语义不同(pivotTable 含聚合,pivot 假设唯一)
+    // │  How  : ① 用 (index, columns) 作行键扫一遍,记录每个 (idx_val, col_val) → value
+    //         ② 输出列 = columns 列的唯一值(排序);输出行 = index 列唯一值(保序)
+    /**
+     * 简单透视(对齐 pandas DataFrame.pivot;无聚合,假设每个 (index, columns) 组合唯一)。
+     * @param df       DataFrame 目标表,非 null
+     * @param index    String 用作输出行标签的列名;非 null
+     * @param columns  String 用作输出列标签的列名;非 null
+     * @param values   String 用作输出单元值的列名;非 null
+     * @return DataFrame 行数 = index 列唯一值数,列数 = columns 列唯一值数 + 1(第一列为 index 列)
+     * @throws IllegalArgumentException 当 (index, columns) 有重复 → 与 pandas 一致
+     */
+    public static DataFrame pivot(DataFrame df, String index, String columns, String values) {
+        int n = df.rowCount();
+        // 收集 index 唯一值(保序)与 columns 唯一值(升序)
+        java.util.List<Object> indexUniq = new java.util.ArrayList<>();
+        java.util.Set<Object> indexSeen = new java.util.HashSet<>();
+        java.util.Set<Object> colSeen = new java.util.TreeSet<>(DataFrameReshape::compareObj);
+        java.util.List<Object> colList = new java.util.ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            Object iv = df.get(i, index);
+            if (indexSeen.add(iv)) indexUniq.add(iv);
+            Object cv = df.get(i, columns);
+            if (colSeen.add(cv)) colList.add(cv);
+        }
+        // 用 TreeSet 排序的列
+        java.util.List<Object> sortedCols = new java.util.ArrayList<>(colSeen);
+        int nIdx = indexUniq.size(), nCol = sortedCols.size();
+        // 值桶:每个 index 唯一值一行,每个 col 唯一值一列
+        // 用 Map<indexVal, Map<colVal, value>> 索引(避免 n×m 全填)
+        Map<Object, Map<Object, Object>> grid = new HashMap<>();
+        for (int i = 0; i < n; i++) {
+            Object iv = df.get(i, index);
+            Object cv = df.get(i, columns);
+            Object vv = df.get(i, values);
+            Map<Object, Object> row = grid.computeIfAbsent(iv, k -> new HashMap<>());
+            if (row.containsKey(cv)) {
+                throw new IllegalArgumentException(
+                    "pivot (index=" + iv + ", columns=" + cv + ") 重复;请用 pivotTable 加聚合");
+            }
+            row.put(cv, vv);
+        }
+        // 输出 schema:[index, col1, col2, ...] 全 OBJECT(简化;具体类型由调用方 astype 转换)
+        Object[] schParts = new Object[2 * (1 + nCol)];
+        schParts[0] = index; schParts[1] = DType.OBJECT;
+        for (int j = 0; j < nCol; j++) {
+            schParts[2 + j * 2] = String.valueOf(sortedCols.get(j));
+            schParts[3 + j * 2] = DType.OBJECT;
+        }
+        Schema sch = Schema.of(schParts);
+        Object[][] rows = new Object[nIdx][];
+        for (int r = 0; r < nIdx; r++) {
+            Object[] row = new Object[1 + nCol];
+            row[0] = indexUniq.get(r);
+            Map<Object, Object> cells = grid.get(indexUniq.get(r));
+            for (int c = 0; c < nCol; c++) {
+                row[1 + c] = cells == null ? null : cells.get(sortedCols.get(c));
+            }
+            rows[r] = row;
+        }
+        return DataFrame.of(sch, rows);
+    }
+
+    /** 通用 Object 比较器(数值统一 doubleCompare;非数值 toString 比较)。 */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static int compareObj(Object a, Object b) {
+        if (a == null && b == null) return 0;
+        if (a == null) return -1;
+        if (b == null) return 1;
+        if (a instanceof Number na && b instanceof Number nb) {
+            return Double.compare(na.doubleValue(), nb.doubleValue());
+        }
+        if (a instanceof Comparable ca && b.getClass().equals(a.getClass())) {
+            return ca.compareTo(b);
+        }
+        return String.valueOf(a).compareTo(String.valueOf(b));
+    }
+
+    // ┌─ What : explode —— 把 list 列展平(每元素一行,其它列复制)
+    // │  Why  : 对齐 pandas DataFrame.explode(col);List 元素展平,非 List 元素当 1 元素处理
+    /**
+     * 把指定列展平(对齐 pandas DataFrame.explode)。
+     * <p>该列元素应为 Iterable/数组/单值。Iterable/数组每个元素生成一行(其它列复制);
+     * 单值/null 当 1 元素处理(null 保留为 null)。
+     * @param df DataFrame 目标表,非 null
+     * @param col String 列名(通常 OBJECT dtype),非 null
+     * @return DataFrame 行数 = 各行展平后元素数之和
+     */
+    @SuppressWarnings("unchecked")
+    public static DataFrame explode(DataFrame df, String col) {
+        int n = df.rowCount();
+        java.util.List<Object[]> exploded = new java.util.ArrayList<>();
+        for (int r = 0; r < n; r++) {
+            Object[] origRow = df.getRow(r);
+            Object v = df.get(r, col);
+            if (v == null) {
+                exploded.add(origRow.clone());
+            } else if (v instanceof Iterable<?> it) {
+                java.util.List<Object> elems = new java.util.ArrayList<>();
+                it.forEach(elems::add);
+                if (elems.isEmpty()) {
+                    Object[] newRow = origRow.clone();
+                    exploded.add(newRow);
+                } else {
+                    for (Object e : elems) {
+                        Object[] newRow = origRow.clone();
+                        newRow[df.columnIndex(col)] = e;
+                        exploded.add(newRow);
+                    }
+                }
+            } else if (v.getClass().isArray()) {
+                int len = java.lang.reflect.Array.getLength(v);
+                if (len == 0) {
+                    exploded.add(origRow.clone());
+                } else {
+                    for (int k = 0; k < len; k++) {
+                        Object[] newRow = origRow.clone();
+                        newRow[df.columnIndex(col)] = java.lang.reflect.Array.get(v, k);
+                        exploded.add(newRow);
+                    }
+                }
+            } else {
+                exploded.add(origRow.clone());
+            }
+        }
+        Object[][] rows = exploded.toArray(new Object[0][]);
+        // 重建 schema:用原 df 的 columnNames + dtypes 拼 Object[](name1, dtype1, name2, dtype2, ...)
+        java.util.List<String> names = df.columnNames();
+        java.util.List<DType> dtypes = df.dtypes();
+        Object[] schParts = new Object[names.size() * 2];
+        for (int i = 0; i < names.size(); i++) {
+            schParts[i * 2] = names.get(i);
+            schParts[i * 2 + 1] = dtypes.get(i);
+        }
+        return DataFrame.of(Schema.of(schParts), rows);
+    }
+
+    // stack / unstack:L5 修复(2026-08-09)—— 返回新 DataFrame,不破坏不可变
+    // stack:列名→行(宽→长,类似 melt 但保留所有非索引列)
+    // unstack:行值→列名(长→宽,类似 pivot)
+
+    /**
+     * 把指定列"堆叠"为行(对齐 pandas DataFrame.stack;宽→长)。
+     * <p>策略:把 valueCols 的列名放入新 "variable" 列,值放入 "value" 列;idCols 原样保留。
+     * 等价于 melt(idCols, valueCols),但语义更贴近 pandas stack。
+     * @param df DataFrame 目标表,非 null
+     * @param idCols String[] 保留为标识的列(不被堆叠);可空数组(全部堆叠)
+     * @param valueCols String[] 被堆叠的值列;列名进 variable,值进 value;非 null
+     * @return DataFrame 列 = idCols + ["variable", "value"];行数 = rowCount × valueCols.length
+     */
+    public static DataFrame stack(DataFrame df, String[] idCols, String[] valueCols) {
+        // stack 本质是 melt 的别名(语义等价:列→行)
+        String[] ids = idCols == null ? new String[0] : idCols;
+        return melt(df, ids, valueCols);
+    }
+
+    /**
+     * 展开:行→列(对齐 pandas DataFrame.unstack;长→宽)。
+     */
+    public static DataFrame unstack(DataFrame df, String idCol, String keyCol, String valCol) {
+        return pivot(df, idCol, keyCol, valCol);
+    }
+
+    // ======================== 补全:reindex/reindex_like/squeeze/rename_axis/set_axis(2026-08-09)========================
+
+    /**
+     * 重索引(对齐 pandas df.reindex);按 labels 重排行,缺失补 null。
+     * @param df DataFrame 目标表
+     * @param labels Object[] 目标行标签序列;当前 Index 中存在的保留,不存在的补全 null 行
+     * @return DataFrame 行数 == labels.length
+     */
+    public static DataFrame reindex(DataFrame df, Object[] labels) {
+        java.util.List<Integer> keepIdx = new java.util.ArrayList<>();
+        java.util.List<Integer> newIdx = new java.util.ArrayList<>();
+        for (Object label : labels) {
+            int found = -1;
+            Object[] existing = df.index().labels();
+            if (existing != null) {
+                for (int i = 0; i < existing.length; i++) {
+                    if (existing[i] != null && existing[i].equals(label)) { found = i; break; }
+                }
+            } else if (df.index().isRange() && label instanceof Number) {
+                int li = ((Number) label).intValue();
+                if (li >= 0 && li < df.rowCount()) found = li;
+            }
+            if (found >= 0) { keepIdx.add(found); newIdx.add(0); }
+            else { keepIdx.add(-1); newIdx.add(1); }  // -1 = 新行(补 null)
+        }
+        // 构建新表
+        Object[][] rows = new Object[labels.length][];
+        for (int r = 0; r < labels.length; r++) {
+            int src = keepIdx.get(r);
+            if (src >= 0) {
+                rows[r] = df.getRow(src);
+            } else {
+                rows[r] = new Object[df.columnCount()];  // 全 null
+            }
+        }
+        Object[] schParts = new Object[df.columnCount() * 2];
+        for (int i = 0; i < df.columnCount(); i++) {
+            schParts[i * 2] = df.columnNames().get(i);
+            schParts[i * 2 + 1] = df.dtypes().get(i);
+        }
+        DataFrame result = DataFrame.of(Schema.of(schParts), rows);
+        // 替换 Index 为 labels
+        return result.withIndex(Index.of(labels));
+    }
+
+    /** reindex_like(对齐 pandas df.reindex_like);用 other 的 Index 重索引 self。 */
+    public static DataFrame reindexLike(DataFrame self, DataFrame other) {
+        Object[] labels = other.index().labels();
+        if (labels == null) {
+            // RangeIndex → 生成 0..n-1
+            labels = new Object[other.rowCount()];
+            for (int i = 0; i < labels.length; i++) labels[i] = i;
+        }
+        return reindex(self, labels);
+    }
+
+    /**
+     * 降维(对齐 pandas df.squeeze);单行/单列 → 标量或 Series。
+     * <p>单行单列 → Object(标量);单列 → 本列 Column;单行 → Object[](行数据);其它 → 原 df 不变。
+     */
+    public static Object squeeze(DataFrame df) {
+        if (df.rowCount() == 1 && df.columnCount() == 1) {
+            return df.get(0, 0);
+        }
+        if (df.columnCount() == 1) {
+            return df.getColumn(df.columnNames().get(0));
+        }
+        if (df.rowCount() == 1) {
+            return df.getRow(0);
+        }
+        return df;  // 无法降维,返回原表
+    }
+
+    /**
+     * 重命名 Index 名(对齐 pandas df.rename_axis);jian Index 无 name 字段,简化为返回原 df(无操作)。
+     * <p>真正实现需要 Index 加 name 字段(留 v2);当前为 API 兼容占位。
+     */
+    public static DataFrame renameAxis(DataFrame df, String name) {
+        // jian v1 Index 无 name 字段;此方法为 API 兼容占位,返回原 df
+        return df;
+    }
+
+    /**
+     * 替换列名(对齐 pandas df.set_axis);用新列名数组替换现有列名。
+     * @param df DataFrame 目标表
+     * @param newLabels Object[] 新列名数组;长度必须 == columnCount
+     */
+    public static DataFrame setAxis(DataFrame df, Object[] newLabels) {
+        if (newLabels.length != df.columnCount()) {
+            throw new IllegalArgumentException("set_axis 标签数 " + newLabels.length + " ≠ 列数 " + df.columnCount());
+        }
+        java.util.List<Column> newCols = new java.util.ArrayList<>();
+        for (int i = 0; i < df.columnCount(); i++) {
+            newCols.add(df.getColumn(df.columnNames().get(i)).rename(String.valueOf(newLabels[i])));
+        }
+        return DataFrame.ofColumnsDirect(newCols);
     }
 }

@@ -54,7 +54,7 @@ jian-dsl 提供 **自写的 DataFrame 表达式 + 自写 SQL 子集引擎(L3 支
 - 不替代 core 的强类型 Java API(Java API 仍是主接口)。
 - 不做完整数据库 SQL 方言(只做"DataFrame 上的 SQL 子集")。
 - 不做 numexpr 那种向量化高性能引擎(用户已明确不追求极致性能)。
-- 不做存储过程/触发器/CTE/窗口函数 over SQL(SQL 子集够用,复杂分析走 core 的 window API)。
+- 不做存储过程/触发器/窗口函数 over SQL(SQL 子集够用,复杂分析走 core 的 window API)。**注**:CTE(WITH)阶段 E 已实现(SqlPreprocessor)。
 
 ### 1.5 依赖关系
 
@@ -139,8 +139,13 @@ DataFrame joined = Jian.sql("""
 Jian.sql("SELECT * FROM ${df1} UNION ALL SELECT * FROM ${df2}");
 ```
 
-**支持的 SQL 子集**:`SELECT`(含 `distinct` / `*` / 别名)/ `FROM ${df}`(占位符绑定 DataFrame)/ `JOIN ... ON`(inner/left/right)/ `WHERE` / `GROUP BY` / `HAVING` / `ORDER BY`(asc/desc)/ `LIMIT n [OFFSET m]` / `UNION ALL`。
-**不支持**:`WITH`(CTE)/ 窗口函数 over SQL(走 core window API)/ 子查询嵌套(v2)/ `INSERT/UPDATE/DELETE`(只读)。
+**支持的 SQL 子集**:
+- **DQL**:`SELECT`(含 `distinct` / `*` / 别名 / `CASE WHEN`)/ `FROM ${df}`(占位符绑定 DataFrame;含派生表 `FROM (SELECT ...)`)/ `JOIN ... ON`(inner/left/right/cross)+ `USING`/ `WHERE` / `GROUP BY` / `HAVING` / `ORDER BY`(asc/desc)/ `LIMIT n [OFFSET m]` / `WITH`(CTE)/ 集合运算 `UNION [ALL]` / `INTERSECT` / `EXCEPT`
+  > **注(2026-08-09 L8 修复)**:`SELECT` 表达式列已支持算术(`+ - * /`)+ 三元(`cond ? a : b`,嵌套)+ 比较/逻辑,委托 PrattEngine.eval 真实求值;**窗口函数 over SQL 不支持**(走 core 的 Window API,见 §9.4)。
+- **DML**(2026-08 新增,immutable-first):`INSERT INTO ... VALUES` / `UPDATE ... SET ... WHERE` / `DELETE FROM ... WHERE` —— **返回新 DataFrame,不修改原表**(与 §4.3 immutable-first 红线一致;与 jian-io-sql Engine 的"真实数据库只读"红线不冲突,两者语义边界干净)
+  > **注(2026-08-09 L8 修复)**:DML 的 WHERE 求值失败不再静默吞(原 catch skip 会让 UPDATE 漏更新/DELETE 漏删除),现抛 IAE 带 WHERE 原文。
+
+**不支持**:嵌套子查询多层(v2)、存储过程、DDL(CREATE/DROP TABLE 等)。
 
 ### 2.4 多方言兼容矩阵(**Oracle 基线** + PG/MySQL 兼容)
 
@@ -367,9 +372,9 @@ public interface DslEngine {  // jian-core 中定义
 ### 9.4 设计决策(非 TODO)
 
 以下为**有意不做**的设计选择(非遗留 TODO):
-- **ANTLR4 已弃用**:L3 SQL 自写 Pratt + 正则版功能完整(SELECT/WHERE/GROUP/HAVING/ORDER/LIMIT/JOIN 4种/UNION ALL/子查询2层),无需 ANTLR4 的额外复杂度和依赖。
-- **窗口函数 over SQL**:规范明确不做(走 core 的 Window API,规范 §1.4)。
-- **CTE(WITH)/存储过程**:规范明确不做(§2.3)。
+- **ANTLR4 已弃用**:L3 SQL 自写 Pratt + 正则版功能完整(SELECT/WHERE/GROUP/HAVING/ORDER/LIMIT/JOIN 4种/UNION ALL/子查询2层 + CTE/CASE WHEN/派生表/集合运算/算术表达式列),无需 ANTLR4 的额外复杂度和依赖。
+- **窗口函数 over SQL**:规范明确不做(走 core 的 Window API,规范 §1.4)。**注**:CTE(WITH)已实现(阶段 E SqlPreprocessor),不在此列。
+- **存储过程/触发器**:规范明确不做(内存 DataFrame 不需要过程化语义)。
 - **多方言空值函数归一化**(NVL/COALESCE/IFNULL):**已实现**(2026-08-02),见 §9.5。
 
 ---
@@ -389,4 +394,4 @@ public interface DslEngine {  // jian-core 中定义
 ---
 
 *本分册独立,与 02-06 无耦合,只单向依赖 core。完全可选,缺失时 core 兜底。jar 完全自包含。*
-*M6 实现(L1/L2/L3 + SPI 集成)完成于 2026-08-01;2026-08-02 全项目审查后 36 测试全过。*
+*M6 实现(L1/L2/L3 + SPI 集成)完成于 2026-08-01;2026-08-02 全项目审查后 36 测试全过;2026-08-09 L8 修复后实测 76 测试(DslTest 36 + SqlAdvancedTest 14 + SqlEngineInterfaceTest 19 + Round2AuditFixTest 8,数字以 api-counts.md 为准)。*

@@ -66,6 +66,10 @@ public final class Jian {
      *   <li>.parquet → Parquet;</li>
      *   <li>.jpk → jian 自定义 pickle。</li>
      * </ul>
+     * @param path String 文件路径,非 null;按扩展名分发
+     * @return DataFrame 读入的数据
+     * @throws Exception IO/解析异常
+     * @throws IllegalArgumentException 不支持的扩展名
      */
     public static DataFrame read(String path) throws Exception {
         String lower = path.toLowerCase();
@@ -90,80 +94,230 @@ public final class Jian {
 
     // ======================== pandas 风格 read_*/to_* (直接执行)========================
 
-    /** 对齐 pandas.read_csv。 */
+    /**
+     * 对齐 pandas.read_csv。
+     * @param path String CSV 文件路径,非 null
+     * @return DataFrame 读入的数据
+     * @throws Exception IO/解析异常
+     */
     public static DataFrame readCsv(String path) throws Exception { return Csv.read(path).go(); }
-    /** 对齐 pandas.read_csv(sep='\t'):TSV 读。 */
+    /**
+     * 对齐 pandas.read_csv(sep='\t'):TSV 读。
+     * @param path String TSV 文件路径,非 null
+     * @return DataFrame
+     * @throws Exception IO/解析异常
+     */
     public static DataFrame readTable(String path) throws Exception { return Csv.read(path).delimiter('\t').go(); }
-    /** 对齐 pandas.read_fwf:定宽读。 */
+    /**
+     * 对齐 pandas.read_fwf:定宽读。
+     * @param path   String 文件路径,非 null
+     * @param widths int... 每列宽度(字符数),非 null
+     * @return DataFrame
+     * @throws Exception IO/解析异常
+     */
     public static DataFrame readFwf(String path, int... widths) throws Exception {
         return Csv.readFwf(path).widths(widths).go();
     }
-    /** 对齐 pandas.read_json。 */
+    /**
+     * 对齐 pandas.read_json。
+     * @param path String JSON 文件路径,非 null
+     * @return DataFrame
+     * @throws Exception IO/解析异常
+     */
     public static DataFrame readJson(String path) throws Exception { return Json.read(path).go(); }
-    /** 对齐 pandas.read_excel。 */
+    /**
+     * 对齐 pandas.read_excel。
+     * @param path String Excel 文件路径(.xlsx/.xls),非 null
+     * @return DataFrame(首 sheet)
+     * @throws Exception IO/解析异常
+     */
     public static DataFrame readExcel(String path) throws Exception { return Excel.read(path).go(); }
-    /** 对齐 pandas.read_html。 */
+    /**
+     * 对齐 pandas.read_html。
+     * @param path String HTML 文件路径,非 null
+     * @return List&lt;DataFrame&gt; 每个 &lt;table&gt; 一个 DataFrame(可能多个)
+     * @throws Exception IO/解析异常
+     */
     public static java.util.List<DataFrame> readHtml(String path) throws Exception { return jian.io.html.Html.readAll(path); }
-    /** 对齐 pandas.read_xml。 */
+    /**
+     * 对齐 pandas.read_xml。
+     * @param path String XML 文件路径,非 null
+     * @return DataFrame
+     * @throws Exception IO/解析异常
+     */
     public static DataFrame readXml(String path) throws Exception { return jian.io.xml.Xml.read(path).go(); }
-    /** 对齐 pandas.read_parquet。 */
+    /**
+     * 对齐 pandas.read_parquet。
+     * @param path String Parquet 文件路径,非 null
+     * @return DataFrame
+     * @throws Exception IO/解析异常
+     */
     public static DataFrame readParquet(String path) throws Exception { return jian.io.parquet.Parquet.read(path).go(); }
-    /** 对齐 pandas.read_orc。 */
+    /**
+     * 对齐 pandas.read_orc。
+     * @param path String ORC 文件路径,非 null
+     * @return DataFrame
+     * @throws Exception IO/解析异常
+     */
     public static DataFrame readOrc(String path) throws Exception { return jian.io.orc.Orc.read(path).go(); }
-    /** 对齐 pandas.read_pickle(jian 自定义 .jpk 格式)。 */
+    /**
+     * 对齐 pandas.read_pickle(jian 自定义 .jpk 格式)。
+     * @param path String .jpk 文件路径,非 null
+     * @return DataFrame
+     * @throws Exception IO/解析异常
+     */
     public static DataFrame readPickle(String path) throws Exception { return jian.io.pickle.Pickle.read(path); }
-    /** 对齐 pandas.json_normalize:拍平嵌套 JSON(点号路径定位数组)。 */
+    /**
+     * 对齐 pandas.json_normalize:拍平嵌套 JSON(点号路径定位数组)。
+     * @param json       String JSON 文本,非 null
+     * @param recordPath String 点号路径(如 "data.items"),定位要拍平的数组;非 null
+     * @return DataFrame 拍平后的表
+     * @throws Exception 解析异常
+     */
     public static DataFrame jsonNormalize(String json, String recordPath) throws Exception {
         return jian.io.json.Json.normalize(json, recordPath);
     }
 
-    /** 对齐 pandas.to_csv。 */
+    /**
+     * 对齐 pandas.to_csv。
+     * @param df   DataFrame 待写出的表,非 null
+     * @param path String 目标 CSV 路径,非 null
+     * @throws Exception IO 异常
+     */
     public static void toCsv(DataFrame df, String path) throws Exception { Csv.write(df, path).go(); }
-    /** 对齐 pandas.to_csv(sep='\t'):TSV 写。 */
+    /**
+     * 对齐 pandas.to_csv(sep='\t'):TSV 写。
+     * @param df   DataFrame,非 null
+     * @param path String 目标 TSV 路径,非 null
+     * @throws Exception IO 异常
+     */
     public static void toTable(DataFrame df, String path) throws Exception { Csv.write(df, path).delimiter('\t').go(); }
-    /** 对齐 pandas.to_json。 */
+    /**
+     * 对齐 pandas.to_json。
+     * @param df   DataFrame,非 null
+     * @param path String 目标 JSON 路径,非 null
+     * @throws Exception IO 异常
+     */
     public static void toJson(DataFrame df, String path) throws Exception { Json.write(df, path).go(); }
-    /** 对齐 pandas.to_excel。 */
+    /**
+     * 对齐 pandas.to_excel。
+     * @param df   DataFrame,非 null
+     * @param path String 目标 .xlsx 路径,非 null
+     * @throws Exception IO 异常
+     */
     public static void toExcel(DataFrame df, String path) throws Exception { Excel.write(df, path).go(); }
-    /** 对齐 pandas.to_parquet。 */
+    /**
+     * 对齐 pandas.to_parquet。
+     * @param df   DataFrame,非 null
+     * @param path String 目标 .parquet 路径,非 null
+     * @throws Exception IO 异常
+     */
     public static void toParquet(DataFrame df, String path) throws Exception { jian.io.parquet.Parquet.write(df, path).go(); }
-    /** 对齐 pandas.to_orc。 */
+    /**
+     * 对齐 pandas.to_orc。
+     * @param df   DataFrame,非 null
+     * @param path String 目标 .orc 路径,非 null
+     * @throws Exception IO 异常
+     */
     public static void toOrc(DataFrame df, String path) throws Exception { jian.io.orc.Orc.write(df, path).go(); }
-    /** 对齐 pandas.to_pickle(jian 自定义 .jpk 格式)。 */
+    /**
+     * 对齐 pandas.to_pickle(jian 自定义 .jpk 格式)。
+     * @param df   DataFrame,非 null
+     * @param path String 目标 .jpk 路径,非 null
+     * @throws Exception IO 异常
+     */
     public static void toPickle(DataFrame df, String path) throws Exception { jian.io.pickle.Pickle.write(df, path); }
-    /** 对齐 pandas.to_html(经 jian-export 的 HtmlRenderer)。 */
+    /**
+     * 对齐 pandas.to_html(经 jian-export 的 HtmlRenderer)。
+     * @param df   DataFrame,非 null
+     * @param path String 目标 .html 路径,非 null
+     * @throws Exception IO 异常
+     */
     public static void toHtml(DataFrame df, String path) throws Exception { jian.export.HtmlRenderer.of(df).renderTo(path); }
-    /** 对齐 pandas.to_xml。 */
+    /**
+     * 对齐 pandas.to_xml。
+     * @param df   DataFrame,非 null
+     * @param path String 目标 .xml 路径,非 null
+     * @throws Exception IO 异常
+     */
     public static void toXml(DataFrame df, String path) throws Exception { jian.io.xml.Xml.write(df, path).go(); }
-    /** 对齐 pandas.to_latex。 */
+    /**
+     * 对齐 pandas.to_latex。
+     * @param df   DataFrame,非 null
+     * @param path String 目标 .tex 路径,非 null
+     * @throws Exception IO 异常
+     */
     public static void toLatex(DataFrame df, String path) throws Exception { jian.io.latex.LatexIo.write(df, path).go(); }
-    /** 对齐 pandas.to_markdown。 */
+    /**
+     * 对齐 pandas.to_markdown。
+     * @param df   DataFrame,非 null
+     * @param path String 目标 .md 路径,非 null
+     * @throws Exception IO 异常
+     */
     public static void toMarkdown(DataFrame df, String path) throws Exception {
         java.nio.file.Files.writeString(Path.of(path), jian.export.MarkdownRenderer.of(df).render());
     }
-    /** 对齐 pandas.to_clipboard(TSV 格式)。 */
+    /**
+     * 对齐 pandas.to_clipboard(TSV 格式)。
+     * @param df DataFrame 待写入剪贴板的表,非 null
+     * @throws Exception IO/平台异常
+     */
     public static void toClipboard(DataFrame df) throws Exception { jian.io.clipboard.Clipboard.write(df); }
 
+    /**
+     * 通过 SQL 查询读取数据库(经 jian-sql-bridge)。
+     * @param conn   java.sql.Connection 数据库连接,非 null
+     * @param sql    String SQL 查询语句(支持 ? 占位符),非 null
+     * @param params Object... 占位符参数,按顺序对应 ?
+     * @return DataFrame 查询结果
+     * @throws java.sql.SQLException SQL 执行异常
+     */
     public static DataFrame readSql(Connection conn, String sql, Object... params) throws java.sql.SQLException {
         return jian.sql.bridge.SqlBridge.toDataFrame(conn, sql, params);
     }
 
-    /** 对齐 pandas.read_sql_query:显式 SQL 查询。 */
+    /**
+     * 对齐 pandas.read_sql_query:显式 SQL 查询。
+     * @param conn   java.sql.Connection,非 null
+     * @param sql    String SQL 查询,非 null
+     * @param params Object... 占位符参数
+     * @return DataFrame
+     * @throws java.sql.SQLException SQL 异常
+     */
     public static DataFrame readSqlQuery(Connection conn, String sql, Object... params) throws java.sql.SQLException {
         return jian.io.sql.Sql.readQuery(conn, sql, params);
     }
 
-    /** 读整张表(对齐 pandas.read_sql_table)。 */
+    /**
+     * 读整张表(对齐 pandas.read_sql_table)。
+     * @param conn  java.sql.Connection,非 null
+     * @param table String 表名,非 null
+     * @return DataFrame 整表数据
+     * @throws java.sql.SQLException SQL 异常
+     */
     public static DataFrame readSqlTable(Connection conn, String table) throws java.sql.SQLException {
         return jian.io.sql.Sql.readTable(conn, table);
     }
 
-    /** 对齐 pandas.to_sql:DataFrame 写库表(默认 CREATE_OR_REPLACE)。 */
+    /**
+     * 对齐 pandas.to_sql:DataFrame 写库表(默认 CREATE_OR_REPLACE)。
+     * @param df    DataFrame 待写出的表,非 null
+     * @param conn  java.sql.Connection,非 null
+     * @param table String 目标表名,非 null
+     * @throws java.sql.SQLException SQL 异常
+     */
     public static void toSql(DataFrame df, Connection conn, String table) throws java.sql.SQLException {
         jian.io.sql.Sql.toSql(df, conn, table);
     }
 
-    /** 对齐 pandas.to_sql,可指定写模式。 */
+    /**
+     * 对齐 pandas.to_sql,可指定写模式。
+     * @param df    DataFrame,非 null
+     * @param conn  java.sql.Connection,非 null
+     * @param table String 目标表名,非 null
+     * @param mode  jian.io.sql.Sql.Mode 写入模式(OVERWRITE/APPEND/CREATE_OR_REPLACE/FAIL_IF_EXISTS)
+     * @throws java.sql.SQLException SQL 异常
+     */
     public static void toSql(DataFrame df, Connection conn, String table, jian.io.sql.Sql.Mode mode)
             throws java.sql.SQLException {
         jian.io.sql.Sql.toSql(df, conn, table, mode);
@@ -189,6 +343,10 @@ public final class Jian {
      *   <li>.parquet → Parquet;</li>
      *   <li>.jpk → jian 自定义 pickle。</li>
      * </ul>
+     * @param df   DataFrame 待写出的表,非 null
+     * @param path String 目标文件路径,非 null;按扩展名分发
+     * @throws Exception IO 异常
+     * @throws IllegalArgumentException 不支持的扩展名
      */
     public static void write(DataFrame df, String path) throws Exception {
         String lower = path.toLowerCase();
@@ -214,12 +372,23 @@ public final class Jian {
 
     // ======================== DSL 入口(L3 SQL)========================
 
-    /** 在 DataFrame 上跑 SQL 子集(sql 在前,df 参数在后,统一风格)。 */
+    /**
+     * 在 DataFrame 上跑 SQL 子集(sql 在前,df 参数在后,统一风格)。
+     * @param sql String SQL 语句(支持 ${name} 占位 + SELECT/WHERE/GROUP BY/JOIN),非 null
+     * @param dfs DataFrame... 绑定的 DataFrame(${name} 按出现顺序对应)
+     * @return DataFrame SQL 执行结果
+     */
     public static DataFrame sql(String sql, DataFrame... dfs) {
         return jian.dsl.Dsl.sql(sql, dfs);
     }
 
-    /** 指定方言。 */
+    /**
+     * 指定方言。
+     * @param sql     String SQL 语句,非 null
+     * @param dialect SqlDialect 方言(PG/MySQL/H2/SQLite/Oracle),非 null
+     * @param dfs     DataFrame... 绑定的 DataFrame
+     * @return DataFrame SQL 执行结果
+     */
     public static DataFrame sql(String sql, SqlDialect dialect, DataFrame... dfs) {
         return jian.dsl.Dsl.sql(sql, dialect, dfs);
     }

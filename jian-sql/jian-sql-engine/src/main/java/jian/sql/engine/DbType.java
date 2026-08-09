@@ -35,12 +35,25 @@ public enum DbType {
         this.driverClassName = driverClassName;
     }
 
+    /**
+     * @return String JDBC URL 模板(含 %s 占位符)
+     */
     public String urlPattern() { return urlPattern; }
+
+    /**
+     * @return int 默认端口(文件型数据库为 0)
+     */
     public int defaultPort() { return defaultPort; }
+
+    /**
+     * @return String JDBC 驱动全限定类名(用于反射探测)
+     */
     public String driverClassName() { return driverClassName; }
 
     /**
      * 驱动缺失时的安装提示(maven 坐标;版本统一见 doc/00-overview.md §2.3,不在此写死)。
+     *
+     * @return String maven 坐标字符串(groupId:artifactId)
      */
     public String driverHint() {
         return switch (this) {
@@ -55,6 +68,11 @@ public enum DbType {
 
     /**
      * 拼 JDBC URL(按 host/port/database 三段,适用 PG/MySQL/Doris/Oracle)。
+     *
+     * @param host     String 主机名或 IP,约束:不能为 null
+     * @param port     int 端口;port &lt;= 0 时回退到 defaultPort
+     * @param database String 数据库名,约束:可为空串
+     * @return String 拼好的 JDBC URL
      */
     public String jdbcUrl(String host, int port, String database) {
         if (port <= 0) port = defaultPort;
@@ -63,6 +81,9 @@ public enum DbType {
 
     /**
      * 拼 JDBC URL(单段,适用 SQLite/H2/Access 文件型)。
+     *
+     * @param path String 文件路径或内存库标识(如 /data/app.db 或 mem:test),约束:不能为 null
+     * @return String 拼好的 JDBC URL
      */
     public String jdbcUrl(String path) {
         return String.format(urlPattern, path);
@@ -70,6 +91,10 @@ public enum DbType {
 
     /**
      * 从 SQLAlchemy 风格 URL 解析 DbType(如 "postgresql://user:pass@host/db" → POSTGRESQL)。
+     *
+     * @param sqlalchemyUrl String SQLAlchemy 风格 URL,约束:不能为 null;前缀须为 postgresql/mysql/doris/sqlite/h2/oracle/access 之一
+     * @return DbType 解析出的数据库类型枚举
+     * @throws IllegalArgumentException 当 URL scheme 无法识别时抛出
      */
     public static DbType fromUrl(String sqlalchemyUrl) {
         String lower = sqlalchemyUrl.toLowerCase();

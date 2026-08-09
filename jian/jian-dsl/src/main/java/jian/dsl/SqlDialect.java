@@ -20,7 +20,12 @@ public enum SqlDialect {
     /** 通用默认(等同 ORACLE 基线)。 */
     DEFAULT;
 
-    /** 从环境变量 JIAN_SQL_DIALECT 读(对齐规范 §2.4 方式 C);默认 DEFAULT。 */
+    /**
+     * 从环境变量 JIAN_SQL_DIALECT 读(对齐规范 §2.4 方式 C);默认 DEFAULT。
+     *
+     * @return SqlDialect 环境变量/系统属性解析得到的方言;未配置时返回 DEFAULT
+     * @throws IllegalArgumentException 环境变量值无法匹配任一枚举常量时抛出
+     */
     public static SqlDialect fromEnv() {
         String v = System.getenv("JIAN_SQL_DIALECT");
         if (v == null) v = System.getProperty("jian.sql.dialect");
@@ -28,7 +33,11 @@ public enum SqlDialect {
         return valueOf(v.toUpperCase());
     }
 
-    /** 标识符是否大小写敏感。 */
+    /**
+     * 标识符是否大小写敏感。
+     *
+     * @return boolean true 大小写敏感(ORACLE/POSTGRESQL/DEFAULT),false 不敏感(MYSQL)
+     */
     public boolean caseSensitive() {
         return this != MYSQL;
     }

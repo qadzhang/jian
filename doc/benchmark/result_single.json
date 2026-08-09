@@ -1,0 +1,30 @@
+{
+  "seed": 20260808,
+  "sql": "SELECT k, count(*), sum(v) FROM t WHERE id % 10 = 0 GROUP BY k",
+  "scene": "单表 WHERE+GROUP BY 简单聚合:t(id,k,v), SELECT k,count(*),sum(v) WHERE id%10=0 GROUP BY k",
+  "jvm": "21.0.12",
+  "cores": 8,
+  "warmup": 1,
+  "measure": 3,
+  "hardTimeoutSec": 120,
+  "sizes": {
+    "1000000": {
+      "DuckDB": {"wall":4,"cpu":3,"mem":0,"groups":100},
+      "SQLite": {"wall":71,"cpu":71,"mem":1,"groups":100},
+      "H2": {"wall":163,"cpu":160,"mem":86,"groups":100},
+      "jian": {"wall":25,"cpu":24,"mem":8,"groups":100}
+    },
+    "5000000": {
+      "DuckDB": {"wall":11,"cpu":11,"mem":4,"groups":100},
+      "SQLite": {"wall":547,"cpu":546,"mem":2,"groups":100},
+      "H2": {"wall":742,"cpu":695,"mem":434,"groups":100},
+      "jian": {"wall":106,"cpu":102,"mem":39,"groups":100}
+    },
+    "10000000": {
+      "DuckDB": {"wall":33,"cpu":32,"mem":4,"groups":100},
+      "SQLite": {"wall":1187,"cpu":1186,"mem":2,"groups":100},
+      "H2": {"wall":120000,"cpu":120000,"mem":-1,"groups":-1},
+      "jian": {"wall":-1,"cpu":-1,"mem":-1,"groups":-1}
+    }
+  }
+}

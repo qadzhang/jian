@@ -55,7 +55,12 @@ public final class StrOps {
     /** trim 别名。 */
     public Ndarray trim() { return strip(); }
 
-    /** 重复 n 次(对齐 .str.repeat)。 */
+    /**
+     * 重复 n 次(对齐 .str.repeat)。
+     *
+     * @param n int 每个元素字符串重复的次数,约束:n &gt;= 0(n=0 返回空串)
+     * @return Ndarray OBJECT dtype,每个元素为原字符串重复 n 次的结果,null 透传为 null
+     */
     public Ndarray repeat(int n) {
         Object[] r = new Object[len];
         for (int i = 0; i < len; i++) r[i] = data[i] == null ? null : ((String) data[i]).repeat(n);
@@ -64,6 +69,10 @@ public final class StrOps {
 
     /**
      * 子串切片 [start, end)(对齐 .str.slice,支持负索引)。
+     *
+     * @param start int 起始索引(含),约束:支持负索引(-1 表末尾);越界自动夹到 [0, len]
+     * @param end   int 结束索引(不含),约束:支持负索引;越界自动夹到 [0, len];start &gt;= end 返回空串
+     * @return Ndarray OBJECT dtype,每个元素为切片结果,null 透传为 null
      */
     public Ndarray slice(int start, int end) {
         Object[] r = new Object[len];
@@ -82,6 +91,9 @@ public final class StrOps {
     /**
      * 字面量替换(对齐 .str.replace 默认 regex=False)。
      *
+     * @param target      String 被替换的字面子串,约束:不能为 null;空串会在每个字符间插入 replacement
+     * @param replacement String 替换为的新子串,约束:可为空串(等效删除 target)
+     * @return Ndarray OBJECT dtype,每个元素为替换后的结果,null 透传为 null
      * @see #replaceRegex 正则版
      */
     public Ndarray replace(String target, String replacement) {
@@ -90,17 +102,33 @@ public final class StrOps {
         return Ndarray.of(r);
     }
 
-    /** 正则替换(对齐 .str.replace(regex=True))。 */
+    /**
+     * 正则替换(对齐 .str.replace(regex=True))。
+     *
+     * @param regex        String 正则表达式,约束:Java 正则语法;非法模式会抛 PatternSyntaxException
+     * @param replacement  String 替换串,约束:可含 $1/$2 反向引用;可为空串(等效删除)
+     * @return Ndarray OBJECT dtype,每个元素为正则替换后的结果,null 透传为 null
+     */
     public Ndarray replaceRegex(String regex, String replacement) {
         Object[] r = new Object[len];
         for (int i = 0; i < len; i++) r[i] = data[i] == null ? null : ((String) data[i]).replaceAll(regex, replacement);
         return Ndarray.of(r);
     }
 
-    /** 左填充到 width(对齐 .str.pad(side='left'))。 */
+    /**
+     * 左填充到 width(对齐 .str.pad(side='left'))。
+     *
+     * @param width int 目标最小宽度,约束:width &gt;= 0;原串长度 &gt;= width 时不填充
+     * @return Ndarray OBJECT dtype,左侧以空格补齐到指定宽度,null 透传为 null
+     */
     public Ndarray padLeft(int width) { return pad(width, true, ' '); }
 
-    /** 右填充到 width。 */
+    /**
+     * 右填充到 width。
+     *
+     * @param width int 目标最小宽度,约束:width &gt;= 0;原串长度 &gt;= width 时不填充
+     * @return Ndarray OBJECT dtype,右侧以空格补齐到指定宽度,null 透传为 null
+     */
     public Ndarray padRight(int width) { return pad(width, false, ' '); }
 
     private Ndarray pad(int width, boolean left, char pad) {
@@ -131,14 +159,24 @@ public final class StrOps {
 
     // ======================== 谓词 → BOOL ========================
 
-    /** 包含子串(对齐 .str.contains,字面量版)。null → null。 */
+    /**
+     * 包含子串(对齐 .str.contains,字面量版)。null → null。
+     *
+     * @param substr String 待检测子串,约束:不能为 null;空串恒返回 true
+     * @return Ndarray BOOL dtype,每个元素表示原串是否包含 substr,null 透传为 null
+     */
     public Ndarray contains(String substr) {
         Boolean[] r = new Boolean[len];
         for (int i = 0; i < len; i++) r[i] = data[i] == null ? null : ((String) data[i]).contains(substr);
         return Ndarray.of(r);
     }
 
-    /** 正则包含(对齐 .str.contains(regex=True))。 */
+    /**
+     * 正则包含(对齐 .str.contains(regex=True))。
+     *
+     * @param regex String 正则表达式,约束:Java 正则语法;非法模式抛 PatternSyntaxException
+     * @return Ndarray BOOL dtype,每个元素表示原串是否匹配正则,null 透传为 null
+     */
     public Ndarray containsRegex(String regex) {
         Boolean[] r = new Boolean[len];
         java.util.regex.Pattern p = java.util.regex.Pattern.compile(regex);
@@ -146,21 +184,36 @@ public final class StrOps {
         return Ndarray.of(r);
     }
 
-    /** 前缀匹配(对齐 .str.startswith)。 */
+    /**
+     * 前缀匹配(对齐 .str.startswith)。
+     *
+     * @param prefix String 前缀子串,约束:不能为 null;空串恒返回 true
+     * @return Ndarray BOOL dtype,每个元素表示原串是否以 prefix 开头,null 透传为 null
+     */
     public Ndarray startsWith(String prefix) {
         Boolean[] r = new Boolean[len];
         for (int i = 0; i < len; i++) r[i] = data[i] == null ? null : ((String) data[i]).startsWith(prefix);
         return Ndarray.of(r);
     }
 
-    /** 后缀匹配(对齐 .str.endswith)。 */
+    /**
+     * 后缀匹配(对齐 .str.endswith)。
+     *
+     * @param suffix String 后缀子串,约束:不能为 null;空串恒返回 true
+     * @return Ndarray BOOL dtype,每个元素表示原串是否以 suffix 结尾,null 透传为 null
+     */
     public Ndarray endsWith(String suffix) {
         Boolean[] r = new Boolean[len];
         for (int i = 0; i < len; i++) r[i] = data[i] == null ? null : ((String) data[i]).endsWith(suffix);
         return Ndarray.of(r);
     }
 
-    /** 忽略大小写相等。 */
+    /**
+     * 忽略大小写相等。
+     *
+     * @param target String 比较目标串,约束:不能为 null
+     * @return Ndarray BOOL dtype,每个元素表示原串是否与 target 大小写不敏感相等,null 透传为 null
+     */
     public Ndarray equalsIgnoreCase(String target) {
         Boolean[] r = new Boolean[len];
         for (int i = 0; i < len; i++) r[i] = data[i] == null ? null : ((String) data[i]).equalsIgnoreCase(target);
@@ -171,6 +224,9 @@ public final class StrOps {
 
     /**
      * 全部元素拼接(对齐 .str.cat(sep)),跳过 null。
+     *
+     * @param sep String 元素之间的分隔符,约束:可为 null(按 null 处理)或空串(无间隔拼接)
+     * @return String 所有非 null 元素按顺序拼接的结果;全 null 时返回空串
      */
     public String cat(String sep) {
         StringBuilder sb = new StringBuilder();

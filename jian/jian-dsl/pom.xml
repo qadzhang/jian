@@ -17,6 +17,8 @@
       <groupId>jian</groupId>
       <artifactId>jian-core</artifactId>
     </dependency>
-    <!-- ANTLR4 已弃用:L3 SQL 用自写 Pratt + 正则版(功能完整,含子查询/OUTER JOIN/多表) -->
+    <!-- jian-dsl 纯 JDK,零外部依赖。
+         L3 SQL 引擎走自写 SqlRegexEngine(覆盖 SELECT/WHERE/GROUP/JOIN/UNION/CTE/CASE/派生表/集合运算/DML)。
+         可插拔接口 SqlEngineInterface 留给未来扩展(用户经 SqlEngines.useCustom() 接入自定义引擎)。 -->
   </dependencies>
 </project>

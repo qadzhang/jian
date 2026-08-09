@@ -50,59 +50,130 @@ public final class Styler {
 
     Styler(DataFrame df) { this.df = df; }
 
-    /** 创建 Styler(df.style())。 */
+    /**
+     * 创建 Styler(df.style())。
+     *
+     * @param df DataFrame 被美化的 DataFrame,非 null
+     * @return Styler 新建的可链式叠加规则的 Styler 实例
+     */
     public static Styler of(DataFrame df) { return new Styler(df); }
 
     // ======================== 规则 ========================
 
-    /** 数值格式化(对齐 .format),printf 风格如 "#,##0.00" 或 "%.2f"。 */
+    /**
+     * 数值格式化(对齐 .format),printf 风格如 "#,##0.00" 或 "%.2f"。
+     *
+     * @param pattern String 格式模式,如 "#,##0.00"、"%.2f"、"0.00%",非 null
+     * @param cols String[] 作用于的列名,可变参数,可为空(空则不施加任何列)
+     * @return Styler 当前 Styler(支持链式调用)
+     */
     public Styler format(String pattern, String... cols) {
         for (String c : cols) rules.add(new FormatRule(c, pattern));
         return this;
     }
 
-    /** 全表数值格式化。 */
+    /**
+     * 全表数值格式化。
+     *
+     * @param pattern String 格式模式,如 "#,##0.00"、"%.2f",非 null
+     * @return Styler 当前 Styler(支持链式调用)
+     */
     public Styler format(String pattern) {
         for (String c : df.columnNames()) rules.add(new FormatRule(c, pattern));
         return this;
     }
 
-    /** 高亮最大值单元格(对齐 .highlight_max)。 */
+    /**
+     * 高亮最大值单元格(对齐 .highlight_max)。
+     *
+     * @param col String 列名,非 null;必须存在于 DataFrame 中
+     * @param color String 颜色值,十六进制(如 "#ffff00")或色图常量,非 null
+     * @return Styler 当前 Styler(支持链式调用)
+     */
     public Styler highlightMax(String col, String color) {
         rules.add(new HighlightExtremeRule(col, color, true));
         return this;
     }
 
-    /** 高亮最小值单元格。 */
+    /**
+     * 高亮最小值单元格。
+     *
+     * @param col String 列名,非 null;必须存在于 DataFrame 中
+     * @param color String 颜色值,十六进制(如 "#ffff00")或色图常量,非 null
+     * @return Styler 当前 Styler(支持链式调用)
+     */
     public Styler highlightMin(String col, String color) {
         rules.add(new HighlightExtremeRule(col, color, false));
         return this;
     }
 
-    /** 高亮缺失值。 */
+    /**
+     * 高亮缺失值。
+     *
+     * @param color String 颜色值,十六进制(如 "#ffff00"),非 null
+     * @return Styler 当前 Styler(支持链式调用)
+     */
     public Styler highlightNull(String color) {
         rules.add(new HighlightNullRule(color));
         return this;
     }
 
-    /** 背景颜色渐变(对齐 .background_gradient)。 */
+    /**
+     * 背景颜色渐变(对齐 .background_gradient)。
+     *
+     * @param col String 列名,非 null;必须存在于 DataFrame 中且为数值列
+     * @param colorMap String 色图字符串,冒号分隔(如 ColorMap.GREEN_YELLOW_RED),非 null
+     * @return Styler 当前 Styler(支持链式调用)
+     */
     public Styler backgroundGradient(String col, String colorMap) {
         rules.add(new GradientRule(col, colorMap));
         return this;
     }
 
-    /** 单元格内条形(对齐 .bar)。 */
+    /**
+     * 单元格内条形(对齐 .bar)。
+     *
+     * @param col String 列名,非 null;必须存在于 DataFrame 中且为数值列
+     * @param color String 条形颜色,十六进制(如 "#0066cc"),非 null
+     * @return Styler 当前 Styler(支持链式调用)
+     */
     public Styler bar(String col, String color) {
         rules.add(new BarRule(col, color));
         return this;
     }
 
+    /**
+     * 设置表标题(对齐 .set_caption)。
+     *
+     * @param cap String 标题文本,非 null
+     * @return Styler 当前 Styler(支持链式调用)
+     */
     public Styler setCaption(String cap) { this.caption = cap; return this; }
+
+    /**
+     * 隐藏索引列(对齐 .hide_index)。
+     *
+     * @return Styler 当前 Styler(支持链式调用)
+     */
     public Styler hideIndex() { this.hideIndex = true; return this; }
+
+    /**
+     * 隐藏指定列(对齐 .hide_columns)。
+     *
+     * @param cols String[] 要隐藏的列名,可变参数,可为空
+     * @return Styler 当前 Styler(支持链式调用)
+     */
     public Styler hideColumns(String... cols) {
         for (String c : cols) hiddenColumns.add(c);
         return this;
     }
+
+    /**
+     * 设置全局 CSS 样式(对齐 .set_table_styles),写入 &lt;style&gt; 块。
+     *
+     * @param css String[] CSS 文本,可变参数,每条独立一行;非 null
+     * @return Styler 当前 Styler(支持链式调用)
+     */
     public Styler setTableStyles(String... css) {
         for (String s : css) tableStyles.add(s);
         return this;
@@ -110,7 +181,11 @@ public final class Styler {
 
     // ======================== 输出 HTML ========================
 
-    /** 渲染为带样式的 HTML(对齐 styler.to_html)。 */
+    /**
+     * 渲染为带样式的 HTML(对齐 styler.to_html)。
+     *
+     * @return String HTML 文本,含 &lt;style&gt; 与 &lt;table&gt; 标签
+     */
     public String toHtml() {
         // 先算各规则的辅助数据(极值/min-max)
         for (StyleRule r : rules) r.prepare(df);
@@ -136,11 +211,13 @@ public final class Styler {
             if (!hideIndex) sb.append("<th>").append(escape(String.valueOf(df.index().get(r)))).append("</th>");
             for (String c : visibleCols) {
                 int colIdx = df.columnIndex(c);
+                boolean missing = colIdx >= 0 && df.getColumn(c).isNull(r);
                 Object v = df.getColumn(c).get(r);
                 String text = formatValue(c, r, v);
-                String style = computeStyle(c, r, v);
+                // 缺失行传 null 给样式计算(DoubleColumn.get(NaN) 返回 Double.NaN 不是 null)
+                String style = computeStyle(c, r, missing ? null : v);
                 sb.append("<td").append(style.isEmpty() ? "" : " style=\"" + style + "\"").append(">")
-                  .append(v == null ? "<NA>" : escape(text)).append("</td>");
+                  .append(missing ? "" : escape(text)).append("</td>");
             }
             sb.append("</tr>\n");
         }
@@ -345,6 +422,9 @@ public final class Styler {
      *   <li>highlightNull → 空单元格背景色;</li>
      *   <li>format → DataFormat 数字格式。</li>
      * </ul>
+     *
+     * @param file java.io.File 目标 .xlsx 文件路径,非 null;父目录需可写
+     * @throws java.io.IOException 写文件失败时抛出(磁盘满 / 无权限 / 路径非法)
      */
     public void toExcel(java.io.File file) throws java.io.IOException {
         for (StyleRule r : rules) r.prepare(df);
@@ -372,13 +452,19 @@ public final class Styler {
                 if (!hideIndex) row.createCell(0).setCellValue(String.valueOf(df.index().get(r)));
                 for (int c = 0; c < visibleCols.size(); c++) {
                     String colName = visibleCols.get(c);
+                    boolean missing = df.getColumn(colName).isNull(r);
                     Object v = df.getColumn(colName).get(r);
                     org.apache.poi.ss.usermodel.Cell cell = row.createCell(c + colOff);
-                    if (v instanceof Number) cell.setCellValue(((Number) v).doubleValue());
-                    else if (v instanceof Boolean) cell.setCellValue((Boolean) v);
-                    else if (v != null) cell.setCellValue(String.valueOf(v));
+                    // 缺失行:空单元格(不写 "NaN";Excel 里空就是空)
+                    if (!missing) {
+                        if (v instanceof Number) cell.setCellValue(((Number) v).doubleValue());
+                        else if (v instanceof Boolean) cell.setCellValue((Boolean) v);
+                        else cell.setCellValue(String.valueOf(v));
+                    }
                     // 计算该单元格的样式(累积所有匹配规则)
-                    String bg = computeExcelBg(colName, r, v);
+                    // 缺失行:传 null 给样式计算(避免 NaN 值误触发数值高亮规则)
+                    Object vForStyle = missing ? null : v;
+                    String bg = computeExcelBg(colName, r, vForStyle);
                     String numFmt = excelNumFormat(colName);
                     if (bg != null || numFmt != null) {
                         org.apache.poi.ss.usermodel.CellStyle cs = wb.createCellStyle();
@@ -387,9 +473,6 @@ public final class Styler {
                             cs.setFillPattern(org.apache.poi.ss.usermodel.FillPatternType.SOLID_FOREGROUND);
                         }
                         if (numFmt != null) cs.setDataFormat(dataFormat.getFormat(numFmt));
-                        if (v instanceof Number) {
-                            // 保留数字格式(POI 设置 style 后数值类型保留)
-                        }
                         cell.setCellStyle(cs);
                     }
                 }
@@ -400,7 +483,12 @@ public final class Styler {
         }
     }
 
-    /** 路径便捷重载。 */
+    /**
+     * 路径便捷重载。
+     *
+     * @param path String 目标 .xlsx 文件路径字符串,非 null
+     * @throws java.io.IOException 写文件失败时抛出(磁盘满 / 无权限 / 路径非法)
+     */
     public void toExcel(String path) throws java.io.IOException { toExcel(new java.io.File(path)); }
 
     /** 计算某单元格的 Excel 背景色(累积所有规则;取最后匹配的)。 */

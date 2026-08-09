@@ -30,11 +30,35 @@ public final class MarkdownRenderer {
 
     private MarkdownRenderer(DataFrame df) { this.df = df; }
 
+    /**
+     * 创建 MarkdownRenderer。
+     *
+     * @param df DataFrame 待渲染的 DataFrame,非 null
+     * @return MarkdownRenderer 新建的 MarkdownRenderer 实例(默认 index=false / maxRows=60)
+     */
     public static MarkdownRenderer of(DataFrame df) { return new MarkdownRenderer(df); }
 
+    /**
+     * 是否输出索引列。
+     *
+     * @param v boolean true 输出索引列,false 隐藏(默认)
+     * @return MarkdownRenderer 当前实例(链式)
+     */
     public MarkdownRenderer index(boolean v) { this.index = v; return this; }
+
+    /**
+     * 设置最大显示行数,超过则 head/tail 截断。
+     *
+     * @param v int 最大显示行数,正整数
+     * @return MarkdownRenderer 当前实例(链式)
+     */
     public MarkdownRenderer maxRows(int v) { this.maxRows = v; return this; }
 
+    /**
+     * 渲染为 GFM Markdown 表格字符串。
+     *
+     * @return String Markdown 表格文本(含表头/分隔行/数据行,管道符已转义)
+     */
     public String render() {
         List<String> cols = df.columnNames();
         List<DType> dtypes = df.dtypes();
@@ -84,8 +108,9 @@ public final class MarkdownRenderer {
     private void updateWidths(int[] widths, int r, List<String> cols, int offset) {
         if (index) widths[0] = Math.max(widths[0], Math.min(String.valueOf(df.index().get(r)).length(), 30));
         for (int c = 0; c < cols.size(); c++) {
+            boolean missing = df.getColumn(cols.get(c)).isNull(r);
             Object v = df.get(r, c);
-            int w = v == null ? 4 : Math.min(String.valueOf(v).length(), 30);
+            int w = missing ? 0 : Math.min(String.valueOf(v).length(), 30);
             widths[c + offset] = Math.max(widths[c + offset], w);
         }
     }
@@ -94,8 +119,10 @@ public final class MarkdownRenderer {
         sb.append('|');
         if (index) sb.append(pad(String.valueOf(df.index().get(r)), widths[0], false)).append('|');
         for (int c = 0; c < cols.size(); c++) {
+            boolean missing = df.getColumn(cols.get(c)).isNull(r);
             Object v = df.get(r, c);
-            String s = v == null ? "<NA>" : String.valueOf(v);
+            // 缺失行显示空(不是 "NaN" 或 "<NA>");Excel/表格里空就是空
+            String s = missing ? "" : String.valueOf(v);
             // 管道符转义(对齐规范 04 §5)
             s = s.replace("|", "\\|");
             sb.append(pad(s, widths[c + offset], dtypes.get(c).isNumeric())).append('|');

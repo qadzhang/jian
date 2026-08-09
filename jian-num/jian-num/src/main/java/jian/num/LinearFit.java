@@ -28,8 +28,10 @@ public record LinearFit(double slope, double intercept, double rSquared) {
     /**
      * 拟合 y = slope·x + intercept。
      *
-     * @param x 自变量观测
-     * @param y 因变量观测(长度须等于 x)
+     * @param x double[] 自变量观测值数组,约束:不能为 null;可含 NaN(自动配对剔除);长度须与 y 一致
+     * @param y double[] 因变量观测值数组,约束:不能为 null;可含 NaN(自动配对剔除);长度须与 x 一致
+     * @return LinearFit 拟合结果记录(含 slope/intercept/rSquared)
+     * @throws IllegalArgumentException 当 x/y 为 null、长度不一致、或非 NaN 有效样本数 &lt; 2 时抛出
      */
     public static LinearFit fit(double[] x, double[] y) {
         if (x == null || y == null) throw new IllegalArgumentException("x/y 不能为 null");
@@ -60,7 +62,12 @@ public record LinearFit(double slope, double intercept, double rSquared) {
         return new LinearFit(beta[1], beta[0], ols.calculateRSquared());
     }
 
-    /** 用拟合模型预测 x 处的 y。 */
+    /**
+     * 用拟合模型预测 x 处的 y。
+     *
+     * @param x double 自变量取值,取值范围:任意实数(包括 NaN,结果将为 NaN)
+     * @return double 预测值 y = slope·x + intercept
+     */
     public double predict(double x) {
         return slope * x + intercept;
     }

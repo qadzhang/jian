@@ -39,16 +39,67 @@ public final class HtmlRenderer {
 
     private HtmlRenderer(DataFrame df) { this.df = df; }
 
+    /**
+     * 创建 HtmlRenderer。
+     *
+     * @param df DataFrame 待渲染的 DataFrame,非 null
+     * @return HtmlRenderer 新建的 HtmlRenderer 实例(默认 index=true / border=1 / naRep="&lt;NA&gt;" / maxRows=60)
+     */
     public static HtmlRenderer of(DataFrame df) { return new HtmlRenderer(df); }
 
+    /**
+     * 是否输出索引列。
+     *
+     * @param v boolean true 输出索引列(默认),false 隐藏
+     * @return HtmlRenderer 当前实例(链式)
+     */
     public HtmlRenderer index(boolean v) { this.index = v; return this; }
+
+    /**
+     * 设置 table border 属性。
+     *
+     * @param v int 边框像素,0 表示无边框
+     * @return HtmlRenderer 当前实例(链式)
+     */
     public HtmlRenderer border(int v) { this.border = v; return this; }
+
+    /**
+     * 设置缺失值显示文本。
+     *
+     * @param v String 缺失值占位文本,非 null
+     * @return HtmlRenderer 当前实例(链式)
+     */
     public HtmlRenderer naRep(String v) { this.naRep = v; return this; }
+
+    /**
+     * 设置 table 的 CSS class。
+     *
+     * @param v String CSS class 名(可多个用空格分隔),非 null
+     * @return HtmlRenderer 当前实例(链式)
+     */
     public HtmlRenderer classes(String v) { this.classes = v; return this; }
+
+    /**
+     * 设置最大显示行数,超过则 head/tail 截断。
+     *
+     * @param v int 最大显示行数,正整数
+     * @return HtmlRenderer 当前实例(链式)
+     */
     public HtmlRenderer maxRows(int v) { this.maxRows = v; return this; }
+
+    /**
+     * 设置 table 标题。
+     *
+     * @param v String 标题文本,null 表示无标题
+     * @return HtmlRenderer 当前实例(链式)
+     */
     public HtmlRenderer caption(String v) { this.caption = v; return this; }
 
-    /** 渲染为 HTML 字符串。 */
+    /**
+     * 渲染为 HTML 字符串。
+     *
+     * @return String HTML 表格字符串(含 thead / tbody 与截断占位)
+     */
     public String render() {
         StringBuilder sb = new StringBuilder();
         sb.append("<table border=\"").append(border).append("\" class=\"")
@@ -96,12 +147,22 @@ public final class HtmlRenderer {
         sb.append("</tr>\n");
     }
 
-    /** 落盘。 */
+    /**
+     * 落盘。
+     *
+     * @param file java.io.File 目标 HTML 文件,非 null;父目录需可写
+     * @throws java.io.IOException 写文件失败时抛出
+     */
     public void renderTo(java.io.File file) throws java.io.IOException {
         java.nio.file.Files.writeString(file.toPath(), render());
     }
 
-    /** 落盘(路径)。 */
+    /**
+     * 落盘(路径)。
+     *
+     * @param path String 目标 HTML 文件路径,非 null
+     * @throws java.io.IOException 写文件失败时抛出
+     */
     public void renderTo(String path) throws java.io.IOException {
         java.nio.file.Files.writeString(java.nio.file.Path.of(path), render());
     }

@@ -23,22 +23,46 @@ public final class Params {
 
     private Params(Map<String, Object> b) { this.bindings = b; }
 
+    /**
+     * 创建单参数 Params。
+     *
+     * @param name String 参数名,非 null
+     * @param value Object 参数值,可为 null
+     * @return Params 含单个绑定的新 Params
+     */
     public static Params of(String name, Object value) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put(name, value);
         return new Params(m);
     }
 
+    /**
+     * 追加一个参数(不可变,返回新 Params)。
+     *
+     * @param name String 参数名,非 null
+     * @param value Object 参数值,可为 null
+     * @return Params 含原绑定 + 新绑定的新 Params(原 Params 不变)
+     */
     public Params with(String name, Object value) {
         Map<String, Object> m = new LinkedHashMap<>(bindings);
         m.put(name, value);
         return new Params(m);
     }
 
-    /** 取参数值;不存在返回 null。 */
+    /**
+     * 取参数值;不存在返回 null。
+     *
+     * @param name String 参数名,非 null
+     * @return Object 参数值;不存在时返回 null
+     */
     public Object get(String name) { return bindings.get(name); }
 
-    /** 是否含某参数。 */
+    /**
+     * 是否含某参数。
+     *
+     * @param name String 参数名,非 null
+     * @return boolean true 含此参数,false 不含
+     */
     public boolean has(String name) { return bindings.containsKey(name); }
 
     Map<String, Object> all() { return bindings; }

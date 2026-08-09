@@ -63,7 +63,14 @@ public final class Engine implements AutoCloseable {
         this.ds = new HikariDataSource(hc);
     }
 
-    /** 创建 Engine(对齐 sqlalchemy.create_engine)。 */
+    /**
+     * 创建 Engine(对齐 sqlalchemy.create_engine)。
+     *
+     * @param dbType DbType 数据库类型枚举,取值范围:POSTGRESQL/MYSQL/H2/SQLITE/ORACLE/DORIS/ACCESS 之一
+     * @param config EngineConfig 连接配置(host/port/user/password/database/poolSize/readOnly 等)
+     * @return Engine 已初始化连接池的引擎实例
+     * @throws ModuleNotLoadedException 当 dbType 对应的 JDBC 驱动不在 classpath 时抛出
+     */
     public static Engine create(DbType dbType, EngineConfig config) {
         return new Engine(dbType, config);
     }
@@ -71,16 +78,32 @@ public final class Engine implements AutoCloseable {
     /**
      * 从 SQLAlchemy 风格 URL 创建(对齐规范 §2.1)。
      * URL 形如 "postgresql://user:pass@host:port/db";password 可用 ${ENV_VAR} 占位。
+     *
+     * @param sqlalchemyUrl String SQLAlchemy 风格 URL,约束:不能为 null;须形如 scheme://[user[:pass]@]host[:port]/db
+     * @return Engine 已初始化连接池的引擎实例
+     * @throws ModuleNotLoadedException       当驱动缺失时抛出
+     * @throws IllegalArgumentException       当 URL 格式非法或 scheme 不支持时抛出
      */
     public static Engine fromUrl(String sqlalchemyUrl) {
         ParsedUrl parsed = parseUrl(sqlalchemyUrl);
         return new Engine(parsed.dbType, parsed.config);
     }
 
-    /** URL 解析结果(不立即建 Engine,便于测试)。 */
+    /**
+     * URL 解析结果(不立即建 Engine,便于测试)。
+     *
+     * @param dbType DbType 数据库类型枚举
+     * @param config EngineConfig 解析得到的连接配置
+     */
     public record ParsedUrl(DbType dbType, EngineConfig config) {}
 
-    /** 仅解析 SQLAlchemy URL,不建 Engine(不触发驱动加载)。 */
+    /**
+     * 仅解析 SQLAlchemy URL,不建 Engine(不触发驱动加载)。
+     *
+     * @param sqlalchemyUrl String SQLAlchemy 风格 URL,约束:不能为 null;须形如 scheme://[user[:pass]@]host[:port]/db
+     * @return ParsedUrl 解析结果(含 dbType 与 EngineConfig)
+     * @throws IllegalArgumentException 当 URL 格式非法或 scheme 不支持时抛出
+     */
     public static ParsedUrl parseUrl(String sqlalchemyUrl) {
         DbType dbType = DbType.fromUrl(sqlalchemyUrl);
         String body = sqlalchemyUrl.substring(sqlalchemyUrl.indexOf("://") + 3);
@@ -149,7 +172,12 @@ public final class Engine implements AutoCloseable {
         }
     }
 
-    /** 借连接(自动提交)。 */
+    /**
+     * 借连接(自动提交)。
+     *
+     * @return Connection 从连接池借出的 JDBC 连接(用完须 close 归还)
+     * @throws SQLException 当借连接失败时抛出
+     */
     public Connection connect() throws SQLException {
         return ds.getConnection();
     }
@@ -157,6 +185,9 @@ public final class Engine implements AutoCloseable {
     /**
      * 借连接 + 关闭自动提交(对齐 sqlalchemy engine.begin)。
      * <p>语义:用户在 try-with-resources 块内显式 commit();若抛异常,JDBC 语义下未提交自动回滚。
+     *
+     * @return Connection 已关闭自动提交的连接(事务模式)
+     * @throws SQLException 当借连接或设置 autoCommit 失败时抛出
      */
     public Connection begin() throws SQLException {
         Connection conn = ds.getConnection();
@@ -164,13 +195,27 @@ public final class Engine implements AutoCloseable {
         return conn;
     }
 
-    /** 提交事务。 */
+    /**
+     * 提交事务。
+     *
+     * @param conn Connection 事务连接,约束:须为 begin() 借出的连接
+     * @throws SQLException 当提交失败时抛出
+     */
     public void commit(Connection conn) throws SQLException { conn.commit(); }
 
-    /** 回滚事务。 */
+    /**
+     * 回滚事务。
+     *
+     * @param conn Connection 事务连接,约束:须为 begin() 借出的连接
+     * @throws SQLException 当回滚失败时抛出
+     */
     public void rollback(Connection conn) throws SQLException { conn.rollback(); }
 
-    /** 暴露底层 DataSource(供 jian-sql-expr/orm 用)。 */
+    /**
+     * 暴露底层 DataSource(供 jian-sql-expr/orm 用)。
+     *
+     * @return DataSource HikariCP 连接池
+     */
     public DataSource dataSource() { return ds; }
 
     /**
@@ -179,6 +224,8 @@ public final class Engine implements AutoCloseable {
      * Result<Record> r = engine.dsl().ctx().selectFrom("users").fetch();
      * }</pre>
      * 需要 jian-sql-expr jar(本方法所在 jar 已依赖它)。
+     *
+     * @return SqlBuilder 类型安全查询构建器(已绑定本引擎的 DataSource 与方言)
      */
     public jian.sql.expr.SqlBuilder dsl() {
         return jian.sql.expr.SqlBuilder.create(ds, toExprDialect(dbType));
@@ -187,11 +234,19 @@ public final class Engine implements AutoCloseable {
     /**
      * 原生 SQL 查询入口(对齐规范 05 §2.2 engine.sql("...", params).fetch())。
      * <pre>{@code
-     * Result<Record> r = engine.sql("SELECT * FROM users WHERE age > ?", 18).fetch();
+     * Result<Record> r = engine.sql("SELECT * FROM users WHERE age &gt; ?", 18).fetch();
      * }</pre>
      * 值一律走 ? 占位符参数化绑定(防注入)。
+     * <p><b>Web 安全修复(2026-08-08)</b>:只读模式(readOnly=true)下,拦截写操作(DROP/DELETE/INSERT/UPDATE 等)。
+     * 之前 checkReadOnly 是死代码(写了但没调用);现在 sql() 入口强制调用。
+     *
+     * @param sql    String SQL 模板,约束:不能为 null;值用 ? 占位;只读模式下拦截 DROP/DELETE/INSERT/UPDATE 等写操作
+     * @param params Object... 绑定到 ? 的参数值,顺序与 SQL 中的 ? 一致;可省略
+     * @return SqlBuilder 已注入原生 SQL 与参数的构建器
+     * @throws SecurityException 当 readOnly=true 且 SQL 为写操作时抛出
      */
     public jian.sql.expr.SqlBuilder sql(String sql, Object... params) {
+        checkReadOnly(sql);   // Web 安全:只读模式拦截写操作(2026-08-08 修复死代码)
         return dsl().query(sql, params);
     }
 
@@ -207,8 +262,19 @@ public final class Engine implements AutoCloseable {
         };
     }
 
+    /**
+     * @return DbType 当前引擎的数据库类型
+     */
     public DbType dbType() { return dbType; }
+
+    /**
+     * @return EngineConfig 当前引擎的连接配置
+     */
     public EngineConfig config() { return config; }
+
+    /**
+     * @return boolean 是否只读模式(拦截写操作)
+     */
     public boolean isReadOnly() { return readOnly; }
 
     /**
@@ -217,6 +283,9 @@ public final class Engine implements AutoCloseable {
      *
      * <p>安全:先剥掉 SQL 前导空白、行注释(-- ...)与块注释,再按整词匹配危险关键字,
      * 防 "块注释 + DROP TABLE" 这类绕过。
+     *
+     * @param sql String 待校验的 SQL,约束:不能为 null
+     * @throws SecurityException 当 readOnly=true 且 SQL 为写操作时抛出
      */
     public void checkReadOnly(String sql) {
         if (!readOnly) return;

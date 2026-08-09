@@ -26,7 +26,7 @@ import java.sql.SQLException;
  * SqlBuilder qb = SqlBuilder.create(dataSource, SqlBuilder.Dialect.H2).withConnection(conn);
  *
  * // 方式 A:直接用 jOOQ DSL(类型安全)
- * Result<Record> r = qb.ctx().selectFrom("users").where("age > ?", 18).orderBy(DSL.field("age").desc()).fetch();
+ * Result<Record> r = qb.ctx().selectFrom("users").where("age &gt; ?", 18).orderBy(DSL.field("age").desc()).fetch();
  *
  * // 方式 B:原生 SQL(参数化防注入)
  * Result<Record> r2 = qb.fetch("SELECT * FROM users WHERE name = ?", "alice");
@@ -46,6 +46,11 @@ public final class SqlBuilder implements AutoCloseable {
         this.dialect = dialect;
     }
 
+    /**
+     * @param ds      DataSource 数据源,约束:不能为 null(用于借连接)
+     * @param dialect Dialect jian 方言枚举,取值范围:POSTGRESQL/MYSQL/DORIS/H2/SQLITE/ORACLE/ACCESS/DEFAULT 之一
+     * @return SqlBuilder 已绑定数据源与方言的构建器实例(尚未借连接)
+     */
     public static SqlBuilder create(DataSource ds, Dialect dialect) {
         return new SqlBuilder(ds, dialect.jooq());
     }
@@ -63,6 +68,9 @@ public final class SqlBuilder implements AutoCloseable {
 
         private final SQLDialect jooq;
         Dialect(SQLDialect j) { this.jooq = j; }
+        /**
+         * @return SQLDialect 对应的 jOOQ 方言枚举
+         */
         public SQLDialect jooq() { return jooq; }
     }
 
@@ -72,6 +80,10 @@ public final class SqlBuilder implements AutoCloseable {
     /**
      * 预置原生 SQL(参数化),后续 {@link #fetch()} / {@link #execute()} 执行。
      * 支持 engine.sql("...", params) 链式入口(规范 05 §2.2)。
+     *
+     * @param sql    String 原生 SQL 模板,约束:不能为 null;值用 ? 占位防注入
+     * @param params Object... 绑定到 ? 的参数值,顺序与 SQL 中的 ? 一致;可为 null(按无参处理)
+     * @return SqlBuilder 自身(链式)
      */
     public SqlBuilder query(String sql, Object... params) {
         this.pendingSql = sql;
@@ -91,14 +103,23 @@ public final class SqlBuilder implements AutoCloseable {
         return execute(pendingSql, pendingParams);
     }
 
-    /** 绑定外部连接(事务内复用同一 Connection,close 时不关此连接)。 */
+    /**
+     * 绑定外部连接(事务内复用同一 Connection,close 时不关此连接)。
+     *
+     * @param conn Connection 外部传入的连接,约束:不能为 null;close() 时不会关闭它
+     * @return SqlBuilder 自身(链式)
+     */
     public SqlBuilder withConnection(Connection conn) {
         this.ownedConn = null;
         this.ctx = DSL.using(conn, dialect);
         return this;
     }
 
-    /** 暴露 jOOQ DSLContext(类型安全 DSL 入口,用户直接用 jOOQ 链式 API)。 */
+    /**
+     * 暴露 jOOQ DSLContext(类型安全 DSL 入口,用户直接用 jOOQ 链式 API)。
+     *
+     * @return DSLContext 已绑定连接与方言的 jOOQ 上下文;首次调用时按需借连接
+     */
     public DSLContext ctx() {
         if (ctx != null) return ctx;
         try {
@@ -110,20 +131,43 @@ public final class SqlBuilder implements AutoCloseable {
         }
     }
 
-    /** 直接执行原生 SQL(参数化,防注入)。 */
+    /**
+     * 直接执行原生 SQL(参数化,防注入)。
+     *
+     * @param sql    String SELECT SQL 模板,约束:不能为 null;值用 ? 占位
+     * @param params Object... 绑定到 ? 的参数值,顺序与 SQL 中的 ? 一致
+     * @return Result<Record> 查询结果集
+     */
     public Result<Record> fetch(String sql, Object... params) {
         return ctx().fetch(sql, params);
     }
 
-    /** 执行 DML(INSERT/UPDATE/DELETE),返回影响行数。 */
+    /**
+     * 执行 DML(INSERT/UPDATE/DELETE),返回影响行数。
+     *
+     * @param sql    String DML SQL 模板,约束:不能为 null;值用 ? 占位
+     * @param params Object... 绑定到 ? 的参数值,顺序与 SQL 中的 ? 一致
+     * @return int 受影响行数
+     */
     public int execute(String sql, Object... params) {
         return ctx().execute(sql, params);
     }
 
     @Override public void close() {
-        // 只关闭本类自取的 Connection(外部传入的不关)
+        // 只关闭本类自取的 Connection(外部传入的不关)。
+        // close 失败通常不致命(连接可能已被底层池回收),但**不静吞**:
+        // 至少打到 stderr 让运维可见(避免连接池耗尽时无声无息)。
         if (ownedConn != null) {
-            try { ownedConn.close(); } catch (SQLException ignored) {}
+            try {
+                ownedConn.close();
+            } catch (SQLException e) {
+                // 不抛出(close 在 finally/try-with-resources 里抛异常会掩盖主异常),
+                // 但留痕:错误码 + SQLState + 消息,够运维定位。
+                System.err.println("[jian-sql] SqlBuilder.close 关闭连接失败(可能已回收):"
+                        + " errorCode=" + e.getErrorCode()
+                        + " sqlState=" + e.getSQLState()
+                        + " msg=" + e.getMessage());
+            }
         }
     }
 }

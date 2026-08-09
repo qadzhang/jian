@@ -2,11 +2,11 @@
 
 > **本文件凌驾于本目录所有其它文档。** 与上级目录的通用 `AGENTS.md`(通用规范)冲突时,以本文件为准;本文件未覆盖处,沿用通用规范的对应条款。
 >
-> **jian 的特殊性**:本目录产出的是**对外分发的通用 Java 库**(jian / jian-sql / jian-num),不是脚本工具集,也不是技能包(Skill)。因此对通用规范做了四处重大调整:① **只用 Java 编写,不用 Groovy/Kotlin 等 JVM 语言**(§1);② **破例引入 Maven 多模块**(§2);③ **不做包整合 —— 不用 uber/fat jar、不用 maven-shade,外部 jar 一律按 `groupId:artifactId:version` 精细引用**(§2.5);④ **不适用 Skill 开发标准**(通用规范第 0、6 章整章不适用,见 §0 说明)。
+> **jian 的特殊性**:本目录产出的是**对外分发的通用 Java 库**(jian / jian-sql / jian-num),不是脚本工具集,也不是插件包。因此对通用规范做了四处重大调整:① **只用 Java 编写,不用 Groovy/Kotlin 等 JVM 语言**(§1);② **破例引入 Maven 多模块**(§2);③ **子模块零整合、顶层三库可选 fat**(子模块的 jar 一律按 `groupId:artifactId:version` 精细引用、严禁 shade;顶层 jian/jian-num/jian-sql 经 `-Pfat` 允许出 `*-all.jar`,见 §2.5);④ **不适用插件开发标准**(通用规范第 0、6 章整章不适用,见 §0 说明)。
 
 ---
 
-## 0. 总纲(三条红线)
+## 0. 总纲(四条红线)
 
 ### 0.1 项目定位:对外分发的通用 Java 库
 
@@ -38,13 +38,51 @@ jian 是 **JVM 上对标 pandas / sqlalchemy / numpy 子集**的轻量数据栈,
 
 | 通用规范章节 | 在 jian 的适用性 | 处理 |
 |---|---|---|
-| §0 Skills 使用规范 | ❌ 不适用(jian 不是 skill) | **整章删除** |
+| §0 AI 工具使用规范 | ❌ 不适用(jian 是独立 Java 库) | **整章删除** |
 | §1 编程语言与运行环境 | ⚠️ **只用 Java**(不用 Groovy/Kotlin 等 JVM 语言)、JDK 改 17 | §1 重写 |
-| §2 依赖与 jar 包管理 | ⚠️ 破例用 Maven、**不做包整合**(不用 uber/fat/shade) | §2 重写 |
+| §2 依赖与 jar 包管理 | ⚠️ 破例用 Maven、**子模块零整合**(禁 shade),顶层三库可选 fat | §2 重写 |
 | §3 编码与文档规范 | ✅ 完全适用 | §3 保留(示例改 Java) |
 | §4 脚本与临时文件管理 | ✅ 适用 | §6 保留 |
 | §5 工作流程检查清单 | ✅ 适用 | §8 重写为本项目流程 |
-| §6 Skill 开发标准 | ❌ 不适用 | **整章删除** |
+| §6 插件开发标准 | ❌ 不适用 | **整章删除** |
+
+---
+
+### 0.5 pandas 对照测试(强制 · 凌驾全章 · 红线)
+
+> **jian 借鉴自 Python pandas,凡是与 pandas 功能对齐的部分,都必须以 pandas 为 oracle(老师)做对照测试,拉齐差异。** 这是本项目正确性的最终判据,凌驾所有其它测试方法之上。
+
+#### 为什么必须用 pandas 当老师
+
+- jian 自我对拍(Java jqwik ↔ Python Hypothesis,或 fast path ↔ generic path)只能验证"内部一致性",**无法发现"与行业标准不一致"的 bug**——比如稳定排序在所有键相同时的行序,jian 与 pandas 不同,jian 内部自洽但行为偏离标准。
+- **pandas 是 30 年积累的事实标准**。任何 jian 与 pandas 在同输入下的结果差异,要么是 jian 的 bug(应修),要么是有意的设计差异(必须在文档显式声明 + 测试中标注)。
+- 没有 oracle 的测试都是"学生自己批自己的作业"——必须让 pandas 老师批改。
+
+#### 强制要求(凡新增/修改算子时必做)
+
+1. **凡对标 pandas 的算子**(sortBy/sort_values、merge、groupBy/agg、head/tail、filter/query、concat、dropDuplicates、fillna/dropna/ffill/bfill、astype、select/drop、slice/iloc、nlargest/nsmallest、colAdd/colMul、assign 等),**必须有 pandas 对照测试**。
+2. 对照测试放在 `tests-pbt/properties/test_pandas_diff.py`,用 Hypothesis 生成同一种输入:
+   - 一份发给 jian(通过 `JianPbtBridge` subprocess + JSON 协议)
+   - 一份发给 pandas(直接 `import pandas as pd`)
+   - 逐行逐列比对结果(允许浮点容差、缺失值等价)
+3. **失败时让 Hypothesis shrink 到最小失败用例**——直接定位 jian 与 pandas 的具体行为差异点。
+4. **发现差异必须做出决策**(二选一,不许含糊):
+   - **方案 A**:把 jian 行为对齐 pandas(修 jian 代码)
+   - **方案 B**:声明这是有意的设计差异(在 `doc/00-overview.md` 显式记录 + 测试中加 `@pytest.mark.xfail` 注释原因)
+5. **绝对禁止**:发现差异后既不对齐也不声明,让 jian 与 pandas 行为悄悄不一致(这是测试偷懒,违反本红线)。
+
+#### 已落地的对照范围(持续扩展)
+
+当前 `test_pandas_diff.py` 覆盖 **38 个 pandas 对照测试**(d1-d38,含 head/tail/sortBy/filter/dropDuplicates/merge/concat/nlargest/nsmallest/select/drop/slice/colSub/colDiv/colLt/fillna/dropna/ffill/astype/groupBy/idxmax/idxmin/duplicated/sample/isin/where/mask/cumsum/diff/pct_change/clip/quantile/rank/round/prod/pivot/explode/merge_asof;完整清单见 `tests-pbt/properties/test_pandas_diff.py` 的 `test_d*` 函数)。每次 jian 新增/修改算子,对应的 pandas 对照测试必须同步增加。详见 `doc/00-overview.md §10.12`(pandas 对照测试实战)。
+
+#### 跑法
+
+```bash
+# 跑全部 pandas 对照测试(需要本机已装 pandas)
+python3 -m pytest tests-pbt/properties/test_pandas_diff.py -v
+```
+
+> **本机要求**:pandas 1.5.3+(由 `pip install pandas` 或系统包提供)。本机 pandas 不在 classpath 里时,本测试套件会 skip 而非 fail(优雅降级,符合 §0.2 零本机绑定的精神)。
 
 ---
 
@@ -109,14 +147,15 @@ https://maven.aliyun.com/repository/public
 
 本机开发时,共享 jar 仓库仍走通用规范 §2 约定的目录(本机如 `~/tools/jar`)。但**严禁把绝对路径写进任何源码、文档、pom、注释**;该路径只用于"在本机跑日常验证",一旦封装进库,必须替换为运行时探测(见 §0.2 / §7)。
 
-### 2.5 精细引用原则(强制 · 不做包整合)
+### 2.5 引用与打包原则(强制 · 子模块禁整合,顶层三库允许 fat)
 
-**外部 jar 一律按其具体 `groupId:artifactId:version` 精细声明,严禁使用任何形式的"包整合"。**
+**核心立场:子模块对外发布的 jar 一律按其具体 `groupId:artifactId:version` 精细声明、绝不整合;但顶层三库(jian / jian-num / jian-sql)允许通过 `-Pfat` 出可选的 `*-all.jar`(fat jar),作为"单文件即可上手"的 AI 友好补充制品。**
 
-- ❌ **禁止使用 uber jar / fat jar**:不得引用 `poi-ooxml-5.5.1-uber.jar`、`docx4j-17.0.1.jar` 这类把全部传递依赖打进单 jar 的整合包。
-- ❌ **禁止使用 maven-shade-plugin / maven-assembly-plugin 把依赖 shade 进产物 jar**:每个子模块的 jar 只含本模块自写代码,外部依赖通过 `pom.xml` 的 `<dependencies>` 正常声明,由用户的 Maven 依赖解析去拉。
-- ❌ **禁止 `-uber`、`-all`、`-bundle`、`-fat`、`-shaded` 后缀的制品**。
-- ✅ **必须**:每个外部库引其**原生的、单一职责的 artifact**。例如要 Excel 能力,引 POI 就明确写出:
+#### 2.5.1 子模块:精细引用(强制,红线)
+
+- ❌ **子模块的产物 jar 禁止任何形式的"包整合"**:`jian-core` / `jian-io-*` / `jian-viz` / `jian-export` / `jian-dsl` / `jian-sql-*` 等**叶子模块**,其 jar 只含本模块自写代码,**严禁**把外部依赖塞进去。
+- ❌ **子模块严禁使用 maven-shade-plugin / maven-assembly-plugin**:子模块 jar 不得出现 `*-uber`、`*-all`、`*-bundle`、`*-fat`、`*-shaded` 后缀。
+- ✅ **子模块必须精细引用**:每个外部库引其**原生的、单一职责的 artifact**。例如要 Excel 能力,引 POI 就明确写出:
   ```xml
   <dependency>
       <groupId>org.apache.poi</groupId>
@@ -124,11 +163,34 @@ https://maven.aliyun.com/repository/public
       <version>5.5.1</version>
   </dependency>
   ```
-  POI 自身需要的传递依赖(`poi`、`xmlbeans`、`commons-compress`、`commons-collections4` 等)由 Maven 自动拉取,**不手动整合、不在 pom 里显式塞这些传递依赖**(除非要做版本仲裁)。
+  POI 自身需要的传递依赖(`poi`、`xmlbeans`、`commons-compress`、`commons-collections4` 等)由 Maven 自动拉取,**不手动整合、不在子模块 pom 里显式塞这些传递依赖**(除非要做版本仲裁)。
 - ✅ jian-dsl 的 DSL 引擎自写 Pratt parser + 正则(零运行时依赖),**不用 ANTLR4**(自写版功能完整,ANTLR4 已弃用)。
 
-> **为什么禁止整合**:① 版本仲裁由 Maven 依赖中和机制统一处理,手动整合反而易锁死旧版本;② 用户能看到完整的依赖树,便于排障与升级;③ 与"每个子模块一个细粒度 jar"的项目目标一致(见 §4.2)。
-> **取舍记录**:本规则与通用规范 §2.2"uber/fat jar 优先"相反,在 jian 项目以本文件为准。取舍理由见 `doc/00-overview.md` §8 决策。
+> **为什么子模块禁止整合**:① 版本仲裁由 Maven 依赖中和机制统一处理,手动整合反而易锁死旧版本;② 用户能看到完整的依赖树,便于排障与升级;③ 与"每个子模块一个细粒度 jar"的按需加载目标一致(见 §4.2)——`jian-core` 一旦塞进 POI,所有引 core 的模块都被迫带上 POI。
+
+#### 2.5.2 顶层三库:可选 fat jar(`-Pfat` 激活)
+
+为了**让 AI / 用户拿到一个 jar 就能跑全功能**(不必再手工拼 22 个子模块),顶层聚合模块 jian / jian-num / jian-sql **允许**通过 `-Pfat` profile 出可选的 fat jar:
+
+- ✅ **允许**:在顶层三库的 pom 用 `maven-shade-plugin` 把全部依赖 shade 进单 jar,产物命名 `jian-all-x.y.z.jar` / `jian-num-all-x.y.z.jar` / `jian-sql-all-x.y.z.jar`(`*-all` 后缀)。
+- ✅ **激活方式**:根 pom 的 `<profiles>` 里有 `<id>fat</id>`,默认**关闭**;只有 `./mvnw -Pfat package` 时才聚合进这三个顶层模块、触发 shade。默认 `./mvnw install` 仍只出 22 个细粒度 thin jar(子模块形态不变)。
+- ✅ **fat jar 是补充形态,不是主形态**:thin jar 是事实来源(版本仲裁、按需加载靠它),fat jar 仅是"开箱即用"的便利制品。两者并存,用户按场景选。
+
+#### 2.5.3 fat jar 的强制元数据要求(红线)
+
+顶层 fat jar **必须**满足以下三条,否则视为不合格:
+
+1. **shade 必须配 `ServicesResourceTransformer`** —— 合并 `META-INF/services/*`(SPI 注册文件),否则 jian-dsl / jian-num-bridge 的 ServiceLoader 在 fat jar 里会因文件被覆盖而失效(SPI 静默退化)。
+2. **shade 必须排除签名文件** —— `<excludes>` 里排 `META-INF/*.SF`、`META-INF/*.DSA`、`META-INF/*.RSA`,否则把签名过的依赖(如 BouncyCastle)的签名块打进新 jar 后,JVM 运行时会因签名校验失败抛 `SecurityException`。
+3. **MANIFEST.MF 必须带 Ai-Aggregated 标记** —— 用 `ManifestResourceTransformer` 加两个 AI 可识别字段,让 AI 拿到 jar 能一眼判别"这是聚合 jar,不是单一 artifact":
+   ```
+   Ai-Aggregated: true
+   Ai-Library: jian        # 或 jian-num / jian-sql
+   ```
+
+> 顶层三库(jian / jian-num / jian-sql)的 pom.xml 已按上述三条配好,新增 fat jar 制品时必须照此模板,不得省略任一项。
+
+> **取舍记录**:本规则与通用规范 §2.2"uber/fat jar 优先"在**子模块层面**相反(jian 子模块一律禁整合),在**顶层三库层面**对齐(允许并优先提供 fat jar)。整体立场是"子模块零整合、顶层可选 fat",取舍理由见 `doc/00-overview.md` §8 决策与 §10.15(AI 友好的 jar 制品设计)。
 
 ### 2.6 版本选择规则
 
@@ -148,6 +210,43 @@ mvn -pl jian-io-excel -am test
 ```
 > 一次性脚本任务结束按 §6 清理;长期验证沉淀为 JUnit 测试入库。
 
+### 2.8 AI 友好元数据规范(强制)
+
+> 让 AI 拿到 jar 就能彻底理解接口用法、适用范围、真实示例,而不必逆向 jar 字节码或翻源码猜意图。
+
+#### 2.8.1 每模块 module.md
+
+- **位置**:`<module>/src/main/ai-doc/module.md`(每个子模块一份,共 22 份)。
+- **打包**:根 pom 的 `maven-resources-plugin` 在打包期把 `src/main/ai-doc/module.md` 复制进 jar 的 `META-INF/ai/module.md`,随 jar 一同分发。
+- **必填字段**:
+  - `library` —— 归属库(jian / jian-sql / jian-num)
+  - `entryClass` —— 入口类全限定名(如 `jian.Jian`、`jian.core.DataFrame`)
+  - `deps` —— 需要配合的其它 jar(依赖方向)
+  - **摘要** —— 一句话讲清本模块做什么
+  - **能力** —— 列出关键能力/方法清单
+  - **限制** —— 不能做的事、已知约束、缺失时如何降级
+  - **快速上手** —— 3~5 行真实可跑的 Java 示例
+
+#### 2.8.2 sources + javadoc jar
+
+- 每个 thin jar 必须同时出 **`-sources.jar`**(含全部源码 + 全量 `@param/@return/@throws`)与 **`-javadoc.jar`**(HTML API 文档)。
+- 根 pom 的 `<pluginManagement>` + `<plugins>` 已激活 `maven-source-plugin`(`attach-sources`)与 `maven-javadoc-plugin`(`attach-javadocs`),`./mvnw install` 自动产出。
+- AI 可优先读 `-sources.jar` 里的源码与注释,辅以 `-javadoc.jar` 的 HTML,实现"零逆向理解 API"。
+
+#### 2.8.3 @param/@return/@throws(全量覆盖)
+
+- **全项目所有带参数的 public 方法必须有 `@param`**(2026-08-08 已达 495/495 = 100% 覆盖)。
+- 有返回值的 public 方法必须有 `@return`;可能抛检查异常的必须有 `@throws`。
+- **每次新增 public 方法必须同步补 `@param`**,不允许出现"先写代码后补注释"的欠账 —— 这是 AI 理解 API 的关键元数据,缺失即视为不合规。
+
+#### 2.8.4 fat jar 元数据(配合 §2.5.2/§2.5.3)
+
+顶层三库的 fat jar(由 `-Pfat` 激活)在 shade 时**必须**满足:
+
+- shade 必须配 **`ServicesResourceTransformer`**(合并 `META-INF/services/*` 的 SPI 注册,防 ServiceLoader 失效)。
+- shade 必须排 **`META-INF/*.SF` / `*.DSA` / `*.RSA`**(签名文件,防运行时签名校验失败)。
+- `MANIFEST.MF` 必须加 **`Ai-Aggregated: true`** + **`Ai-Library: <lib>`**(lib = jian / jian-num / jian-sql),让 AI 一眼识别这是聚合 jar。
+
 ---
 
 ## 3. 编码规范(UTF-8 + 5W1H + 伪代码 + 行数约束)
@@ -166,6 +265,83 @@ mvn -pl jian-io-excel -am test
   4. 仍超长 → 评估是否设计问题(类职责过载),回头重构而非加行。
 
 > **与注释密度不冲突**:本条按"不含注释"统计,因此 §3.3.3 鼓励的"注释行数可与代码持平甚至更多"不会触发 600 行红线 —— 注释是给读者的路标,不计入代码体量。
+
+### 3.1.1 文件命名:看名知意(强制)
+
+> **铁律**:文件名是给后来者(含 Agent 自己)看的"目录索引"——看到文件名就要能大体知道里面装了什么功能。**禁止任何形式的"懒人命名"**:UtilA / UtilB / Helper1 / Misc / Common / Tools / XxxUtil(无修饰)/ A B C D 之类的顺序字母后缀。
+
+#### 合规命名模板
+
+| 场景 | 模板 | 示例 |
+|---|---|---|
+| DataFrame 按职能拆分 | `DataFrame<职能>` | `DataFrameSort` / `DataFrameStats` / `DataFrameMissing` / `DataFrameReshape` / `DataFrameMerge` |
+| 列运算类 | `<主语><动词>` 或 `<主语>Ops` | `ColumnarHashMap` / `StrOps`(Series.str 实现) |
+| 时序算子 | `<能力名>` | `Resampler` / `Frequency` / `DatetimeIndex` |
+| 单一职责工具 | `<动词><对象>` | `SimpleQueryParser`(非 `QueryUtil`)/ `SortIndexBuilder` |
+| SQL 翻译层 | `Sql<动作>To<目标>` | `SqlToDataFrameExecutor`(非 `SqlExecutor`/`SqlUtil`) |
+
+#### 反例(禁止)
+
+- ❌ `DataFrameUtilA.java` / `DataFrameUtilB.java` —— "A/B" 不传达任何信息,后来者必须打开文件才知道
+- ❌ `Misc.java` / `Commons.java` / `Tools.java` —— "杂项"会无限膨胀,最终变垃圾桶
+- ❌ `Helper.java` —— 帮什么的 helper?完全无信息量
+- ❌ `Utils.java`(无修饰)—— 同上;真要工具类,加修饰:`CsvEscapeUtils` / `TypeCastUtils`
+- ❌ `Main2.java` / `OldXxx.java` / `XxxV2.java` —— 历史版本不该用文件名留档,git 已记录
+
+#### 3.1.1.1 相似功能必须内聚到同一个类(强制 · 凌驾"文件命名")
+
+> **铁律**:**相同或相似功能的函数,必须放进同一个类**。**禁止**因为"今天补了一批功能"就新建一堆类,而既有类里早有同类功能散落别处 —— 这是"目录碎片化"反模式,让后来者每加一个功能都要先全仓搜索一遍才知道有没有现成归宿。
+
+##### 决策流程(新增函数时必走)
+
+新加一个函数前,**先扫既有伴生类**,按"功能相似度"找归宿:
+
+```
+新功能 X
+  ↓
+扫既有 DataFrame*.java / Series*.java / ...
+  ↓
+有同类?─── 是 ──→ 并入该类(哪怕该类已 500 行,只要不破 §3.1 的 600 行红线,就内聚进去)
+  │
+  否 ──→ 评估:是否真的"新职能"?
+           ├─ 是 → 新建类(按 §3.1.1 看名知意命名)
+           └─ 否 → 找最接近的既有类并入,不要为"新"而新
+```
+
+##### 历史教训(2026-08-09 反例归档)
+
+阶段 A 落地时曾犯过以下错误,被用户当场叫停后修正:
+
+| 错误(已删) | 错在哪 | 正确归属 |
+|---|---|---|
+| ~~新建 `DataFrameIndex.java` 装 idxmax/idxmin~~ | DataFrameSort 已有 `nlargest/nsmallest`(都是"找极值位置"),功能同源 | **并入 `DataFrameSort`** |
+| ~~新建 `DataFrameIndex.java` 装 duplicated~~ | DataFrameReshape 已有 `dropDuplicates`(判重掩码 vs 去重,同一个算法两种产出) | **并入 `DataFrameReshape`** |
+| ~~新建 `DataFrameFilter.java` 装 isin/where/mask~~ | DataFrameMissing 已有 `isna/fillna/ffill/bfill`(都是"掩码与值替换"语义) | **并入 `DataFrameMissing`** |
+| ~~新建 `DataFrameSample.java` 装 sample/pipe/applyRow~~ | 链式入口与 DataFrame.java 主类的 `eval/sql` 等同类;sample 也无独立伴生必要 | **并入 `DataFrame` 主类**(链式入口集中) |
+
+**经验**:每加一个伴生类前,问自己一句 —— "如果这个类名前缀去掉 DataFrame,功能与既有类的子集是不是高度重叠?" 是 → 并入既有类,不要新开。
+
+##### 既有类归属速查(jian-core,持续维护)
+
+| 伴生类 | 装什么 |
+|---|---|
+| `DataFrame` 主类 | 链式入口(eval/sql/pipe/sample/applyRow)、Index 操作(loc/iloc/resetIndex/setIndex)、元信息(info/dtypes/describe/selectDtypes) |
+| `DataFrameSort` | 排序 + TopN + 极值位置(sortBy/sortIndex/nlargest/nsmallest/idxmax/idxmin) |
+| `DataFrameMissing` | 缺失值与条件填充(isna/dropna/fillna/ffill/bfill/isin/where/mask/interpolate) |
+| `DataFrameReshape` | 长宽转换 + 判重(pivotTable/melt/transpose/dropDuplicates/duplicated/stack/unstack/explode) |
+| `DataFrameMerge` | 表连接(merge/join/merge_asof/concat) |
+| `DataFrameStats` | 单列与全表统计(sum/mean/std/min/max/median/percentile/corr/cov/skew/kurt/cumsum/diff/quantile/rank/value_counts) |
+| `DataFrameArith` | 列级算术与比较(add/sub/mul/div/colLt/colGt/...) |
+| `Resampler` | 时间序列重采样(resample 返回值,sum/mean/count/ohlc/...) |
+| `Frequency` / `DatetimeIndex` | 时间频率与时间索引(纯数据结构类,非 DataFrame 伴生) |
+
+**判定标准**:加新方法前对照此表;功能落入既有类范围 → 直接并入。**只有出现真正新职能**(如"时间序列重采样"是 Stats/Missing 都覆盖不了的新概念)才允许新建类。
+
+#### 判定标准
+
+如果后来者看到文件名,需要在 IDE 里"打开看一眼才知道干嘛",这个命名就是失败的。优秀的命名应该让人扫一眼 `ls` 就能定位到要找的功能在哪。
+
+> **例外**:若某文件确实是无法再拆的单一职责,长度合规(§3.1),则用类名直配文件名即可(`Frequency.java` 装 `class Frequency`),不要画蛇添足加修饰后缀。
 
 ### 3.2 统一中文 UTF-8(强制)
 
@@ -244,6 +420,144 @@ public static String sanitizeSql(String raw) {
 - 临时调试注释(`// TODO 待删`、注释掉的旧代码)**交付前必须清理**。
 - 注释行不计入 §3.1 的 600 行代码上限,放心详写。
 
+### 3.5 缺失值语义规范(强制 · 红线)
+
+> jian 的缺失值处理遵循**"内部不失真、边界做转换"**原则。计算精度优先于一切——NaN 在内部传递时不能变成 null。
+
+#### 3.5.1 统一规则(全 Column 子类一致)
+
+| API | 缺失行返回值 | 说明 |
+|---|---|---|
+| `isNull(i)` | `true` | **权威判断**,始终可用 |
+| `getDouble(i)` | `Double.NaN` | 数值缺失的统一占位标记(全类型一致) |
+| `getLong(i)` | `Long.MIN_VALUE` | long 无 NaN,用最小值作缺失标记;下游可 `== Long.MIN_VALUE` 识别 |
+| `get(i)` | DoubleColumn 返 `Double.NaN`(不失真);其它返 `null` | DoubleColumn 内部传递 NaN 不失真 |
+| `getRow(i)` / `iterRows()` | `null` | **IO 边界安全网**:缺失行统一转 null,供 CSV/JSON/SQL 写出 |
+| `toObjectArray()` | `null` | IO 导出安全网:NaN→null |
+
+#### 3.5.2 下游调用规则(强制)
+
+- **判断缺失一律用 `isNull(i)`**,不得用 `get(i) == null`——因为 DoubleColumn.get(NaN) 现在返回 Double.NaN 不是 null
+- **IO 写出(CSV/JSON/SQL)一律通过 `getRow(i)` 或 `toObjectArray()` 取值**——它们在边界把 NaN 转成 null
+- **export 显示(各格式默认 naRep,2026-08-09 L8 修正对齐代码/04 分册)**:
+  - **HTML** 默认 `<NA>`(对齐 pandas `to_html` 默认;`HtmlRenderer.naRep` 可改)
+  - **Markdown/LaTeX/Excel/控制台** 默认空字符串
+  - **不得**输出裸 `NaN` 字样(数值 NaN 经 `getRow(i)` 已转 null,渲染层不再看到 NaN)
+
+#### 3.5.3 为什么不沿用 pandas 的"NaN==null"模型
+
+pandas 把 NaN 和 null 在数值列里等价处理(NaN 表示缺失,null 也变成 NaN),这是历史包袱。jian 区分:
+- **NaN** = 计算产生的非数结果(如 0/0),是**有效值的一种**
+- **null/缺失** = 原始数据没有值
+- 两者在 `isNull` 层面统一为"缺失",但在 `get` 层面**NaN 不失真**(返回 Double.NaN 不是 null)
+
+### 3.6 SQL 跨库类型映射规范(强制)
+
+> jian-io-sql 的 `Sql.java` 必须按数据库方言自适应 SQL 类型名,不能用硬编码。2026-08-08 系统查证六大数据库官方文档后确立。
+
+#### 3.6.1 类型映射表
+
+> **SQLite 列说明(2026-08-09 L8 修正)**:SQLite 是动态类型系统,列声明的类型名只是**"类型亲和"(advisory)**,不强制 —— 实际存储按值的类型走。
+> `Sql.java dtypeToSqlType()` 当前**无 isSqlite 专设分支**,SQLite 落到默认分支(与 PG/H2 共用):`LONG→BIGINT / DOUBLE→DOUBLE PRECISION / BOOL→BOOLEAN / DATETIME→TIMESTAMP / DATE→DATE`。
+> 这与下表"理想映射"(SQLite 列写 INTEGER/REAL/TEXT)在**字面量上不同,但 SQLite 都能接受**(类型亲和容忍),不发错 SQL,数据往返正确。
+> 若用户严格需要 SQLite 风格类型名,可在 v2 加 isSqlite 分支(ROI 低,见 doc/02 §9.5)。
+
+| jian DType | PostgreSQL | MySQL | SQLite(理想/类型亲和) | H2 | SQL Server | Oracle |
+|---|---|---|---|---|---|---|
+| INT | INTEGER | INT | INTEGER | INTEGER | INT | INTEGER |
+| LONG | BIGINT | BIGINT | INTEGER(代码默认 BIGINT) | BIGINT | BIGINT | NUMBER(19) |
+| DOUBLE | DOUBLE PRECISION | DOUBLE | REAL(代码默认 DOUBLE PRECISION) | DOUBLE PRECISION | **FLOAT(53)** | FLOAT(126) |
+| BOOL | BOOLEAN | BOOLEAN | INTEGER(代码默认 BOOLEAN) | BOOLEAN | **BIT** | **NUMBER(1)** |
+| STRING(≤4000) | VARCHAR(n) | VARCHAR(n) | TEXT | VARCHAR(n) | VARCHAR(n) | VARCHAR2(n) |
+| STRING(>4000) | **TEXT** | **LONGTEXT** | TEXT | **CLOB** | **VARCHAR(MAX)** | **CLOB** |
+| DATETIME | TIMESTAMP | TIMESTAMP | TEXT(代码默认 TIMESTAMP) | TIMESTAMP | DATETIME2 | TIMESTAMP |
+| DATE | DATE | DATE | TEXT(代码默认 DATE) | DATE | DATE | DATE(含时间!) |
+
+**加粗** = 该数据库与默认不同,需方言适配。阈值 4000 = Oracle VARCHAR2 上限(所有库的公共安全上限)。
+**SQLite 列括号注** = 代码默认分支产出(类型亲和容忍,与理想映射等价)。
+
+#### 3.6.2 STRING 自适应长度
+
+建表时扫该列实际数据取 maxLen:
+- maxLen ≤ 4000 → VARCHAR(maxLen)(向上取整到 4 的倍数)
+- maxLen > 4000 → 大文本类型(各库不同,见上表)
+
+#### 3.6.3 JDBC 读回类型规范化
+
+`resultSetToDataFrame` 必须把 JDBC 特殊对象转成 Java 标准类型:
+
+| JDBC 返回 | 转成 | 方法 |
+|---|---|---|
+| `java.sql.Clob` | `String` | `clob.getSubString(1, len)` |
+| `java.sql.Blob` | `byte[]` | `blob.getBytes(1, len)` |
+| `java.math.BigDecimal` | `Double` | `bd.doubleValue()` |
+| `java.sql.Date` | `LocalDate` | `d.toLocalDate()` |
+| `java.sql.Timestamp` | `LocalDateTime` | `ts.toLocalDateTime()` |
+
+#### 3.6.4 跨库测试要求(红线)
+
+凡 jian-io-sql 支持的数据库,**必须有真实数据库测试**(不只是 H2 模拟方言):
+- H2 in-memory:默认跑(无外部依赖)
+- SQLite in-memory:默认跑(自带 native)
+- PostgreSQL:用 `-Dtest.pg=true` 激活(需本机 PG 运行)
+- 覆盖:全 dtype 往返 / 参数化查询 / 4 种写入模式 / 缺失值 / 大文本(短/长/混合)/ SQL 注入防护
+
+### 3.7 Web 环境安全规范(强制)
+
+> jian 可能被用于 Tomcat/Spring Boot 等 Web 服务器环境,对外提供数据分析能力。以下安全要求强制执行。
+
+#### 3.7.1 ServiceLoader 不缓存(防 Tomcat redeploy 内存泄漏)
+
+- ❌ **禁止**:把 `ServiceLoader.load(...)` 存在 static final 字段里(ServiceLoader 内部缓存引用 WebappClassLoader,Tomcat redeploy 时 ClassLoader 无法 GC,经典内存泄漏)
+- ✅ **必须**:每次 `current()` 调用时新建 `ServiceLoader.load(...)`,由 GC 自动回收
+- 适用:`DslEngine.current()` / `StatsProvider.current()`(已修复)
+
+#### 3.7.2 只读模式必须生效(防 SQL 写操作)
+
+- `Engine.checkReadOnly(sql)` **必须**在 `engine.sql()` 入口调用(之前是死代码,只读拦截完全没生效)
+- 拦截:DROP/DELETE/TRUNCATE/ALTER/CREATE/GRANT/INSERT/UPDATE(剥前导注释后整词匹配)
+- `readOnly=true` 时,任何写操作抛 `SecurityException`
+
+#### 3.7.3 Excel/CSV 公式注入防护(一致)
+
+- CSV 和 Excel 写出都**必须**对 `= + - @` 开头的单元格加单引号前缀(OWASP CSV Injection 规范)
+- 之前 CSV 有防护、Excel 漏了;已统一修复
+
+#### 3.7.4 Process 超时与流关闭(Clipboard)
+
+- `ProcessBuilder.start()` 后的 `getInputStream()`/`getOutputStream()` 必须 try-with-resources 关闭
+- `waitFor()` 必须带超时(默认 5 秒),超时后 `destroyForcibly()`
+- 防 native FD 泄漏 + 子进程挂死
+
+#### 3.7.5 HikariCP 连接池生命周期(Web 集成方负责)
+
+- `Engine` 已实现 `AutoCloseable`(close 时关 HikariDataSource)
+- Spring Boot 集成:`@Bean` 返回 Engine 类型,Spring 会自动调 close
+- 非 Spring 集成:必须手动 `engine.close()` 或注册 shutdown hook
+- **jian 库不提供自动 shutdown 机制**(避免对容器生命周期做假设)
+
+#### 3.7.6 内存管理(Java GC 语义)
+
+- **DataFrame 是纯内存数据**,不持有文件句柄/连接,不需要 close()/dispose()
+- `df = null` 只断开引用,**不会立即释放内存**;GC 自动回收(JVM 决定时机)
+- 大数据量处理完立刻 `df = null` 断引用,必要时 `System.gc()` 建议 GC(不保证立即)
+- ❌ **禁止**:用 static 字段缓存大 DataFrame(GC 无法回收 → OOM)
+- ✅ 如需缓存用 `WeakHashMap`(GC 可随时回收)
+- ✅ 最佳实践:在方法内用局部变量持有 DataFrame,方法结束后自动断引用
+
+#### 3.7.7 安全的方面(无需改)
+
+#### 3.7.6 安全的方面(无需改)
+
+- ✅ **反序列化安全**:Jackson 未开 `enableDefaultTyping`;Pickle(.jpk)走自定义容器 + CRC + JSON,无 `ObjectInputStream`
+- ✅ **SQL 参数化**:SqlBridge/SqlBuilder 全用 PreparedStatement + ? 占位符
+- ✅ **Connection/Statement/ResultSet**:全 try-with-resources
+- ✅ **文件流**:全 try-with-resources 或 Files 工具方法
+- ✅ **DataFrame 不可变**:构造后无 mutator;`dataInPlace()` 仅内部 hot path
+- ✅ **ofColumnArraysSafe**(Web 安全版本):防御性 clone 所有入参数组;`ofColumnArrays`(零拷贝)首次调用时 stderr 提醒改用 Safe 版本
+- ✅ **无 ThreadLocal**:全项目零 ThreadLocal
+- ✅ **无静态可变状态**:全 `static final` 或 static 方法
+
 ---
 
 ## 4. 模块与依赖方向(技术约束)
@@ -309,9 +623,9 @@ public static String sanitizeSql(String raw) {
 
 `doc/index.html` 末尾 `<script>` 内有三个数据数组,模板化渲染:
 
-- `MODULES`(7 项)→ 模块卡片
-- `API_QUICK`(5 组)→ 顶层 API 速查表
-- `API_REF`(6+ 项)→ 方法目录卡(日后扩展的核心区)
+- `MODULES`(8 项)→ 模块卡片
+- `API_QUICK`(4 组)→ 顶层 API 速查表
+- `API_REF`(约 28 项)→ 方法目录卡(日后扩展的核心区)
 
 **新增内容只往数组里加一项,不动 HTML 结构。** md 与 html 数据冲突时,**以 md 为准,改 html 对齐**。
 
@@ -426,7 +740,7 @@ public static String sanitizeSql(String raw) {
 2. **主语言:只用 Java**(不用 Groovy/Kotlin 等 JVM 语言,见 §1.1)。
 3. **构建工具:Maven 多模块**(破例,见 §2)。
 4. **打包形态:每个子模块一个 jar**(细粒度按需加载)。
-5. **不做包整合**:外部 jar 一律按 `groupId:artifactId:version` 精细引用,**不用 uber/fat jar、不用 maven-shade**(见 §2.5)。
+5. **子模块零整合、顶层三库可选 fat**:子模块的 jar 一律按 `groupId:artifactId:version` 精细引用、严禁 shade;顶层 jian/jian-num/jian-sql 经 `-Pfat` 允许出 `*-all.jar`(fat jar,带 `Ai-Aggregated` manifest,见 §2.5)。
 6. **功能范围:大面对齐 pandas 3.x**(IO 12 类 Tier 1 + 图表 13 种(10 plot + 3 plotting,高维图 v2 规划)+ Styler 全功能)。
 7. **DSL 不嵌入任何外部脚本引擎**:L1/L2 手写 Pratt,L3 用自写正则子句切分(不用 ANTLR4,ANTLR 已整体弃用,见 07 分册 §9.4)。
 8. **DSL 方言:Oracle 基线 + PG/MySQL 兼容**,通过 `SqlDialect` 变量切换。
@@ -444,10 +758,10 @@ public static String sanitizeSql(String raw) {
 | 主语言 | Groovy 脚本优先 | **只用 Java**(不用 Groovy/Kotlin 等 JVM 语言) |
 | JDK | 21 | **17 LTS** |
 | 构建工具 | 禁用 Maven/Gradle | **破例用 Maven 多模块** |
-| 包整合 | uber/fat jar 优先 | **禁止 uber/fat/shade,精细引用**(见 §2.5) |
+| 包整合 | uber/fat jar 优先 | **子模块禁 shade,精细引用;顶层三库可选 fat**(`-Pfat`,见 §2.5) |
 | Skills 规范 | 第 0、6 章强制 | **不适用**(整章删除) |
 | 文档维护 | 无特殊要求 | **md + html 双轨同步(红线)** |
-| 零本机绑定 | 仅 Skill 强制 | **全项目强制**(库要对外分发) |
+| 零本机绑定 | 仅插件强制 | **全项目强制**(库要对外分发) |
 | UTF-8 + 5W1H + 伪代码 | 强制 | **强制**,且 **How 必须详写**(变量变化/逻辑路线/数据走向,见 §3.3.1) |
 | 单文件行数 | 无限制 | **不含注释 ≤ 600 行**,超了优先拆分(见 §3.1) |
 

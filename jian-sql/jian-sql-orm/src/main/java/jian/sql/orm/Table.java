@@ -9,5 +9,8 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.TYPE)
 public @interface Table {
+    /**
+     * @return String 对应的数据库表名
+     */
     String value();
 }

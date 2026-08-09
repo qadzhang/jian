@@ -17,10 +17,19 @@ package jian.core;
 // │         因此 jian-sql 自己定义一份;两处语义一致,只是所在库不同。
 public class ModuleNotLoadedException extends RuntimeException {
 
+    /**
+     * 构造(仅消息)。
+     * @param message String 异常消息,**应包含缺失模块的 groupId:artifactId 与安装提示**(可直接展示给用户);非 null
+     */
     public ModuleNotLoadedException(String message) {
         super(message);
     }
 
+    /**
+     * 构造(消息 + 原因)。
+     * @param message String 异常消息,含安装提示;非 null
+     * @param cause   Throwable 原始异常(通常是探测时捕获的 ClassNotFoundException/NoClassDefFoundError);允许 null
+     */
     public ModuleNotLoadedException(String message, Throwable cause) {
         super(message, cause);
     }

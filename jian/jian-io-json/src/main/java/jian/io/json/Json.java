@@ -57,6 +57,11 @@ public final class Json {
 
     // ======================== 读 ========================
 
+    /**
+     * 读 JSON 的 builder(默认 RECORDS orient)。
+     * @param path String JSON 文件路径,需为合法可读文件,不允许 null
+     * @return JsonReader 配置器,链式调用 .orient 后 .go() 执行
+     */
     public static JsonReader read(String path) { return new JsonReader(Path.of(path)); }
 
     public static final class JsonReader {
@@ -65,6 +70,11 @@ public final class Json {
 
         JsonReader(Path p) { this.path = p; }
 
+        /**
+         * 设置 JSON 结构 orient。
+         * @param o Orient JSON 结构枚举,取值 RECORDS/COLUMNS/VALUES/INDEX/SPLIT,默认 RECORDS
+         * @return JsonReader 当前配置器,便于链式调用
+         */
         public JsonReader orient(Orient o) { this.orient = o; return this; }
 
         public DataFrame go() throws IOException {
@@ -73,7 +83,13 @@ public final class Json {
         }
     }
 
-    /** 从字符串解析(供 Jian.jsonNormalize 等复用)。 */
+    /**
+     * 从字符串解析(供 Jian.jsonNormalize 等复用)。
+     * @param json String JSON 文本内容,需符合所选 orient 的结构,不允许 null
+     * @param orient Orient JSON 结构枚举,取值 RECORDS/COLUMNS/VALUES/INDEX/SPLIT
+     * @return DataFrame 解析出的数据帧(列名与类型按 orient 语义和值推断)
+     * @throws IOException JSON 格式错误或与 orient 不匹配时抛出
+     */
     public static DataFrame parse(String json, Orient orient) throws IOException {
         JsonNode root = MAPPER.readTree(json);
         switch (orient) {
@@ -269,6 +285,12 @@ public final class Json {
 
     // ======================== 写 ========================
 
+    /**
+     * 写 JSON 的 builder(默认 RECORDS orient)。
+     * @param df DataFrame 要写出的数据帧,不允许 null
+     * @param path String 输出 JSON 文件路径,需为合法可写路径,不允许 null
+     * @return JsonWriter 配置器,链式调用 .orient 后 .go() 执行
+     */
     public static JsonWriter write(DataFrame df, String path) { return new JsonWriter(df, Path.of(path)); }
 
     public static final class JsonWriter {
@@ -278,6 +300,11 @@ public final class Json {
 
         JsonWriter(DataFrame df, Path p) { this.df = df; this.path = p; }
 
+        /**
+         * 设置 JSON 结构 orient。
+         * @param o Orient JSON 结构枚举,取值 RECORDS/COLUMNS/VALUES/INDEX/SPLIT,默认 RECORDS
+         * @return JsonWriter 当前配置器,便于链式调用
+         */
         public JsonWriter orient(Orient o) { this.orient = o; return this; }
 
         public void go() throws IOException {
@@ -286,7 +313,13 @@ public final class Json {
         }
     }
 
-    /** DataFrame → JSON 字符串(指定 orient)。 */
+    /**
+     * DataFrame → JSON 字符串(指定 orient)。
+     * @param df DataFrame 要序列化的数据帧,不允许 null
+     * @param orient Orient JSON 结构枚举,取值 RECORDS/COLUMNS/VALUES/INDEX/SPLIT
+     * @return String 指定 orient 的 JSON 文本(UTF-8 语义);NaN/Infinity 按 null 输出以兼容标准 JSON
+     * @throws IOException 序列化过程发生 IO 错误时抛出
+     */
     public static String toJsonString(DataFrame df, Orient orient) throws IOException {
         switch (orient) {
             case RECORDS: return writeRecords(df);
@@ -359,9 +392,22 @@ public final class Json {
         if (v == null) obj.putNull(key);
         else if (v instanceof Integer) obj.put(key, (Integer) v);
         else if (v instanceof Long) obj.put(key, (Long) v);
-        else if (v instanceof Double) obj.put(key, (Double) v);
-        else if (v instanceof Float) obj.put(key, (Float) v);
-        else if (v instanceof Number) obj.put(key, ((Number) v).doubleValue());
+        else if (v instanceof Double d) {
+            // 修复(AI agent1 / AI agent2 双 AI 复审):NaN/Infinity 在标准 JSON 不允许,
+            // Jackson 默认会抛异常或写成非数字 token 导致读回类型损坏(如 Infinity 变字符串)。
+            // 统一按"缺失"语义输出 null(与 jian-core 的 DataFrame 缺失处理一致)。
+            if (Double.isNaN(d) || Double.isInfinite(d)) obj.putNull(key);
+            else obj.put(key, d);
+        }
+        else if (v instanceof Float f) {
+            if (Float.isNaN(f) || Float.isInfinite(f)) obj.putNull(key);
+            else obj.put(key, f);
+        }
+        else if (v instanceof Number) {
+            double d = ((Number) v).doubleValue();
+            if (Double.isNaN(d) || Double.isInfinite(d)) obj.putNull(key);
+            else obj.put(key, d);
+        }
         else if (v instanceof Boolean) obj.put(key, (Boolean) v);
         else obj.put(key, String.valueOf(v));
     }
@@ -370,9 +416,20 @@ public final class Json {
         if (v == null) arr.addNull();
         else if (v instanceof Integer) arr.add((Integer) v);
         else if (v instanceof Long) arr.add((Long) v);
-        else if (v instanceof Double) arr.add((Double) v);
-        else if (v instanceof Float) arr.add((Float) v);
-        else if (v instanceof Number) arr.add(((Number) v).doubleValue());
+        else if (v instanceof Double d) {
+            // 同 putValue:NaN/Infinity 转 null(标准 JSON 兼容)
+            if (Double.isNaN(d) || Double.isInfinite(d)) arr.addNull();
+            else arr.add(d);
+        }
+        else if (v instanceof Float f) {
+            if (Float.isNaN(f) || Float.isInfinite(f)) arr.addNull();
+            else arr.add(f);
+        }
+        else if (v instanceof Number) {
+            double d = ((Number) v).doubleValue();
+            if (Double.isNaN(d) || Double.isInfinite(d)) arr.addNull();
+            else arr.add(d);
+        }
         else if (v instanceof Boolean) arr.add((Boolean) v);
         else arr.add(String.valueOf(v));
     }

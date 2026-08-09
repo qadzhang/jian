@@ -1,7 +1,5 @@
 package jian.core;
 
-import java.util.function.IntPredicate;
-
 // ┌─ What : Column —— DataFrame 一列数据的抽象接口(规范 01 §2.1)
 // │  Why  : DataFrame 列式存储,每列一个 Column 实现;多 dtype 各有子类,统一接口供 DataFrame 调度
 // │  Who  : DataFrame 内部 List<Column> 持有;io/viz/export 通过 DataFrame.getColumn 访问
@@ -25,53 +23,110 @@ import java.util.function.IntPredicate;
  */
 public interface Column {
 
-    /** 列的数据类型。 */
+    /**
+     * 列的数据类型。
+     * @return DType 枚举值(BYTE/INT/LONG/FLOAT/DOUBLE/BOOL/STRING/DATE/DATETIME/CATEGORY/OBJECT 之一),永不为 null
+     */
     DType dtype();
 
-    /** 列名。 */
+    /**
+     * 列名。
+     * @return String 列名,非 null;未命名时为空串 ""
+     */
     String name();
 
-    /** 列名(变换后改名用)。 */
+    /**
+     * 改列名(变换后改名用,不可变优先 → 返回新 Column)。
+     * @param newName String 新列名,非 null,允许空串(表示匿名列)
+     * @return Column 同 dtype 同数据、仅 name 不同的**新实例**(本对象不变)
+     */
     Column rename(String newName);
 
-    /** 行数。 */
+    /**
+     * 行数(与所属 DataFrame 的 nRows 一致)。
+     * @return int 行数,≥ 0;空列为 0
+     */
     int size();
 
     // ======================== 取值(通用)========================
 
-    /** 取第 i 行的值(任意 dtype,装箱返回)。缺失返回 null(NaN 列返回 Double.NaN)。 */
+    /**
+     * 取第 i 行的值(任意 dtype,统一装箱为 Object 返回)。
+     * @param i int 行下标,范围 [0, size());越界抛 IndexOutOfBoundsException
+     * @return Object 该行值:数值列返回 Long/Double 装箱、字符串列返回 String、缺失返回 null;
+     *         特殊:DOUBLE 列的 NaN 返回 Double.NaN(不是 null)
+     */
     Object get(int i);
 
-    /** 取第 i 行的 double 值(仅 DOUBLE/INT/LONG/CATEGORY;其它抛异常)。NaN 表示缺失。 */
+    /**
+     * 取第 i 行的 double 值(仅 DOUBLE/INT/LONG/CATEGORY 适用)。
+     * @param i int 行下标,范围 [0, size());越界抛 IndexOutOfBoundsException
+     * @return double 该行 double 值;缺失返回 Double.NaN
+     * @throws IllegalStateException 该列 dtype 不支持 double 取值(如 STRING/BOOL/DATE)
+     */
     double getDouble(int i);
 
-    /** 取第 i 行的 long 值(仅 LONG/INT/CATEGORY;其它抛异常)。 */
+    /**
+     * 取第 i 行的 long 值(仅 LONG/INT/CATEGORY 适用)。
+     * @param i int 行下标,范围 [0, size());越界抛 IndexOutOfBoundsException
+     * @return long 该行 long 值;缺失列不应调用此方法(行为未定义)
+     * @throws IllegalStateException 该列 dtype 不支持 long 取值(如 DOUBLE/STRING/BOOL/DATE)
+     */
     long getLong(int i);
 
-    /** 取第 i 行是否缺失。 */
+    /**
+     * 取第 i 行是否缺失。
+     * @param i int 行下标,范围 [0, size());越界抛 IndexOutOfBoundsException
+     * @return boolean true=该行缺失;false=有值。
+     *         缺失定义:有 nullMask 且对应位为 1;或 DOUBLE 列值为 NaN
+     */
     boolean isNull(int i);
 
     // ======================== 缺失值统计 ========================
 
-    /** 缺失值个数。 */
+    /**
+     * 缺失值个数(整列扫描)。
+     * @return int 缺失行数,范围 [0, size()]
+     */
     int nullCount();
 
     // ======================== 变换(返回新 Column)========================
 
-    /** 切片 [start, end)(对齐 pandas 行切片)。 */
+    /**
+     * 切片 [start, end)(对齐 pandas 行切片,左闭右开)。
+     * @param start int 起始行下标(含),范围 [0, size()]
+     * @param end   int 结束行下标(不含),范围 [start, size()]
+     * @return Column 新实例,长度 = end - start,保留原 dtype/name
+     * @throws IndexOutOfBoundsException start/end 越界或 start > end
+     */
     Column slice(int start, int end);
 
-    /** 按布尔掩码筛选(保留 mask[i]==true 的行)。 */
+    /**
+     * 按布尔掩码筛选(保留 mask[i]==true 的行)。
+     * @param mask boolean[] 掩码数组,长度必须 == size(),否则抛 IllegalArgumentException
+     * @return Column 新实例,仅含 mask 为 true 的行;保留原 dtype/name
+     */
     Column filter(boolean[] mask);
 
-    /** 按行下标选取(对齐 pandas take/iloc)。 */
+    /**
+     * 按行下标选取(对齐 pandas take/iloc)。
+     * @param indices int[] 行下标数组,每个元素范围 [0, size());允许重复、允许乱序;非 null
+     * @return Column 新实例,长度 = indices.length,按 indices 顺序取行
+     */
     Column take(int[] indices);
 
-    /** 复制(深拷贝)。 */
+    /**
+     * 复制(深拷贝内部数组,保证返回实例可独立修改)。
+     * @return Column 新实例,数据与原列相同但内部数组是独立副本
+     */
     Column copy();
 
     // ======================== 转数组(供 IO/export 用)========================
 
-    /** 转为 Object[](每元素装箱,缺失为 null;DOUBLE 列 NaN 也转 null)。 */
+    /**
+     * 转为 Object[](每元素装箱,供 IO/export 模块使用)。
+     * @return Object[] 长度 == size() 的装箱数组:
+     *         缺失统一为 null;DOUBLE 列的 NaN 也转 null(便于 JSON 等格式输出)
+     */
     Object[] toObjectArray();
 }

@@ -44,22 +44,48 @@ public final class Dsl {
 
     private Dsl() {}
 
-    /** L1:布尔过滤(对齐 df.query)。 */
+    /**
+     * L1:布尔过滤(对齐 df.query)。
+     *
+     * @param df DataFrame 数据源,非 null
+     * @param expr String 布尔表达式,非 null;支持比较/逻辑/算术/三元/谓词
+     * @return DataFrame 满足 expr 的行组成的新 DataFrame
+     */
     public static DataFrame query(DataFrame df, String expr) {
         return PrattEngine.query(df, expr, Params.EMPTY);
     }
 
-    /** L1:带参数的布尔过滤。 */
+    /**
+     * L1:带参数的布尔过滤。
+     *
+     * @param df DataFrame 数据源,非 null
+     * @param expr String 布尔表达式,非 null;可含 ${name} 占位由 params 展开
+     * @param params Params 命名参数绑定,非 null(无参传 Params.EMPTY)
+     * @return DataFrame 满足 expr 的行组成的新 DataFrame
+     */
     public static DataFrame query(DataFrame df, String expr, Params params) {
         return PrattEngine.query(df, expr, params);
     }
 
-    /** L2:派生新列(对齐 df.eval)。返回新 DataFrame(原 df + 新列)。 */
+    /**
+     * L2:派生新列(对齐 df.eval)。返回新 DataFrame(原 df + 新列)。
+     *
+     * @param df DataFrame 数据源,非 null
+     * @param expr String 赋值表达式,非 null;形如 "name = expr",分号分隔可派生多列
+     * @return DataFrame 加了新列后的 DataFrame(原 df 不变)
+     */
     public static DataFrame eval(DataFrame df, String expr) {
         return PrattEngine.eval(df, expr, Params.EMPTY);
     }
 
-    /** L2:带参数的派生新列。 */
+    /**
+     * L2:带参数的派生新列。
+     *
+     * @param df DataFrame 数据源,非 null
+     * @param expr String 赋值表达式,非 null;可含 ${name} 占位由 params 展开
+     * @param params Params 命名参数绑定,非 null(无参传 Params.EMPTY)
+     * @return DataFrame 加了新列后的 DataFrame(原 df 不变)
+     */
     public static DataFrame eval(DataFrame df, String expr, Params params) {
         return PrattEngine.eval(df, expr, params);
     }
@@ -83,6 +109,8 @@ public final class Dsl {
      *
      * @param sql SQL 字符串,${名} 作表名占位(名字纯可读,执行时按出现顺序绑定 DataFrame)
      * @param dfs DataFrame 参数,按 ${名} 在 SQL 中的首次出现顺序绑定
+     * @return DataFrame SQL 执行结果
+     * @throws IllegalArgumentException dfs 为空,或 ${} 占位数与 dfs 个数不匹配时抛出
      */
     public static DataFrame sql(String sql, DataFrame... dfs) {
         if (dfs.length == 0) {
@@ -104,11 +132,20 @@ public final class Dsl {
         for (int i = 0; i < names.size(); i++) {
             bindings.put(names.get(i), dfs[i]);
         }
-        // 无占位 → bindings 为空,由 SqlEngine 抛"静态入口无主表"的明确报错(见 executeSelect)
-        return SqlEngine.execute(null, sql, bindings, SqlDialect.DEFAULT);
+        // 无占位 → bindings 为空,由引擎抛"静态入口无主表"的明确报错
+        // 2026-08-09 阶段 E:经 SqlEngines.current() 走可插拔引擎(默认 SqlRegexEngine)
+        return SqlEngines.current().execute(null, sql, bindings, SqlDialect.DEFAULT);
     }
 
-    /** L3:指定方言(sql 在前 + 方言参数)。 */
+    /**
+     * L3:指定方言(sql 在前 + 方言参数)。
+     *
+     * @param sql SQL 字符串,${名} 作表名占位(名字纯可读,执行时按出现顺序绑定 DataFrame)
+     * @param dialect SqlDialect SQL 方言(ORACLE/POSTGRESQL/MYSQL/DEFAULT),非 null
+     * @param dfs DataFrame 参数,按 ${名} 在 SQL 中的首次出现顺序绑定
+     * @return DataFrame SQL 执行结果
+     * @throws IllegalArgumentException dfs 为空,或 ${} 占位数与 dfs 个数不匹配时抛出
+     */
     public static DataFrame sql(String sql, SqlDialect dialect, DataFrame... dfs) {
         if (dfs.length == 0) {
             throw new IllegalArgumentException("sql() 至少需要一个 DataFrame 参数");
@@ -129,6 +166,6 @@ public final class Dsl {
             bindings.put(names.get(i), dfs[i]);
         }
         // 无占位 → bindings 为空,由 SqlEngine 抛"静态入口无主表"的明确报错(见 executeSelect)
-        return SqlEngine.execute(null, sql, bindings, dialect);
+        return SqlEngines.current().execute(null, sql, bindings, dialect);
     }
 }

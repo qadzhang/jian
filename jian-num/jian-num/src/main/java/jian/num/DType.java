@@ -59,6 +59,11 @@ public enum DType {
     /**
      * 数值类型向上转型规则(对齐 numpy promotion):
      * INT64 + FLOAT64 → FLOAT64;同类型 → 同类型;非数值 → 抛异常。
+     *
+     * @param a DType 左操作数类型,取值范围:本枚举的任意常量(INT64/FLOAT64/BOOL/DATETIME64/OBJECT)
+     * @param b DType 右操作数类型,取值范围:本枚举的任意常量(INT64/FLOAT64/BOOL/DATETIME64/OBJECT)
+     * @return DType 提升后的统一类型;INT64⊕FLOAT64 返回 FLOAT64,同类型返回自身
+     * @throws IllegalArgumentException 当 a、b 至少一个非数值,或两者为 BOOL/DATETIME64/OBJECT 混合无法提升时抛出
      */
     public static DType promote(DType a, DType b) {
         if (a == b) return a;

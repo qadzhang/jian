@@ -1,0 +1,22 @@
+{
+  "engine": "pandas",
+  "pandas_version": "1.5.3",
+  "numpy_version": "1.24.2",
+  "seed": 20260808,
+  "sql": "SELECT count(*) FROM a JOIN b ON a.id=b.id JOIN c ON (b.ba+b.bb)=c.k1 AND (b.bc||b.d)=c.k2",
+  "note": "numpy 种子与 Java 不同,数据不必逐行一致;count 与 Java 端同量级(模式一致)",
+  "sizes": {
+    "100000": {
+      "wall": 68,
+      "count": 67216
+    },
+    "500000": {
+      "wall": 439,
+      "count": 868375
+    },
+    "5000000": {
+      "wall": 13058,
+      "count": 68725660
+    }
+  }
+}

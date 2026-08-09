@@ -43,18 +43,36 @@ public final class Html {
 
     private Html() {}
 
-    /** 直接读(无配置):返回全部表格;等价 read(path).go()。 */
+    /**
+     * 直接读(无配置):返回全部表格;等价 read(path).go()。
+     * @param path String HTML 文件路径,需为合法可读文件,不允许 null
+     * @return List&lt;DataFrame&gt; 提取出的全部表格(每个 &lt;table&gt; 一个 DataFrame),无表则空列表
+     * @throws java.io.IOException 文件不存在、不可读或解析 IO 错误时抛出
+     */
     public static java.util.List<DataFrame> readAll(String path) throws java.io.IOException {
         return new HtmlReader(Path.of(path), false).go();
     }
 
-    /** 读 HTML 的 builder(与其它 io 模块统一:read(path).config().go())。 */
+    /**
+     * 读 HTML 的 builder(与其它 io 模块统一:read(path).config().go())。
+     * @param path String HTML 文件路径,需为合法可读文件,不允许 null
+     * @return HtmlReader 配置器,链式调用 .match 后 .go() 执行
+     */
     public static HtmlReader read(String path) { return new HtmlReader(Path.of(path), false); }
 
-    /** 从 URL 读 HTML 的 builder(需要 match 配置时用)。链式配置后 .go()。 */
+    /**
+     * 从 URL 读 HTML 的 builder(需要 match 配置时用)。链式配置后 .go()。
+     * @param url String 要抓取的页面 URL(http/https),需为合法可访问地址,不允许 null
+     * @return HtmlReader 配置器,链式调用 .match 后 .go() 执行
+     */
     public static HtmlReader readUrl(String url) { return new HtmlReader(Path.of(url), true); }
 
-    /** 从 HTML 字符串提取所有表格。 */
+    /**
+     * 从 HTML 字符串提取所有表格。
+     * @param html String HTML 文本内容,不允许 null
+     * @param match String 表格文本筛选正则(匹配表的文本内容才保留);null 表示不过滤,返回全部表
+     * @return List&lt;DataFrame&gt; 通过 match 筛选后的表格列表,无匹配则空列表
+     */
     public static List<DataFrame> parse(String html, String match) {
         Document doc = Jsoup.parse(html);
         Elements tables = doc.select("table");
@@ -76,10 +94,18 @@ public final class Html {
 
         HtmlReader(Path p, boolean url) { this.path = p; this.isUrl = url; }
 
-        /** 正则筛表(对齐 pandas match)。 */
+        /**
+         * 正则筛表(对齐 pandas match)。
+         * @param regex String 表格文本筛选正则(对 DataFrame 字符串或表内文本做 contains 匹配);null/不调用表示不过滤
+         * @return HtmlReader 当前配置器,便于链式调用
+         */
         public HtmlReader match(String regex) { this.match = regex; return this; }
 
-        /** 提取所有匹配的表(统一终结符,与其它 io 模块的 .go() 一致)。 */
+        /**
+         * 提取所有匹配的表(统一终结符,与其它 io 模块的 .go() 一致)。
+         * @return List&lt;DataFrame&gt; 通过 match 筛选后的表格列表,无匹配则空列表
+         * @throws IOException 文件不存在/不可读,或 URL 抓取失败时抛出
+         */
         public List<DataFrame> go() throws IOException {
             String html;
             if (isUrl) {

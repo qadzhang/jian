@@ -45,9 +45,15 @@ class ParquetTest {
 
         DataFrame r = Parquet.read(p.toString()).go();
         assertThat(r.rowCount()).isEqualTo(3);
-        // 第 2 行缺失
-        assertThat(r.getColumn("v").get(1)).isNull();
-        assertThat(r.getStringColumn("s").get(1)).isNull();
+        // 第 2 行缺失。
+        // 缺失值语义(AGENTS.md §3.5):DOUBLE 列内部用 NaN 表示缺失,
+        // 所以 DoubleColumn.get(缺失行) 返回 Double.NaN(不返回 null),与 getDouble 一致;
+        // 但 IO 边界(getRow / export)统一用 isNull() 判断。这里用 isNull() 测,符合语义。
+        assertThat(r.getColumn("v").isNull(1)).isTrue();
+        assertThat(r.getStringColumn("s").isNull(1)).isTrue();
+        // 双重保险:DOUBLE 列缺失行的 getDouble 应是 NaN(get 则返回 Double.NaN 装箱)
+        assertThat(r.getDoubleColumn("v").getDouble(1)).isNaN();
+        assertThat(r.getDoubleColumn("v").get(1)).isEqualTo(Double.NaN);
     }
 
     @Test

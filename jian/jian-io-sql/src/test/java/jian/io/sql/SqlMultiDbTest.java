@@ -99,4 +99,68 @@ class SqlMultiDbTest {
             assertThat(r.getColumn("s").get(1)).isNull();
         }
     }
+
+    // ======================== VARCHAR 自适应长度(SQLite)========================
+
+    /**
+     * 短文本(≤ 4000)在 SQLite 不截断。
+     * SQLite 是动态类型(TEXT affinity),长度声明被忽略,所以任何长度都不截断。
+     */
+    @Test
+    void sqlite短文本_不截断() throws Exception {
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            String medium = "x".repeat(3500);
+            DataFrame df = DataFrame.of(
+                    Schema.of("id", DType.LONG, "txt", DType.STRING),
+                    new Object[][]{{1L, "short"}, {2L, medium}});
+            Sql.write(df, conn, "vc_test", Sql.Mode.CREATE_OR_REPLACE);
+
+            DataFrame r = Sql.readTable(conn, "vc_test");
+            assertThat(r.rowCount()).isEqualTo(2);
+            assertThat(r.getStringColumn("txt").get(0)).isEqualTo("short");
+            assertThat(((String) r.getStringColumn("txt").get(1)).length())
+                    .as("SQLite 短文本 3500 字符不截断").isEqualTo(3500);
+        }
+    }
+
+    /**
+     * 长文本(> 4000)在 SQLite 不截断(SQLite TEXT affinity 无长度上限)。
+     */
+    @Test
+    void sqlite长文本_万字符不截断() throws Exception {
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            String longText = "abcdefgh".repeat(1000);   // 8000 字符(纯 ASCII)
+            DataFrame df = DataFrame.of(
+                    Schema.of("id", DType.LONG, "body", DType.STRING),
+                    new Object[][]{{1L, longText}});
+            Sql.write(df, conn, "long_test", Sql.Mode.CREATE_OR_REPLACE);
+
+            DataFrame r = Sql.readTable(conn, "long_test");
+            assertThat(r.rowCount()).isEqualTo(1);
+            String readBack = (String) r.getColumn("body").get(0);
+            assertThat(readBack.length())
+                    .as("SQLite 长文本不截断").isEqualTo(longText.length());
+            assertThat(readBack).isEqualTo(longText);
+        }
+    }
+
+    /**
+     * 混合长短文本同表(SQLite):都走 TEXT affinity,各自不截断。
+     */
+    @Test
+    void sqlite混合长短文本_各自不截断() throws Exception {
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            String longArticle = "A".repeat(8000);
+            DataFrame df = DataFrame.of(
+                    Schema.of("name", DType.STRING, "article", DType.STRING),
+                    new Object[][]{{"alice", longArticle}, {"bob", "short"}});
+            Sql.write(df, conn, "mixed_test", Sql.Mode.CREATE_OR_REPLACE);
+
+            DataFrame r = Sql.readTable(conn, "mixed_test");
+            assertThat(r.rowCount()).isEqualTo(2);
+            assertThat(r.getStringColumn("name").get(0)).isEqualTo("alice");
+            assertThat(((String) r.getColumn("article").get(0)).length()).isEqualTo(8000);
+            assertThat(r.getStringColumn("article").get(1)).isEqualTo("short");
+        }
+    }
 }

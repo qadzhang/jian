@@ -55,6 +55,8 @@ jian-num  (单 jar)
 
 ## 2. 核心 API
 
+> **类名说明**:本节示例中的 `JianNum` 实际类名是 `jian.num.JianNum`(驼峰,**无连字符** —— Java 标识符不能含 `-`)。`import jian.num.JianNum;` 后即可使用下方所有静态方法。早期文档误写 `Jian-num.xxx`(连字符)会导致编译失败,已统一修正。
+
 ### 2.1 Ndarray 基础
 
 ```java
@@ -80,24 +82,24 @@ m.row(0);           // 取第 0 行
 
 ```java
 double[] data = ...;
-Jian-num.mean(data);           // 均值
-Jian-num.std(data);            // 标准差(样本,ddof=1)
-Jian-num.var(data, ddof=0);    // 方差(可选自由度修正)
-Jian-num.median(data);
-Jian-num.percentile(data, 25); // Q1
-Jian-num.quantile(data, 0.95);
-Jian-num.describe(data);       // 返回 Summary(count/mean/std/min/Q1/median/Q3/max)
+JianNum.mean(data);           // 均值
+JianNum.std(data);            // 标准差(样本,ddof=1)
+JianNum.var(data, ddof=0);    // 方差(可选自由度修正)
+JianNum.median(data);
+JianNum.percentile(data, 25); // Q1
+JianNum.quantile(data, 0.95);
+JianNum.describe(data);       // 返回 Summary(count/mean/std/min/Q1/median/Q3/max)
 ```
 
 ### 2.3 相关与协方差
 
 ```java
 double[] x = ..., y = ...;
-Jian-num.cov(x, y);                  // 协方差
-Jian-num.pearsonCorr(x, y);          // 皮尔逊相关系数
-Jian-num.spearmanCorr(x, y);         // 斯皮尔曼
-Jian-num.covarianceMatrix(matrix2d); // 协方差矩阵
-Jian-num.correlationMatrix(matrix2d);// 相关矩阵
+JianNum.cov(x, y);                  // 协方差
+JianNum.pearsonCorr(x, y);          // 皮尔逊相关系数
+JianNum.spearmanCorr(x, y);         // 斯皮尔曼
+JianNum.covarianceMatrix(matrix2d); // 协方差矩阵
+JianNum.correlationMatrix(matrix2d);// 相关矩阵
 ```
 
 ### 2.4 简单线性代数
@@ -115,10 +117,10 @@ double det = A.determinant();
 ### 2.5 随机数(可复现)
 
 ```java
-Jian-num.setSeed(42);     // 全局种子,确保结果可复现
-Jian-num.rand(10);        // 10 个 uniform[0,1)
-Jian-num.randn(10);       // 10 个标准正态
-Jian-num.randint(0, 100, 10);  // 10 个 [0,100) 整数
+JianNum.setSeed(42);     // 全局种子,确保结果可复现
+JianNum.rand(10);        // 10 个 uniform[0,1)
+JianNum.randn(10);       // 10 个标准正态
+JianNum.randint(0, 100, 10);  // 10 个 [0,100) 整数
 ```
 
 ### 2.6 曲线拟合(可选)
@@ -126,7 +128,7 @@ Jian-num.randint(0, 100, 10);  // 10 个 [0,100) 整数
 ```java
 // y = a*x + b 的最小二乘拟合
 double[] x = ..., y = ...;
-LinearFit fit = Jian-num.linearFit(x, y);
+LinearFit fit = JianNum.linearFit(x, y);
 fit.slope(); fit.intercept(); fit.rSquared();
 ```
 
@@ -209,15 +211,15 @@ fit.slope(); fit.intercept(); fit.rSquared();
 | `Summary.java` | describe() 返回的 record | ~25 |
 | `NaNPolicy.java` | SKIP/ERROR/PROPAGATE 三态 | ~25 |
 | `JianNum.java` | 顶层门面(静态方法聚合) | ~90 |
-| 测试 `NdarrayTest.java` + `StatsTest.java` | 33 用例,覆盖整数精度/字符串/NaN/统计/线代/随机复现 | ~280 |
+| 测试 `NdarrayTest.java` + `StatsTest.java` + `MatrixTest.java` | **38 用例**(NdarrayTest 17 + StatsTest 19 + MatrixTest 2),覆盖整数精度/字符串/NaN/统计/线代/矩阵运算/随机复现 | ~280 |
 
-**编译/测试状态**:`mvn -pl jian-num/jian-num test` → 33/33 全过,BUILD SUCCESS。
+**编译/测试状态**:`mvn -pl jian-num/jian-num test` → **38/38 全过**,BUILD SUCCESS(2026-08-09 实测;早前版本写"33"漏了 MatrixTest 2 例)。
 
 ### 7.2 与需求的偏差(已实现部分)
 
 | 需求写法 | 实际实现 | 原因 |
 |---|---|---|
-| 顶层 API `Jian-num.mean(...)` | `JianNum.mean(...)` | Java 标识符不能含连字符,改为驼峰 `JianNum` |
+| 顶层 API `JianNum.mean(...)` | `JianNum.mean(...)` | Java 标识符不能含连字符,改为驼峰 `JianNum` |
 | Ndarray 内部 `double[]` 单一存储 | 5 种 dtype 多存储(long[]/double[]/Boolean[]/Object[]) | 用户明确要求整数独立保留精度,字符串/日期/布尔各有别于浮点;对齐 numpy dtype 体系 |
 | Ndarray 一维/二维 | **当前仅一维**(二维运算下沉到 `Matrix` 类) | 一维 Ndarray + 独立 Matrix 类职责更清晰;若 M2 发现 core 需要二维 Ndarray 再补 |
 | 字符串走 object dtype | OBJECT dtype + 独立 `StrOps` 入口(对齐 pandas .str accessor) | 字符串使用频率最高,提供批量操作避免逐元素循环 |
@@ -245,4 +247,4 @@ fit.slope(); fit.intercept(); fit.rSquared();
 ---
 
 *本分册独立,与 01-05 无耦合。完全独立可单独使用。*
-*M0 实现完成于 2026-08-01;v1.0 发布。*
+*M0 实现完成于 2026-08-01;v1.0 发布。2026-08-09 经 AI agent2 第二轮审查核实,测试数从"33"修正为"38"(补 MatrixTest 2 例)。*

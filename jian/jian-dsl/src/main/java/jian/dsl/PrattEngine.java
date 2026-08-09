@@ -36,7 +36,14 @@ final class PrattEngine {
 
     private PrattEngine() {}
 
-    /** L1 query:对每行求值 expr,返回满足的行组成新 DataFrame。 */
+    /**
+     * L1 query:对每行求值 expr,返回满足的行组成新 DataFrame。
+     *
+     * @param df DataFrame 数据源,非 null
+     * @param expr String 布尔表达式(已展开 ${name} 占位),非 null
+     * @param params Params 命名参数绑定,非 null(无参传 Params.EMPTY)
+     * @return DataFrame 满足 expr 的行组成的新 DataFrame
+     */
     static DataFrame query(DataFrame df, String expr, Params params) {
         String expanded = expandParams(expr, params);
         Node ast = parse(expanded);
@@ -49,7 +56,14 @@ final class PrattEngine {
         return df.filter(mask);
     }
 
-    /** L2 eval:派生新列(支持 `name = expr; name2 = expr2` 多语句)。 */
+    /**
+     * L2 eval:派生新列(支持 `name = expr; name2 = expr2` 多语句)。
+     *
+     * @param df DataFrame 数据源,非 null
+     * @param expr String 赋值表达式(已展开占位),非 null;分号或换行分隔多语句
+     * @param params Params 命名参数绑定,非 null(无参传 Params.EMPTY)
+     * @return DataFrame 加了新列后的 DataFrame
+     */
     static DataFrame eval(DataFrame df, String expr, Params params) {
         String expanded = expandParams(expr, params);
         // 多语句:按分号或换行切分(末尾可省分号)
@@ -109,7 +123,13 @@ final class PrattEngine {
         return -1;
     }
 
-    /** 展开 ${name} 占位 → 字面量(JSON-ish 形式:字符串加引号,数字直接,空保留 null)。 */
+    /**
+     * 展开 ${name} 占位 → 字面量(JSON-ish 形式:字符串加引号,数字直接,空保留 null)。
+     *
+     * @param expr String 原始表达式,非 null;可含 ${name} 占位
+     * @param params Params 命名参数绑定;null 或 Params.EMPTY 时原样返回 expr
+     * @return String 占位已展开为字面量的表达式
+     */
     static String expandParams(String expr, Params params) {
         if (params == null || params == Params.EMPTY) return expr;
         Matcher m = Pattern.compile("\\$\\{(\\w+)\\}").matcher(expr);
@@ -142,21 +162,27 @@ final class PrattEngine {
     }
 
     record NumLit(double v) implements Node {
+        /** @param b Binding 变量绑定上下文,非 null;@return Object 求值结果 */
         public Object eval(Binding b) { return v; }
     }
     record StrLit(String v) implements Node {
+        /** @param b Binding 变量绑定上下文,非 null;@return Object 求值结果 */
         public Object eval(Binding b) { return v; }
     }
     record BoolLit(boolean v) implements Node {
+        /** @param b Binding 变量绑定上下文,非 null;@return Object 求值结果 */
         public Object eval(Binding b) { return v; }
     }
     record NullLit() implements Node {
+        /** @param b Binding 变量绑定上下文,非 null;@return Object 求值结果 */
         public Object eval(Binding b) { return null; }
     }
     record ColRef(String name) implements Node {
+        /** @param b Binding 变量绑定上下文,非 null;@return Object 求值结果 */
         public Object eval(Binding b) { return b.get(name); }
     }
     record BinOp(String op, Node l, Node r) implements Node {
+        /** @param b Binding 变量绑定上下文,非 null;@return Object 求值结果 */
         public Object eval(Binding b) {
             Object a = l.eval(b), c = r.eval(b);
             if (op.equals("+") && (a instanceof String || c instanceof String)) {
@@ -182,20 +208,24 @@ final class PrattEngine {
         }
     }
     record Logic(String op, Node l, Node r) implements Node {
+        /** @param b Binding 变量绑定上下文,非 null;@return Object 求值结果 */
         public Object eval(Binding b) {
             if (op.equals("&&")) return toBool(l.eval(b)) && toBool(r.eval(b));
             return toBool(l.eval(b)) || toBool(r.eval(b));
         }
     }
     record Not(Node e) implements Node {
+        /** @param b Binding 变量绑定上下文,非 null;@return Object 求值结果 */
         public Object eval(Binding b) { return !toBool(e.eval(b)); }
     }
     record Ternary(Node c, Node a, Node b) implements Node {
+        /** @param b Binding 变量绑定上下文,非 null;@return Object 求值结果 */
         public Object eval(Binding bnd) {
             return toBool(c.eval(bnd)) ? a.eval(bnd) : b.eval(bnd);
         }
     }
     record Between(Node e, Node lo, Node hi) implements Node {
+        /** @param b Binding 变量绑定上下文,非 null;@return Object 求值结果 */
         public Object eval(Binding b) {
             Object v = e.eval(b);
             if (v == null) return false;
@@ -204,6 +234,7 @@ final class PrattEngine {
         }
     }
     record Like(Node e, String pattern) implements Node {
+        /** @param b Binding 变量绑定上下文,非 null;@return Object 求值结果 */
         public Object eval(Binding b) {
             Object v = e.eval(b);
             if (v == null) return false;
@@ -214,13 +245,19 @@ final class PrattEngine {
 
     /** 函数调用(空值函数 nvl/coalesce/ifnull,规范 07 §2.4)。 */
     record FuncCall(String name, List<Node> args) implements Node {
+        /**
+         * @param b Binding 变量绑定上下文,非 null
+         * @return Object 求值结果
+         *         (2026-08-09 修复:NaN 也视为缺失,与 AGENTS.md §3.5 一致)
+         */
         public Object eval(Binding b) {
             String fn = name.toLowerCase();
             if (fn.equals("nvl") || fn.equals("coalesce") || fn.equals("ifnull")) {
-                // 空值函数:返回第一个非 null 参数(全 null 返回 null);参数可引用列,逐行求值
+                // 空值函数:返回第一个非缺失参数(全缺失返回 null)。
+                // 2026-08-09:缺失 = null 或 DOUBLE 列的 NaN(此前只判 null,DOUBLE 列 NaN 漏判)。
                 for (Node a : args) {
                     Object v = a.eval(b);
-                    if (v != null) return v;
+                    if (!isMissing(v)) return v;
                 }
                 return null;
             }
@@ -242,6 +279,7 @@ final class PrattEngine {
         return sb.toString();
     }
     record In(Node e, List<Node> items) implements Node {
+        /** @param b Binding 变量绑定上下文,非 null;@return Object 求值结果 */
         public Object eval(Binding b) {
             Object v = e.eval(b);
             for (Node n : items) {
@@ -261,10 +299,28 @@ final class PrattEngine {
         return a.equals(b);
     }
     record IsNull(Node e, boolean negate) implements Node {
+        /**
+         * @param b Binding 变量绑定上下文,非 null
+         * @return Boolean true=值缺失(v == null,或 v 是 DOUBLE 列的 NaN)
+         *         (2026-08-09 修复:DSL 引擎需识别 DOUBLE 列的 NaN 为缺失,
+         *          与 AGENTS.md §3.5 缺失值语义一致;否则 v is null 在 NaN 上永远返回 false)
+         */
         public Object eval(Binding b) {
             Object v = e.eval(b);
-            return negate ? v != null : v == null;
+            boolean missing = isMissing(v);
+            return negate ? !missing : missing;
         }
+    }
+
+    /**
+     * 判定一个 DSL 求值结果是否"缺失":null 或 DOUBLE 列的 NaN。
+     * <p>2026-08-09 新增:DOUBLE 列内部用 NaN 表示缺失(AGENTS.md §3.5),
+     * DSL 引擎的 is null / nvl / coalesce / ifnull 必须把 NaN 当缺失处理。
+     */
+    private static boolean isMissing(Object v) {
+        if (v == null) return true;
+        if (v instanceof Double d && d.isNaN()) return true;
+        return false;
     }
 
     // ======================== Lexer ========================
@@ -478,6 +534,13 @@ final class PrattEngine {
         }
     }
 
+    /**
+     * 解析表达式为 AST。
+     *
+     * @param expr String 表达式文本,非 null
+     * @return Node AST 根节点
+     * @throws IllegalArgumentException 词法/语法错误时抛出
+     */
     static Node parse(String expr) {
         return new Parser(new Lexer(expr).tokenize()).parse();
     }

@@ -1,0 +1,21 @@
+{
+  "engine": "pandas",
+  "pandas_version": "1.5.3",
+  "numpy_version": "1.24.2",
+  "seed": 20260808,
+  "sql": "SELECT k, count(*), sum(v) FROM t WHERE id % 10 = 0 GROUP BY k",
+  "sizes": {
+    "1000000": {
+      "wall": 15,
+      "groups": 100
+    },
+    "5000000": {
+      "wall": 69,
+      "groups": 100
+    },
+    "10000000": {
+      "wall": 148,
+      "groups": 100
+    }
+  }
+}

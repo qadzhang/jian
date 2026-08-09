@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 // ┌─ What : Window —— Rolling / Expanding / EWM / Resampler(对齐 pandas 窗口族)
-// │  Why  : 规范 01 §6;时间序列 / 滚动统计是数据分析核心;opencode #10 要求实现
+// │  Why  : 规范 01 §6;时间序列 / 滚动统计是数据分析核心;AI agent2 #10 要求实现
 // │  Who  : 用户经 df.getSeries(col).rolling(n) / df.rolling(n) 创建
 // │  When : 滚动窗口统计、累积统计、指数加权、重采样
 // │  Where: jian-core/Window.java
@@ -33,22 +33,38 @@ public final class Window {
 
     // ======================== Rolling ========================
 
-    /** Rolling 窗口(对齐 pandas.Series.rolling(window))。 */
+    /**
+     * Rolling 窗口(对齐 pandas.Series.rolling(window))。
+     * <p>定长滑动窗口:第 i 行的窗口 = [max(0, i-window+1), i]。
+     */
     public static final class Rolling {
         private final double[] data;
         private final int window;
         private final int minPeriods;
 
-        /** 从 Series 创建 Rolling。 */
+        /**
+         * 从 Series 创建 Rolling。
+         * @param s          Series 数据源,非 null;转 double[](缺失→NaN)
+         * @param window     int 窗口大小,≥ 1
+         * @param minPeriods int 窗口内最少有效值数,≥ 1(不足则该位结果 NaN)
+         */
         public Rolling(Series s, int window, int minPeriods) {
             this.data = toDoubleArray(s);
             this.window = window;
             this.minPeriods = minPeriods;
         }
 
+        /**
+         * 从 Series 创建 Rolling(minPeriods = max(1, window))。
+         * @param s      Series 数据源
+         * @param window int 窗口大小,≥ 1
+         */
         public Rolling(Series s, int window) { this(s, window, Math.max(1, window)); }
 
-        /** 滚动均值。 */
+        /**
+         * 滚动均值。
+         * @return double[] 与 data 等长;前 minPeriods-1 位为 NaN;其余为窗口内非 NaN 值的算术平均
+         */
         public double[] mean() {
             double[] r = new double[data.length];
             for (int i = 0; i < data.length; i++) {
@@ -61,7 +77,10 @@ public final class Window {
             return r;
         }
 
-        /** 滚动求和。 */
+        /**
+         * 滚动求和。
+         * @return double[] 与 data 等长;窗口内非 NaN 值之和;不足 minPeriods 为 NaN
+         */
         public double[] sum() {
             double[] r = new double[data.length];
             for (int i = 0; i < data.length; i++) {
@@ -74,7 +93,10 @@ public final class Window {
             return r;
         }
 
-        /** 滚动标准差(样本,ddof=1)。 */
+        /**
+         * 滚动标准差(样本,ddof=1)。
+         * @return double[] 与 data 等长;窗口内非 NaN 值的样本标准差;有效值 ≤ 1 时为 NaN
+         */
         public double[] std() {
             double[] m = mean();
             double[] r = new double[data.length];
@@ -90,7 +112,7 @@ public final class Window {
             return r;
         }
 
-        /** 滚动最小。 */
+        /** @return double[] 滚动最小值;不足 minPeriods 为 NaN */
         public double[] min() {
             double[] r = new double[data.length];
             for (int i = 0; i < data.length; i++) {
@@ -103,7 +125,7 @@ public final class Window {
             return r;
         }
 
-        /** 滚动最大。 */
+        /** @return double[] 滚动最大值;不足 minPeriods 为 NaN */
         public double[] max() {
             double[] r = new double[data.length];
             for (int i = 0; i < data.length; i++) {
@@ -116,7 +138,7 @@ public final class Window {
             return r;
         }
 
-        /** 滚动计数(非 NaN 个数)。 */
+        /** @return double[] 窗口内非 NaN 个数(整数以 double 返回) */
         public double[] count() {
             double[] r = new double[data.length];
             for (int i = 0; i < data.length; i++) {
@@ -131,18 +153,26 @@ public final class Window {
 
     // ======================== Expanding ========================
 
-    /** Expanding 窗口(累积式,窗口从开头到当前位置,对齐 pandas.Series.expanding)。 */
+    /**
+     * Expanding 窗口(累积式,窗口从开头到当前位置,对齐 pandas.Series.expanding)。
+     */
     public static final class Expanding {
         private final double[] data;
         private final int minPeriods;
 
+        /**
+         * @param s          Series 数据源
+         * @param minPeriods int 最少有效值数,≥ 1
+         */
         public Expanding(Series s, int minPeriods) {
             this.data = toDoubleArray(s);
             this.minPeriods = minPeriods;
         }
 
+        /** @param s Series 数据源(minPeriods=1) */
         public Expanding(Series s) { this(s, 1); }
 
+        /** @return double[] 累积均值 */
         public double[] mean() {
             double[] r = new double[data.length];
             double s = 0; int c = 0;
@@ -153,6 +183,7 @@ public final class Window {
             return r;
         }
 
+        /** @return double[] 累积求和 */
         public double[] sum() {
             double[] r = new double[data.length];
             double s = 0; int c = 0;
@@ -163,6 +194,7 @@ public final class Window {
             return r;
         }
 
+        /** @return double[] 累积最小 */
         public double[] min() {
             double[] r = new double[data.length];
             double m = Double.POSITIVE_INFINITY; int c = 0;
@@ -173,6 +205,7 @@ public final class Window {
             return r;
         }
 
+        /** @return double[] 累积最大 */
         public double[] max() {
             double[] r = new double[data.length];
             double m = Double.NEGATIVE_INFINITY; int c = 0;
@@ -186,19 +219,28 @@ public final class Window {
 
     // ======================== EWM(指数加权)========================
 
-    /** EWM 指数加权(对齐 pandas.Series.ewm(alpha).mean())。 */
+    /**
+     * EWM 指数加权(对齐 pandas.Series.ewm(alpha).mean())。
+     */
     public static final class EWM {
         private final double[] data;
         private final double alpha;
 
-        /** alpha ∈ (0,1],越大越偏近期。 */
+        /**
+         * @param s     Series 数据源
+         * @param alpha double 平滑系数 ∈ (0.0, 1.0];越大越偏近期(0.3 常用)
+         * @throws IllegalArgumentException alpha 不在 (0,1]
+         */
         public EWM(Series s, double alpha) {
             if (alpha <= 0 || alpha > 1) throw new IllegalArgumentException("alpha 须 ∈ (0,1],实际=" + alpha);
             this.data = toDoubleArray(s);
             this.alpha = alpha;
         }
 
-        /** 指数加权移动平均(EWMA)。 */
+        /**
+         * 指数加权移动平均(EWMA)。
+         * @return double[] 与 data 等长;prev = alpha*data[i] + (1-alpha)*prev;缺失行透传前一值
+         */
         public double[] mean() {
             double[] r = new double[data.length];
             double prev = Double.NaN;
@@ -211,7 +253,10 @@ public final class Window {
             return r;
         }
 
-        /** 指数加权方差(简化版)。 */
+        /**
+         * 指数加权方差(简化版)。
+         * @return double[] 与 data 等长;prevVar = (1-alpha)*prevVar + alpha*(data[i]-mean[i])²
+         */
         public double[] var() {
             double[] m = mean();
             double[] r = new double[data.length];
@@ -225,6 +270,7 @@ public final class Window {
             return r;
         }
 
+        /** @return double[] 指数加权标准差(sqrt(var())) */
         public double[] std() {
             double[] v = var();
             for (int i = 0; i < v.length; i++) v[i] = Math.sqrt(v[i]);
@@ -234,7 +280,11 @@ public final class Window {
 
     // ======================== 辅助 ========================
 
-    /** Series → double[](NaN 表缺失)。 */
+    /**
+     * Series → double[](NaN 表缺失)。
+     * @param s Series 数据源
+     * @return double[] 等长数组;缺失位为 NaN,其余为 s.getDouble(i)
+     */
     private static double[] toDoubleArray(Series s) {
         int n = s.size();
         double[] d = new double[n];

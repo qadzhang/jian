@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>jian</groupId>
+    <artifactId>jian-parent</artifactId>
+    <version>1.0.0</version>
+    <relativePath>../pom.xml</relativePath>
+  </parent>
+
+  <!-- jian 库聚合 fat jar:含 17 个子模块 + 全部第三方依赖(POI/Jackson/parquet/orc/XChart 等) -->
+  <artifactId>jian-all</artifactId>
+  <name>jian-all (fat jar)</name>
+  <packaging>jar</packaging>
+
+  <dependencies>
+    <!-- jian 全部子模块 -->
+    <dependency><groupId>jian</groupId><artifactId>jian-core</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-dsl</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-export</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-facade</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-clipboard</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-csv</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-excel</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-html</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-json</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-latex</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-orc</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-parquet</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-pickle</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-sql</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-xml</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-num-bridge</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-viz</artifactId><version>${project.version}</version></dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <!-- fat jar 模块没有 src/main/java,需要跳过编译 -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <configuration>
+          <skipIfEmpty>false</skipIfEmpty>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>${maven-shade-plugin.version}</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals><goal>shade</goal></goals>
+            <configuration>
+              <shadedArtifactAttached>true</shadedArtifactAttached>
+              <shadedClassifierName>all</shadedClassifierName>
+              <!-- 合并 SPI(ServiceLoader 配置)-->
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <manifestEntries>
+                    <Ai-Aggregated>true</Ai-Aggregated>
+                    <Ai-Library>jian</Ai-Library>
+                    <Ai-Modules>META-INF/ai/aggregated.md</Ai-Modules>
+                  </manifestEntries>
+                </transformer>
+              </transformers>
+              <!-- 排除签名文件(防 POI 等签名破坏)-->
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

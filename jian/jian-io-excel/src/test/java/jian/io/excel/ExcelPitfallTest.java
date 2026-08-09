@@ -12,7 +12,7 @@ import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-// ┌─ What : POI skill 陷阱测试 —— #5 表头去重 / #8/#9 空行跳过
+// ┌─ What : POI 使用陷阱测试 —— #5 表头去重 / #8/#9 空行跳过
 class ExcelPitfallTest {
 
     @TempDir Path tmp;

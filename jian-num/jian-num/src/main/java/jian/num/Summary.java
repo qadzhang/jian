@@ -14,6 +14,15 @@ package jian.num;
  *
  * <p>字段对齐 pandas {@code df.describe()} 的默认输出:count / mean / std / min / 25% / 50% / 75% / max。
  * std 默认样本标准差(ddof=1),与 pandas 一致。
+ *
+ * @param count  long 非 NaN 值个数
+ * @param mean   double 均值
+ * @param std    double 样本标准差(ddof=1)
+ * @param min    double 最小值
+ * @param q1     double 25% 分位数(下四分位)
+ * @param median double 50% 分位数(中位数)
+ * @param q3     double 75% 分位数(上四分位)
+ * @param max    double 最大值
  */
 public record Summary(
         long count,      // 非 NaN 值个数

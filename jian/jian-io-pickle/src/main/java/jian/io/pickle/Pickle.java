@@ -53,13 +53,24 @@ public final class Pickle {
 
     private static final int MAGIC = 0x4A504B32;  // "JPK2"
 
-    /** 序列化 DataFrame 到 .jpk 文件。 */
+    /**
+     * 序列化 DataFrame 到 .jpk 文件。
+     * @param df DataFrame 要序列化的数据帧,不允许 null
+     * @param path String 输出 .jpk 文件路径,需为合法可写路径,不允许 null
+     * @throws IOException 目标路径不可写或写出过程发生 IO 错误时抛出
+     */
     public static void write(DataFrame df, String path) throws IOException {
         try (OutputStream fos = Files.newOutputStream(Path.of(path))) {
             write(df, fos);
         }
     }
 
+    /**
+     * 序列化 DataFrame 到输出流(魔数 + payload + CRC32)。
+     * @param df DataFrame 要序列化的数据帧,不允许 null
+     * @param os OutputStream 目标输出流,调用方负责关闭;不允许 null
+     * @throws IOException 写出过程发生 IO 错误时抛出
+     */
     public static void write(DataFrame df, OutputStream os) throws IOException {
         String json = jian.io.json.Json.toJsonString(df, jian.io.json.Json.Orient.RECORDS);
         byte[] payload = json.getBytes(StandardCharsets.UTF_8);
@@ -79,13 +90,24 @@ public final class Pickle {
         os.write(new byte[]{(byte)(crcVal >> 24), (byte)(crcVal >> 16), (byte)(crcVal >> 8), (byte)crcVal});
     }
 
-    /** 从 .jpk 文件反序列化。 */
+    /**
+     * 从 .jpk 文件反序列化。
+     * @param path String .jpk 文件路径,需为合法可读文件,不允许 null
+     * @return DataFrame 还原后的数据帧(类型按 JSON records 解析重建)
+     * @throws IOException 文件过短、魔数错误、长度不匹配或 CRC 校验失败时抛出(含中文错误说明)
+     */
     public static DataFrame read(String path) throws IOException {
         try (InputStream fis = Files.newInputStream(Path.of(path))) {
             return read(fis);
         }
     }
 
+    /**
+     * 从输入流反序列化(校验魔数 + CRC32 后解析 JSON)。
+     * @param is InputStream .jpk 数据输入流,调用方负责关闭;不允许 null
+     * @return DataFrame 还原后的数据帧(类型按 JSON records 解析重建)
+     * @throws IOException 数据过短、魔数错误、长度不匹配或 CRC 校验失败时抛出(含中文错误说明)
+     */
     public static DataFrame read(InputStream is) throws IOException {
         byte[] all = is.readAllBytes();
         if (all.length < 12) {

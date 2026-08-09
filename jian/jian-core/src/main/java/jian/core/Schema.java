@@ -33,6 +33,12 @@ public final class Schema {
     private final List<String> names;
     private final List<DType> dtypes;
 
+    /**
+     * 公开构造(列名列表 + 类型列表)。
+     * @param names  List&lt;String&gt; 列名,非 null,元素非 null,**不允许重复**(重复抛异常)
+     * @param dtypes List&lt;DType&gt; 每列类型,非 null,长度必须 == names.size()
+     * @throws IllegalArgumentException names 与 dtypes 长度不一致,或 names 含重复元素
+     */
     public Schema(List<String> names, List<DType> dtypes) {
         if (names.size() != dtypes.size()) {
             throw new IllegalArgumentException("names 与 dtypes 长度须一致:" + names.size() + " vs " + dtypes.size());
@@ -42,7 +48,12 @@ public final class Schema {
         this.dtypes = new ArrayList<>(dtypes);
     }
 
-    /** 交替传 name/dtype 构造:Schema.of("id", LONG, "name", STRING)。 */
+    /**
+     * 交替传 name/dtype 构造(便捷工厂):<code>Schema.of("id", LONG, "name", STRING)</code>。
+     * @param nameAndDtype Object... 交替排列的列名(String)与类型(DType),长度必须为偶数;非 null
+     * @return Schema 新实例
+     * @throws IllegalArgumentException 长度为奇数,或某元素类型不是 String/DType,或列名重复
+     */
     public static Schema of(Object... nameAndDtype) {
         if (nameAndDtype.length % 2 != 0) {
             throw new IllegalArgumentException("nameAndDtype 必须成对,实际长度 " + nameAndDtype.length);
@@ -56,25 +67,58 @@ public final class Schema {
         return new Schema(names, dtypes);
     }
 
+    /**
+     * 列名列表(副本,防外部修改)。
+     * @return List&lt;String&gt; 列名副本,顺序与构造时一致;非 null
+     */
     public List<String> names() { return new ArrayList<>(names); }
+
+    /**
+     * 类型列表(副本)。
+     * @return List&lt;DType&gt; 类型副本;非 null
+     */
     public List<DType> dtypes() { return new ArrayList<>(dtypes); }
+
+    /**
+     * 列数。
+     * @return int 列数,≥ 0
+     */
     public int columnCount() { return names.size(); }
 
-    /** 列名 → 列下标;不存在返回 -1。 */
+    /**
+     * 列名 → 列下标。
+     * @param name String 列名,非 null
+     * @return int 该列下标 ∈ [0, columnCount());不存在返回 -1
+     */
     public int indexOf(String name) {
         for (int i = 0; i < names.size(); i++) if (names.get(i).equals(name)) return i;
         return -1;
     }
 
-    /** 取某列类型。 */
+    /**
+     * 取某列类型(按列名)。
+     * @param name String 列名,非 null
+     * @return DType 该列类型
+     * @throws IllegalArgumentException 列名不存在(消息含现有列清单)
+     */
     public DType dtypeOf(String name) {
         int i = indexOf(name);
         if (i < 0) throw new IllegalArgumentException("列不存在:" + name + ",现有列:" + names);
         return dtypes.get(i);
     }
 
-    /** 取某列类型(按下标)。 */
+    /**
+     * 取某列类型(按下标)。
+     * @param i int 列下标,范围 [0, columnCount());越界抛 IndexOutOfBoundsException
+     * @return DType 该列类型
+     */
     public DType dtypeAt(int i) { return dtypes.get(i); }
+
+    /**
+     * 取某列列名(按下标)。
+     * @param i int 列下标,范围 [0, columnCount());越界抛 IndexOutOfBoundsException
+     * @return String 列名,非 null
+     */
     public String nameAt(int i) { return names.get(i); }
 
     /**
@@ -84,8 +128,10 @@ public final class Schema {
      * 全 true/false → BOOL;全 yyyy-MM-dd[ HH:mm:ss] → DATE/DATETIME;否则 → STRING;
      * 空列默认 STRING。
      *
-     * @param columnNames 列名(长度 = data 的列数)
-     * @param data 行优先二维数组(data[row][col])
+     * @param columnNames List&lt;String&gt; 列名,非 null;长度 = data 的列数(列数推断以此为据)
+     * @param data        Object[][] 行优先二维数组(data[row][col]),允许 null(空数据)或 length==0;
+     *                    每行允许 null 或长度不足(该行缺列按 null 处理);元素类型任意
+     * @return Schema 推断出的 schema:空数据时所有列默认 STRING
      */
     public static Schema infer(List<String> columnNames, Object[][] data) {
         Objects.requireNonNull(columnNames, "columnNames 不能为 null");
@@ -103,12 +149,26 @@ public final class Schema {
         return new Schema(columnNames, dtypes);
     }
 
-    /** 单列类型推断。 */
+    /**
+     * 单列类型推断(私有,被 infer 调用)。
+     * @param data Object[][] 行优先数据
+     * @param c    int 待推断的列下标
+     * @return DType 推断结果(空列返回 STRING 兜底)
+     */
     private static DType inferColumn(Object[][] data, int c) {
+        // 修复(assign 空表 IOOBE):当 data 是 [[],[],...] 形式(外层非空但每行空)时,
+        // row[c] 会 IOOBE。加守卫——所有行长度都 ≤ c 时,该列无数据,返回 STRING 兜底。
+        boolean hasData = false;
+        for (Object[] row : data) {
+            if (row != null && row.length > c) { hasData = true; break; }
+        }
+        if (!hasData) return DType.STRING;   // 全空列,STRING 兜底(与 pandas object 一致)
+
         boolean hasInt = false, hasLong = false, hasDouble = false;
         boolean hasBool = false, hasString = false, hasDate = false, hasDateTime = false;
         boolean hasNullOnly = true;
         for (Object[] row : data) {
+            if (row == null || row.length <= c) continue;
             Object v = row[c];
             if (v == null) continue;
             hasNullOnly = false;
@@ -152,7 +212,11 @@ public final class Schema {
         return DType.STRING;
     }
 
-    /** 校验列名不重复(规范 01 §9:重复名 + allows_duplicate_labels=false 抛异常)。 */
+    /**
+     * 校验列名不重复(规范 01 §9:重复名 + allows_duplicate_labels=false 抛异常)。
+     * @param names List&lt;String&gt; 列名列表
+     * @throws IllegalArgumentException 含重复列名(消息含重复名与位置)
+     */
     private static void validateUniqueNames(List<String> names) {
         for (int i = 0; i < names.size(); i++) {
             for (int j = i + 1; j < names.size(); j++) {
@@ -164,6 +228,10 @@ public final class Schema {
         }
     }
 
+    /**
+     * 字符串描述(每行列名:类型)。
+     * @return String 多行格式,形如 "Schema{\n  id : LONG\n  ...\n}"
+     */
     @Override public String toString() {
         StringBuilder sb = new StringBuilder("Schema{\n");
         for (int i = 0; i < names.size(); i++) {

@@ -1,0 +1,1 @@
+This is a fat jar aggregator module. See META-INF/ai/ for module info.

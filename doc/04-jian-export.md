@@ -18,7 +18,7 @@ jian-export **大面对齐 pandas 的 `df.style` (Styler) + 多格式文档导�
 |---|---|---|
 | **Styler 样式引擎** | `Styler` 类 | `df.style` |
 | 条件染色(highlight_max/min/null) | Styler API | `.highlight_max()` 等 |
-| 颜色映射(背景/文字渐变) | Styler API | `.background_gradient()` / `.text_gradient()` |
+| 颜色映射(背景渐变) | Styler API | `.background_gradient()`(文字渐变 text_gradient 未实现,见 §2.2 v2) |
 | 数值格式化 | Styler API | `.format()` |
 | 条形图嵌入单元格 | Styler API | `.bar()` |
 | 自定义 CSS / caption | Styler API | `.set_caption()` / `.set_table_styles()` |
@@ -51,6 +51,16 @@ jian-export
 
 ## 2. Styler 子系统设计(核心)
 
+> **⚠️ API 风格说明(2026-08-09 与 AI agent2 共识)**:
+> jian 的 **Styler 入口是静态方法** `Styler.of(df)`,**不是** `df.style()` 链式。
+> 原因:Styler 属于 jian-export 叶子模块,DataFrame 在 jian-core,core 不能反依赖 export(模块单向依赖红线,见 AGENTS.md §4.1)。
+> **用户实际写法**:
+> ```java
+> Styler s = Styler.of(df).format("#,##0.00", "salary").highlightMax("salary", "#ff0000");
+> String html = s.toHtml();
+> ```
+> 本分册下方示例中如出现 `df.style()` 链式写法,**均为概念示意**(对齐 pandas 心智),实际请用 `Styler.of(df)`。
+
 ### 2.1 Styler 概念(对齐 pandas)
 
 `Styler` 是 DataFrame 的"视图 + 样式规则"组合,本身不改数据,只决定如何渲染:
@@ -66,57 +76,64 @@ Styler = DataFrame(原数据)
 
 ### 2.2 Styler API(对齐 pandas 方法名)
 
-```java
-Styler s = df.style();
+**入口**:`Styler s = Styler.of(df);`(对齐 pandas `df.style()`,但 jian 用静态 `of` 而非实例方法)
 
-// 数值格式化(对齐 .format)
-s.format("#,##0.00", "salary");                  // salary 列保留 2 位
+#### 已实现(2026-08-09 与 AI agent2 共识:文档如实对齐代码)
+
+```java
+Styler s = Styler.of(df);
+
+// 数值格式化(对齐 .format)—— pattern 用 Java DecimalFormat 语法
+s.format("#,##0.00", "salary");                  // salary 列保留 2 位小数
 s.format(Map.of("date","yyyy-MM-dd","rate","0.00%"));
 
-// 背景颜色渐变(对齐 .background_gradient)
-s.backgroundGradient("salary", ColorMap.GREEN_YELLOW_RED);  // 低→高 渐变色
-s.textGradient("score", ColorMap.BLUE_RED);
+// 背景颜色渐变(对齐 .background_gradient)—— 颜色用 String(如 "#ffff00"),非 java.awt.Color
+// ColorMap 仅有 3 个内置常量:GREEN_YELLOW_RED / BLUE_RED / WHITE_BLUE
+s.backgroundGradient("salary", "GREEN_YELLOW_RED");   // 低 → 高 渐变
 
-// 条件高亮(对齐 .highlight_*)
-s.highlightMax("salary", Color.YELLOW);
-s.highlightMin("salary", Color.PINK);
-s.highlightNull(Color.GRAY);
-s.highlightBetween("age", 18, 60, Color.LIGHT_GREEN);
+// 条件高亮(对齐 .highlight_*)—— 颜色参数是 String(如 "#ff0000" 红色)
+s.highlightMax("salary", "#ff0000");                  // 最大值标红
+s.highlightMin("salary", "#00ff00");                  // 最小值标绿
+s.highlightNull("salary", "#999999");                 // 缺失值标灰
 
-// 单元格内条形图(对齐 .bar)
-s.bar("score", Color.STEEL_BLUE, min=0, max=100);
-
-// 条件染色(自定义谓词)
-s.apply(row -> row.getDouble("salary") > 10000, Color.RED, "salary");
+// 单元格内条形图(对齐 .bar)—— 简化版,仅接 color,无 min/max 参数(CSS linear-gradient 模拟)
+s.bar("score", "#4a90d9");
 
 // 整表样式
 s.setCaption("2026 年度员工表");
-s.setTableStyles(List.of(
-    new TableStyle("th","background:#333;color:white"),
-    new TableStyle("tr:nth-child(even)","background:#f9f9f9")
-));
-s.hideIndex();                                    // 隐藏行索引列
+s.setTableStyles("th {background:#333;color:white}", "tr:nth-child(even) {background:#f9f9f9}");  // varargs CSS
+s.hideIndex();                                        // 隐藏行索引列
 s.hideColumns("internal_id");
 ```
+
+> **重要**:颜色参数统一是 **String**(CSS 颜色,如 `"#ffff00"` / `"red"` / `"rgb(255,0,0)"`),**不是** `java.awt.Color`。`ColorMap` 是枚举,仅有 `GREEN_YELLOW_RED` / `BLUE_RED` / `WHITE_BLUE` 三个常量(无 `VIRIDIS` / `COOLWARM`)。
+
+#### v2 规划(未实现,勿抄 —— 抄了会编译失败)
+
+以下 API 在早期文档出现过,但 `Styler.java` **从未实现**,标注为 v2 规划:
+
+| 计划 API | 状态 | 备注 |
+|---|---|---|
+| `textGradient(col, ColorMap)` | ❌ v2 | 只有 `backgroundGradient`,文字渐变未做 |
+| `highlightBetween(col, low, high, color)` | ❌ v2 | 区间高亮未做;可用 `apply` 自定义(v2) |
+| `apply(Predicate<Row>, color, col)` | ❌ v2 | 谓词条件染色未做 |
+| `setTableStyles(List<TableStyle>)` + `TableStyle` 类 | ❌ v2(已简化) | 实际是 `setTableStyles(String... css)` varargs,无 `TableStyle` 类 |
+| `ColorMap.VIRIDIS` / `COOLWARM` | ❌ v2 | 仅有 3 个常量(见上) |
+| `bar(col, color, min, max)` | ❌ v2(已简化) | 实际 `bar(String col, String color)` 仅接 color,无 min/max |
+| `toHtml(File)` / `toLatex(File)` | ❌ v2 | `toHtml()` 返回 String;落盘用 `HtmlRenderer.renderTo(File)` |
 
 ### 2.3 渲染输出
 
 ```java
-// HTML(带 CSS)
-String html = s.toHtml();                          // 内联 CSS
-s.toHtml(new File("report.html"));
+// HTML(带 CSS)—— toHtml() 返回 String;落盘用 HtmlRenderer.renderTo(File)
+String html = s.toHtml();
+HtmlRenderer.of(df).renderTo(new File("report.html"));
 
-// Excel(条件格式 + 单元格颜色)
-s.toExcel(new File("styled.xlsx"));
+// Excel(条件格式 + 单元格颜色)—— toExcel(w:.path) 单参重载,落盘到路径
+s.toExcel("styled.xlsx");
 
-// LaTeX(booktabs)
+// LaTeX(booktabs)—— toLatex() 返回 String
 String tex = s.toLatex();
-s.toLatex(new File("report.tex"));
-
-// 嵌入图表的完整 HTML 报告
-s.toHtml(new File("report.html"))
- .embedChart(df.plot().bar("month","sales").renderSvg())
- .embedChart(df.plot().hist("score").renderSvg());
 ```
 
 ---

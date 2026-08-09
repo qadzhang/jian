@@ -32,13 +32,51 @@ public final class LatexRenderer {
 
     private LatexRenderer(DataFrame df) { this.df = df; }
 
+    /**
+     * 创建 LatexRenderer。
+     *
+     * @param df DataFrame 待渲染的 DataFrame,非 null
+     * @return LatexRenderer 新建的 LatexRenderer 实例(默认 index=false / booktabs=true)
+     */
     public static LatexRenderer of(DataFrame df) { return new LatexRenderer(df); }
 
+    /**
+     * 是否输出索引列。
+     *
+     * @param v boolean true 输出索引列,false 隐藏(默认)
+     * @return LatexRenderer 当前实例(链式)
+     */
     public LatexRenderer index(boolean v) { this.index = v; return this; }
+
+    /**
+     * 是否使用 booktabs 风格(\toprule / \midrule / \bottomrule)。
+     *
+     * @param v boolean true 使用 booktabs(默认),false 用 \hline
+     * @return LatexRenderer 当前实例(链式)
+     */
     public LatexRenderer booktabs(boolean v) { this.booktabs = v; return this; }
+
+    /**
+     * 设置 \caption{...} 文本。
+     *
+     * @param v String 标题文本,null 表示无 caption;特殊字符会被自动转义
+     * @return LatexRenderer 当前实例(链式)
+     */
     public LatexRenderer caption(String v) { this.caption = v; return this; }
+
+    /**
+     * 设置 \label{...} 交叉引用标签。
+     *
+     * @param v String 标签文本,null 表示无 label;特殊字符会被自动转义
+     * @return LatexRenderer 当前实例(链式)
+     */
     public LatexRenderer label(String v) { this.label = v; return this; }
 
+    /**
+     * 渲染为 LaTeX 表格字符串。
+     *
+     * @return String LaTeX 源码(\begin{table}...\end{table},数值列右对齐 r、文本列左对齐 l)
+     */
     public String render() {
         List<String> cols = df.columnNames();
         List<DType> dtypes = df.dtypes();
@@ -69,8 +107,9 @@ public final class LatexRenderer {
                 sb.append(escape(String.valueOf(df.index().get(r)))).append(" & ");
             }
             for (int c = 0; c < cols.size(); c++) {
+                boolean missing = df.getColumn(cols.get(c)).isNull(r);
                 Object v = df.get(r, c);
-                sb.append(v == null ? "" : escape(String.valueOf(v)));
+                sb.append(missing ? "" : escape(String.valueOf(v)));
                 sb.append(c == cols.size() - 1 ? " \\\\\n" : " & ");
             }
         }

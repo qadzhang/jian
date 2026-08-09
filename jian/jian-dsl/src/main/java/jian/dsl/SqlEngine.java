@@ -49,7 +49,15 @@ final class SqlEngine {
 
     private SqlEngine() {}
 
-    /** 执行 SQL 子集。df 为 null 时 SQL 必须含 ${name} 绑定。 */
+    /**
+     * 执行 SQL 子集。df 为 null 时 SQL 必须含 ${name} 绑定。
+     *
+     * @param df DataFrame SQL 主表(对应 FROM this);占位模式下可传 null
+     * @param sql String SQL 字符串,非 null
+     * @param bindings Map&lt;String,DataFrame&gt; ${name} → DataFrame 的绑定表,非 null
+     * @param dialect SqlDialect SQL 方言,非 null
+     * @return DataFrame SQL 执行结果
+     */
     static DataFrame execute(DataFrame df, String sql, Map<String, DataFrame> bindings, SqlDialect dialect) {
         return execute(df, sql, bindings, dialect, 0);
     }
@@ -128,7 +136,13 @@ final class SqlEngine {
                 DataFrame agg = withConst.groupBy("__group_all__").agg(spec.aggMap);
                 grouped = selectColumns(agg, spec);
             } else {
-                grouped = selectColumns(afterWhere, parseSelectSimple(selectPart));
+                // L8 修复(2026-08-09,与 AI agent2 / AI agent1 第二轮审查共识):
+                // 取消"含 ? / CASE 才走 parseSelectWithAgg"的门关 —— 该门关导致纯算术表达式
+                // (如 "(salary + 1000) AS total")走 parseSelectSimple,后者正则要求开头 \w+,
+                // 对 ( 前缀失败,产出 alias==null 的 SelectItem,被 selectColumns 静默丢弃(列消失)。
+                // parseSelectWithAgg 已能识别 col / col AS alias / 聚合 / 表达式列全形态,
+                // 无条件走它反而把分支收敛,降低"两套解析器分歧"风险。
+                grouped = selectColumns(afterWhere, parseSelectWithAgg(selectPart));
             }
         }
         // DISTINCT 去重(SELECT DISTINCT 语义:作用于全部选中列,ORDER BY/LIMIT 之前)
@@ -394,6 +408,16 @@ final class SqlEngine {
                 if (rm.matches()) {
                     items.add(new SelectItem(rm.group(1), rm.group(2)));
                     groupCols.add(rm.group(1));
+                } else {
+                    // 2026-08-09 L1 修复:表达式列(CASE WHEN 转的三元 / 算术表达式 / 字面量)
+                    // 形如 "(cond ? v1 : v2) AS alias" / "(a + b) AS sum" / "'hello' AS greeting"
+                    Matcher em = Pattern.compile("(.+?)\\s+(?:AS\\s+)?(\\w+)$").matcher(t);
+                    if (em.matches()) {
+                        // 表达式列:alias 必须有(否则用户无法引用)
+                        items.add(new SelectItem(em.group(1).trim(), em.group(2)));
+                        // 表达式列不参与 groupBy,但也不报错(在 selectColumns 用 PrattEngine 评估)
+                    }
+                    // 完全无法识别的项:静默跳过(保留原行为)
                 }
             }
         }
@@ -405,10 +429,16 @@ final class SqlEngine {
         // 简化:不重命名 alias,只 select 列
         if (spec.items.size() == 1 && spec.items.get(0).expr.equals("*")) return df;
         List<String> cols = new ArrayList<>();
+        // 表达式列(CASE 转的三元 / 算术):用 PrattEngine 评估每行,加为新列
+        List<SelectItem> exprItems = new ArrayList<>();
         for (SelectItem it : spec.items) {
-            // agg(col) 形式的项已经在 groupBy.agg 输出为 col_fn 列
-            if (it.expr.toLowerCase().contains("(")) {
-                // 找对应输出列名(groupBy.agg 的 col_fn 格式)
+            // L1 修复:先判断表达式列(以 ( 开头 / 含三元 ? / 含字符串字面量)
+            boolean isExpr = it.expr.startsWith("(") && (it.expr.contains("?")
+                            || it.expr.contains("'") || it.expr.matches(".*[+\\-*/].*"));
+            if (isExpr) {
+                if (it.alias != null) exprItems.add(it);
+            } else if (it.expr.toLowerCase().contains("(") && !it.expr.startsWith("(")) {
+                // 聚合列:agg(col) 形式
                 Matcher am = Pattern.compile("(?i)(\\w+)\\((\\*|[\\w.]+)\\)").matcher(it.expr);
                 if (am.find()) {
                     String fn = am.group(1).toLowerCase();
@@ -421,9 +451,47 @@ final class SqlEngine {
                 if (df.columnIndex(it.expr) >= 0) cols.add(it.expr);
             }
         }
-        if (cols.isEmpty()) return df;
-        return df.select(cols.toArray(new String[0]));
+        // 处理表达式列(L1 修复):在 select 前用原始 df 评估,确保表达式能访问所有列
+        DataFrame result = df;  // 先保留原始 df(含所有列)
+        for (SelectItem it : exprItems) {
+            result = applyExprColumn(result, it.expr, it.alias);  // 在原始 df 上加新列
+        }
+        // 再 select 需要的列(简单列 + 表达式产生的 alias 列)
+        if (!cols.isEmpty()) {
+            // 把表达式 alias 也加入 select 列表
+            for (SelectItem it : exprItems) {
+                if (it.alias != null && result.columnIndex(it.alias) >= 0) cols.add(it.alias);
+            }
+            // 去重(cols 可能有重复)
+            cols = new ArrayList<>(new java.util.LinkedHashSet<>(cols));
+            result = result.select(cols.toArray(new String[0]));
+        }
+        return result;
     }
+
+    /**
+     * 对 df 应用一个表达式列(算术 / 三元 / 比较 / 逻辑 / 字符串字面量 全支持)。
+     *
+     * <p>L8 修复(2026-08-09,与 AI agent2 / AI agent1 第二轮审查共识,基于本机反射 + 黑盒实测):
+     * 原实现是手写补丁(自写三元正则 tm + 自写 bindRowValues 字面量替换 + evalArithmetic stub),
+     * 仅支持三元,算术表达式走 evalArithmetic 恒返 null(后改成抛异常也是逃避)。
+     * 现直接委托 {@link PrattEngine#eval},它原生支持算术 / 三元(嵌套)/ 比较 / 逻辑 / 谓词 / 字面量,
+     * 且经 PrattEngine 自身的测试套件验证 —— 复用已验证能力,删手写补丁。
+     *
+     * <p>异常处理:PrattEngine.parse/eval 失败会抛 IAE(列不存在/语法错/类型不匹配),
+     * 这里不再 catch(原 return df 会静默丢列),让异常向上传播到 executeSelect,用户拿到带 alias + cause 的报错。
+     *
+     * @param df DataFrame 当前结果(含表达式能访问的所有列)
+     * @param expr String 表达式(如 "salary + 1000" / "(salary > 1000) ? 'high' : 'low'")
+     * @param alias String 新列名
+     * @return DataFrame 原 df + 新列(类型经 Schema.infer 推断)
+     */
+    private static DataFrame applyExprColumn(DataFrame df, String expr, String alias) {
+        // 数据走向:expr → "alias = expr" → PrattEngine.eval → 加新列的 df
+        // PrattEngine.evalSingle 内部:parse(expr) → 逐行 ast.eval(RowBinding) → Schema.infer → assign+astype
+        return PrattEngine.eval(df, alias + " = " + expr, Params.EMPTY);
+    }
+
 
     private static DataFrame selectColumns(DataFrame df, List<SelectItem> items) {
         if (items.size() == 1 && items.get(0).expr.equals("*")) return df;

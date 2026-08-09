@@ -44,8 +44,10 @@ class OrcTest {
         Orc.write(df, p.toString()).go();
         DataFrame r = Orc.read(p).go();
         assertThat(r.rowCount()).isEqualTo(3);
-        assertThat(r.getColumn("v").get(1)).isNull();
-        assertThat(r.getStringColumn("s").get(1)).isNull();
+        // 缺失值语义(AGENTS.md §3.5):DOUBLE 列内部用 NaN 表示缺失,
+        // DoubleColumn.get(缺失行) 返回 Double.NaN(不返回 null);用 isNull() 判断。
+        assertThat(r.getColumn("v").isNull(1)).isTrue();
+        assertThat(r.getStringColumn("s").isNull(1)).isTrue();
     }
 
     @Test

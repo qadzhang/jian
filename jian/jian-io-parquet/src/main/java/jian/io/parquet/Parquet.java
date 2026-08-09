@@ -45,8 +45,19 @@ public final class Parquet {
 
     private Parquet() {}
 
+    /**
+     * 按 String 路径读 Parquet 的 builder。
+     * @param path String Parquet 文件路径,需为合法可读文件,不允许 null
+     * @return ParquetReader 配置器,调用 .go() 执行读取
+     */
     public static ParquetReader read(String path) { return new ParquetReader(Path.of(path)); }
 
+    /**
+     * 写 Parquet 的 builder。
+     * @param df DataFrame 要写出的数据帧,不允许 null;列类型按 jian DType 映射为 Avro Schema
+     * @param path String 输出 Parquet 文件路径,需为合法可写路径,不允许 null
+     * @return ParquetWriter 配置器,调用 .go() 执行写出
+     */
     public static ParquetWriter write(DataFrame df, String path) { return new ParquetWriter(df, Path.of(path)); }
 
     // ======================== 读 ========================

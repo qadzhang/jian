@@ -53,11 +53,16 @@ public final class EngineConfig {
         this.readOnly = b.readOnly;
     }
 
+    /**
+     * @return Builder 新的配置构建器
+     */
     public static Builder builder() { return new Builder(); }
 
     /**
      * 从环境变量构建(对齐规范 §3.2 凭据走 .env,零本机绑定)。
      * 读 DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_NAME / DB_PATH / DB_POOL_SIZE / DB_READONLY。
+     *
+     * @return EngineConfig 从环境变量填充的连接配置
      */
     public static EngineConfig fromEnv() {
         Builder b = builder();
@@ -92,15 +97,57 @@ public final class EngineConfig {
         private int poolSize = 10;
         private boolean readOnly = false;
 
+        /**
+         * @param v String 数据库主机名/IP,默认 "localhost"
+         * @return Builder 自身(链式)
+         */
         public Builder host(String v) { this.host = v; return this; }
+
+        /**
+         * @param v int 数据库端口,默认 0(表示未设置,后续由 DbType 填默认端口)
+         * @return Builder 自身(链式)
+         */
         public Builder port(int v) { this.port = v; return this; }
+
+        /**
+         * @param v String 用户名,默认空串
+         * @return Builder 自身(链式)
+         */
         public Builder user(String v) { this.user = v; return this; }
+
+        /**
+         * @param v String 密码,默认空串;建议运行时从环境变量取,不要硬编码
+         * @return Builder 自身(链式)
+         */
         public Builder password(String v) { this.password = v; return this; }
+
+        /**
+         * @param v String 数据库名,默认空串
+         * @return Builder 自身(链式)
+         */
         public Builder database(String v) { this.database = v; return this; }
+
+        /**
+         * @param v String 文件型数据库路径(SQLite/H2/Access),默认 null
+         * @return Builder 自身(链式)
+         */
         public Builder path(String v) { this.path = v; return this; }
+
+        /**
+         * @param v int HikariCP 连接池大小,默认 10
+         * @return Builder 自身(链式)
+         */
         public Builder poolSize(int v) { this.poolSize = v; return this; }
+
+        /**
+         * @param v boolean 是否只读模式(true 时拦截写操作),默认 false
+         * @return Builder 自身(链式)
+         */
         public Builder readOnly(boolean v) { this.readOnly = v; return this; }
 
+        /**
+         * @return EngineConfig 构建完成的不可变配置
+         */
         public EngineConfig build() { return new EngineConfig(this); }
     }
 }

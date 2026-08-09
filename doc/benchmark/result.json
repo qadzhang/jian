@@ -1,0 +1,57 @@
+{
+  "seed": 20260808,
+  "sql": "SELECT count(*) FROM a JOIN b ON a.id=b.id JOIN c ON (b.ba+b.bb)=c.k1 AND (b.bc||b.bd)=c.k2",
+  "jvm": "21.0.12",
+  "cores": 8,
+  "warmup": 1,
+  "measure": 3,
+  "scene": "三表复合关联: a.id=b.id 段(原列等值,可用索引) + b-c 段(b.ba+b.bb=c.k1 数字求和, b.bc||b.bd=c.k2 字符串拼接 复合表达式关联,普通索引用不上)",
+  "dataGen": "a/b 各 N 行(id∈[0,2N)随机); b 表 ba/bb∈[0,1000) 随机小数, bc='p'+i%100, bd='_'+i%50; c 取 b 前 80% 派生(k1=ba+bb, k2=bc||bd) 保证 80% 匹配率",
+  "hardTimeoutSec": 60,
+  "modes": {
+    "no-index": {
+      "100000": {
+        "DuckDB": {"wall":56, "cpu":47, "mem":0, "count":66478},
+        "SQLite": {"wall":465, "cpu":463, "mem":0, "count":66478},
+        "H2":     {"wall":60000, "cpu":60000, "mem":-1, "count":-1, "note":"预热超时(>60s)"},
+        "jian":   {"wall":1013, "cpu":961, "mem":312, "count":66478}
+      },
+      "500000": {
+        "DuckDB": {"wall":163, "cpu":138, "mem":2, "count":866765},
+        "SQLite": {"wall":2988, "cpu":2986, "mem":2, "count":866765},
+        "H2":     {"wall":60000, "cpu":60000, "mem":-1, "count":-1, "note":"预热超时(>60s)"},
+        "jian":   {"wall":11843, "cpu":11244, "mem":1201, "count":866765}
+      },
+      "5000000": {
+        "DuckDB": {"wall":1257, "cpu":1063, "mem":4, "count":68650567},
+        "SQLite": {"wall":31384, "cpu":31380, "mem":3, "count":68650567},
+        "H2":     {"wall":60000, "cpu":60000, "mem":-1, "count":-1, "note":"预热超时(>60s)"},
+        "jian":   {"wall":60000, "cpu":60000, "mem":-1, "count":-1, "note":"预热超时(>60s) 50万已 11.8s,500万超 60s"}
+      }
+    },
+    "with-index": {
+      "_indexStrategy": "a(id)/b(id)/c(k1)/c(k2) 普通 B-tree + SQLite/DuckDB 额外表达式索引 b(ba+bb)/b(bc||bd); H2 不支持表达式索引只建原列; jian 无索引概念(两模式同代码)",
+      "100000": {
+        "DuckDB": {"wall":42, "cpu":35, "mem":6, "count":66478},
+        "SQLite": {"wall":60000, "cpu":60000, "mem":-1, "count":66478, "note":"部分超时(2/3次超60s),SQLite 优化器在大表上仍选 nested loop"},
+        "H2":     {"wall":60000, "cpu":60000, "mem":-1, "count":-1, "note":"预热超时(>60s)"},
+        "jian":   {"wall":60000, "cpu":60000, "mem":-1, "count":-1, "note":"预热超时(>60s) with-index 模式受前面引擎残留内存影响"}
+      },
+      "500000":  {"note": "未跑完被中断;SQLite/H2 with-index 必超时(10万已超),DuckDB 5000规模 with-index 仅 11ms"},
+      "5000000": {"note": "未跑完被中断;SQLite/H2/jian with-index 在 no-index 500万都已超时或>30s,with-index 不会更好"}
+    },
+    "_smallScale5000": {
+      "note": "5000 规模验证(确认 4 引擎 count 一致 + 脚本正确),两模式都跑通",
+      "no-index": {"DuckDB":9, "SQLite":11, "H2":"超时", "jian":85},
+      "with-index": {"DuckDB":11, "SQLite":11, "H2":47, "jian":68}
+    }
+  },
+  "conclusions": [
+    "复合表达式关联(数字求和+字符串拼接 双条件AND)对所有 SQL 引擎都是难题:普通 B-tree 索引在原列上对表达式 ON 条件无效",
+    "DuckDB 一枝独秀:向量化列式 + hash join,500万规模 1.3s 完成,索引对它提升有限(本就快)",
+    "SQLite 中小规模(<=50万)可用但慢(500万 31s),建索引反而可能选错计划(10万 with-index 部分超时)",
+    "H2 无索引必超时(O(N²) nested loop);H2 不支持表达式索引,with-index 也救不回 b-c 段",
+    "jian 多键 merge 在 10万(1s)/50万(12s)可用,500万超时(字符串列 hash + 多键复合关联成本高)",
+    "真实业务启示:复合表达式关联应优先物化中间列(子查询/CTE 把 ba+bb、bc||bd 算好存表),再在物化列上建索引——这才能让 SQL 引擎的索引生效"
+  ]
+}

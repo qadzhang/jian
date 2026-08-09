@@ -43,6 +43,10 @@ public final class Session<T> {
     private final Field idField;
     private final List<FieldInfo> fields;  // 所有 @Column/@Id 字段
 
+    /**
+     * @param engine     Engine 数据库引擎,约束:不能为 null
+     * @param entityClass Class<T> 实体类,约束:不能为 null;必须标注 @Table;字段用 @Column/@Id 标注
+     */
     public Session(Engine engine, Class<T> entityClass) {
         this.engine = engine;
         this.entityClass = entityClass;
@@ -67,7 +71,13 @@ public final class Session<T> {
         this.fields = fs;
     }
 
-    /** 按主键查(对齐 sqlalchemy session.get)。 */
+    /**
+     * 按主键查(对齐 sqlalchemy session.get)。
+     *
+     * @param id Object 主键值,约束:类型须与 @Id 字段匹配;不能为 null
+     * @return T 查到的实体对象;未找到返回 null
+     * @throws Exception 当实体无 @Id 字段、或 JDBC 操作失败时抛出
+     */
     public T findById(Object id) throws Exception {
         if (idField == null) throw new IllegalStateException("实体无 @Id 字段");
         try (Connection conn = engine.connect();
@@ -92,7 +102,13 @@ public final class Session<T> {
         }
     }
 
-    /** 插入(对齐 sqlalchemy session.add)。 */
+    /**
+     * 插入(对齐 sqlalchemy session.add)。
+     *
+     * @param entity T 待插入实体对象,约束:不能为 null;字段值按 @Column 注解顺序绑定
+     * @return int 受影响行数(通常为 1)
+     * @throws Exception 当 JDBC 操作失败时抛出
+     */
     public int insert(T entity) throws Exception {
         StringBuilder sql = new StringBuilder("INSERT INTO ").append(tableName).append(" (");
         StringBuilder ph = new StringBuilder();
@@ -113,7 +129,13 @@ public final class Session<T> {
         }
     }
 
-    /** 更新(按主键更新所有字段)。 */
+    /**
+     * 更新(按主键更新所有字段)。
+     *
+     * @param entity T 待更新实体对象,约束:不能为 null;@Id 字段值用于 WHERE 条件
+     * @return int 受影响行数(通常为 1)
+     * @throws Exception 当实体无 @Id 字段、或 JDBC 操作失败时抛出
+     */
     public int update(T entity) throws Exception {
         if (idField == null) throw new IllegalStateException("实体无 @Id 字段,无法 update");
         StringBuilder sql = new StringBuilder("UPDATE ").append(tableName).append(" SET ");
@@ -135,7 +157,13 @@ public final class Session<T> {
         }
     }
 
-    /** 删除(按主键)。 */
+    /**
+     * 删除(按主键)。
+     *
+     * @param entity T 待删除实体对象,约束:不能为 null;@Id 字段值用于 WHERE 条件
+     * @return int 受影响行数(通常为 1)
+     * @throws Exception 当实体无 @Id 字段、或 JDBC 操作失败时抛出
+     */
     public int delete(T entity) throws Exception {
         if (idField == null) throw new IllegalStateException("实体无 @Id 字段,无法 delete");
         try (Connection conn = engine.connect();

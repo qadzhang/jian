@@ -34,11 +34,25 @@ public final class Stats {
 
     // ======================== 基础统计 ========================
 
-    /** 均值(默认跳过 NaN,对齐 np.nanmean)。 */
+    /**
+     * 均值(默认跳过 NaN,对齐 np.nanmean)。
+     *
+     * @param data double[] 输入数据,约束:不能为 null;可含 NaN(默认 SKIP 跳过)
+     * @return double 算术均值
+     * @throws IllegalArgumentException 当 data 为 null、空、或全 NaN 且 policy=SKIP 时抛出
+     */
     public static double mean(double[] data) {
         return mean(data, NaNPolicy.DEFAULT);
     }
 
+    /**
+     * 均值,可指定 NaN 处理策略。
+     *
+     * @param data   double[] 输入数据,约束:不能为 null;可含 NaN(按 policy 处理)
+     * @param policy NaNPolicy NaN 处理策略,取值范围:SKIP / ERROR / PROPAGATE
+     * @return double 算术均值
+     * @throws IllegalArgumentException 当 data 为 null、空、或 policy=ERROR 且含 NaN 时抛出
+     */
     public static double mean(double[] data, NaNPolicy policy) {
         double[] clean = filterNaN(data, policy);
         requireNonEmpty(clean);
@@ -47,10 +61,17 @@ public final class Stats {
         return sum / clean.length;
     }
 
-    /** 求和(默认跳过 NaN,对齐 np.nansum)。 */
+    /**
+     * 求和(默认跳过 NaN,对齐 np.nansum)。
+     * <p>使用 Kahan 补偿求和(提高大数组/大小悬殊时的精度)。
+     *
+     * @param data double[] 输入数据,约束:不能为 null;可含 NaN(默认 SKIP 跳过)
+     * @return double Kahan 补偿求和结果
+     * @throws IllegalArgumentException 当 data 为 null 或 policy=ERROR 且含 NaN 时抛出
+     */
     public static double sum(double[] data) {
         double[] clean = filterNaN(data, NaNPolicy.DEFAULT);
-        // Kahan 补偿求和(提高大数组/大小悬殊时的精度,opencode #9)
+        // Kahan 补偿求和(提高大数组/大小悬殊时的精度,AI agent2 #9)
         double sum = 0.0, c = 0.0;
         for (double v : clean) {
             double y = v - c;
@@ -61,7 +82,13 @@ public final class Stats {
         return sum;
     }
 
-    /** 最小值(默认跳过 NaN)。 */
+    /**
+     * 最小值(默认跳过 NaN)。
+     *
+     * @param data double[] 输入数据,约束:不能为 null;可含 NaN(默认 SKIP 跳过)
+     * @return double 最小值
+     * @throws IllegalArgumentException 当 data 为 null、空、或全 NaN 且 policy=SKIP 时抛出
+     */
     public static double min(double[] data) {
         double[] clean = filterNaN(data, NaNPolicy.DEFAULT);
         requireNonEmpty(clean);
@@ -70,7 +97,13 @@ public final class Stats {
         return m;
     }
 
-    /** 最大值(默认跳过 NaN)。 */
+    /**
+     * 最大值(默认跳过 NaN)。
+     *
+     * @param data double[] 输入数据,约束:不能为 null;可含 NaN(默认 SKIP 跳过)
+     * @return double 最大值
+     * @throws IllegalArgumentException 当 data 为 null、空、或全 NaN 且 policy=SKIP 时抛出
+     */
     public static double max(double[] data) {
         double[] clean = filterNaN(data, NaNPolicy.DEFAULT);
         requireNonEmpty(clean);
@@ -79,7 +112,12 @@ public final class Stats {
         return m;
     }
 
-    /** 计数(非 NaN 个数,对齐 pandas count)。 */
+    /**
+     * 计数(非 NaN 个数,对齐 pandas count)。
+     *
+     * @param data double[] 输入数据,约束:不能为 null
+     * @return long 非 NaN 值的个数
+     */
     public static long count(double[] data) {
         long c = 0;
         for (double v : data) if (!Double.isNaN(v)) c++;
@@ -91,6 +129,9 @@ public final class Stats {
     /**
      * 样本标准差(ddof=1,默认,对齐 pandas/numpy 默认 std)。
      *
+     * @param data double[] 输入数据,约束:不能为 null;可含 NaN(默认 SKIP 跳过)
+     * @return double 样本标准差(ddof=1)
+     * @throws IllegalArgumentException 当 data 为 null、空、或样本数不足以计算方差时抛出
      * @see #std(double[], int) 可指定自由度修正
      */
     public static double std(double[] data) {
@@ -103,6 +144,11 @@ public final class Stats {
      *   <li>ddof=0:总体标准差(对齐 np.std 默认 / np.nanstd)</li>
      *   <li>ddof=1:样本标准差(对齐 pandas Series.std 默认)</li>
      * </ul>
+     *
+     * @param data double[] 输入数据,约束:不能为 null;可含 NaN(默认 SKIP 跳过)
+     * @param ddof int 自由度修正,取值范围:0(总体)或 1(样本);需满足 n &gt; ddof
+     * @return double 标准差
+     * @throws IllegalArgumentException 当 data 为 null、空、或 n &lt;= ddof 时抛出
      */
     public static double std(double[] data, int ddof) {
         return java.lang.Math.sqrt(var(data, ddof));
@@ -110,6 +156,11 @@ public final class Stats {
 
     /**
      * 方差,可指定自由度修正 ddof(对齐 np.var / pandas var)。
+     *
+     * @param data double[] 输入数据,约束:不能为 null;可含 NaN(默认 SKIP 跳过)
+     * @param ddof int 自由度修正,取值范围:0(总体)或 1(样本);需满足 n &gt; ddof
+     * @return double 方差
+     * @throws IllegalArgumentException 当 data 为 null、空、或 n &lt;= ddof 时抛出
      */
     public static double var(double[] data, int ddof) {
         double[] clean = filterNaN(data, NaNPolicy.DEFAULT);
@@ -135,7 +186,10 @@ public final class Stats {
     /**
      * 分位数(百分制,对齐 np.percentile)。
      *
-     * @param q 百分位 [0, 100],如 25 表示 Q1
+     * @param data double[] 输入数据,约束:不能为 null;可含 NaN(默认 SKIP 跳过)
+     * @param q    double 百分位数,取值范围:[0, 100],如 25 表示 Q1
+     * @return double 第 q 百分位的值(线性插值,与 numpy 'linear' 一致)
+     * @throws IllegalArgumentException 当 data 为 null、空、或全 NaN 时抛出
      */
     public static double percentile(double[] data, double q) {
         double[] clean = filterNaN(data, NaNPolicy.DEFAULT);
@@ -147,14 +201,23 @@ public final class Stats {
     /**
      * 分位数(小数制,对齐 np.quantile)。
      *
-     * @param q [0, 1],如 0.95 表示 95 分位
+     * @param data double[] 输入数据,约束:不能为 null;可含 NaN(默认 SKIP 跳过)
+     * @param q    double 分位数,取值范围:[0, 1],如 0.95 表示 95 分位
+     * @return double 第 q 分位的值
+     * @throws IllegalArgumentException 当 q 不在 [0,1] 范围内,或 data 为 null、空、全 NaN 时抛出
      */
     public static double quantile(double[] data, double q) {
         if (q < 0 || q > 1) throw new IllegalArgumentException("q 必须在 [0,1],实际=" + q);
         return percentile(data, q * 100.0);
     }
 
-    /** 中位数(等价 percentile(data, 50))。 */
+    /**
+     * 中位数(等价 percentile(data, 50))。
+     *
+     * @param data double[] 输入数据,约束:不能为 null;可含 NaN(默认 SKIP 跳过)
+     * @return double 中位数
+     * @throws IllegalArgumentException 当 data 为 null、空、或全 NaN 时抛出
+     */
     public static double median(double[] data) {
         return percentile(data, 50.0);
     }
@@ -164,6 +227,10 @@ public final class Stats {
     /**
      * 偏度(Skewness,对齐 pandas Series.skew / scipy.stats.skew)。
      * <p>基于 Commons Math {@link DescriptiveStatistics#getSkewness}。
+     *
+     * @param data double[] 输入数据,约束:不能为 null;可含 NaN(默认 SKIP 跳过)
+     * @return double 偏度;正值右偏,负值左偏,0 对称
+     * @throws IllegalArgumentException 当 data 为 null、空、或全 NaN 时抛出
      */
     public static double skewness(double[] data) {
         double[] clean = filterNaN(data, NaNPolicy.DEFAULT);
@@ -176,6 +243,10 @@ public final class Stats {
     /**
      * 峰度(Kurtosis,对齐 pandas Series.kurt)。
      * <p>基于 Commons Math {@link DescriptiveStatistics#getKurtosis}(返回超额峰度,与 pandas 一致)。
+     *
+     * @param data double[] 输入数据,约束:不能为 null;可含 NaN(默认 SKIP 跳过)
+     * @return double 超额峰度;正态分布约为 0
+     * @throws IllegalArgumentException 当 data 为 null、空、或全 NaN 时抛出
      */
     public static double kurtosis(double[] data) {
         double[] clean = filterNaN(data, NaNPolicy.DEFAULT);
@@ -190,6 +261,10 @@ public final class Stats {
     /**
      * 描述统计摘要(对齐 pandas Series.describe())。
      * <p>返回 count / mean / std / min / Q1 / median / Q3 / max,std 用 ddof=1。
+     *
+     * @param data double[] 输入数据,约束:不能为 null;可含 NaN(默认 SKIP 跳过)
+     * @return Summary 描述统计摘要记录
+     * @throws IllegalArgumentException 当 data 为 null、空、或全 NaN 时抛出
      */
     public static Summary describe(double[] data) {
         double[] clean = filterNaN(data, NaNPolicy.DEFAULT);

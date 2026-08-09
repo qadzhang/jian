@@ -31,10 +31,12 @@ public final class DataFrameSort {
     /**
      * 按多列排序(对齐 pandas sort_values)。
      *
-     * @param df 目标
-     * @param byCols 排序键列名(长度 ≥ 1)
-     * @param ascending 每列是否升序(长度 = byCols.length)
-     * @param naPosition 缺失放 "first" 或 "last"(对齐 pandas na_position)
+     * @param df        DataFrame 目标表,非 null
+     * @param byCols    String[] 排序键列名,长度 ≥ 1;每个列必须存在;非 null
+     * @param ascending boolean[] 每列是否升序,true=升序 false=降序;长度必须 == byCols.length;非 null
+     * @param naPosition String 缺失值位置:"first"=放最前;其它(默认 "last")=放最后;null 视为 "last"
+     * @return DataFrame 重排行序后的新表(行数不变,列不变,只是行顺序变)
+     * @throws IllegalArgumentException byCols 为空,或 ascending 长度不匹配
      */
     public static DataFrame sortValues(DataFrame df, String[] byCols, boolean[] ascending, String naPosition) {
         if (byCols.length == 0) throw new IllegalArgumentException("byCols 不能为空");
@@ -58,14 +60,23 @@ public final class DataFrameSort {
         return df.takeRows(toInt(order));
     }
 
-    /** 单列行比较器:null 视最小或最大,按 asc 决定方向。 */
+    /**
+     * 单列行比较器:null 视最小或最大,按 asc 决定方向。
+     * @param col       Column 待比较的列
+     * @param asc       boolean true=升序;false=降序
+     * @param nullsLast boolean true=null 排最后;false=null 排最前
+     * @return Comparator&lt;Integer&gt; 行下标比较器,接收两个行下标返回比较结果
+     */
     private static Comparator<Integer> rowCmp(Column col, boolean asc, boolean nullsLast) {
         return (i1, i2) -> {
+            // 修复:用 isNull 判断缺失(不用 get()==null,因为 DoubleColumn.get(NaN) 现在返回 Double.NaN 不是 null)
+            boolean aNull = col.isNull(i1);
+            boolean bNull = col.isNull(i2);
+            if (aNull && bNull) return 0;
+            if (aNull) return nullsLast ? 1 : -1;
+            if (bNull) return nullsLast ? -1 : 1;
             Object a = col.get(i1);
             Object b = col.get(i2);
-            if (a == null && b == null) return 0;
-            if (a == null) return nullsLast ? 1 : -1;
-            if (b == null) return nullsLast ? -1 : 1;
             int r;
             if (a instanceof Number && b instanceof Number) {
                 r = Double.compare(((Number) a).doubleValue(), ((Number) b).doubleValue());
@@ -78,7 +89,12 @@ public final class DataFrameSort {
         };
     }
 
-    /** 按行索引排序(对齐 pandas sort_index)。RangeIndex 下无意义;显式标签时按标签排序。 */
+    /**
+     * 按行索引排序(对齐 pandas sort_index)。RangeIndex 下无意义(0..n-1 已有序);显式标签时按标签排序。
+     * @param df        DataFrame 目标表,非 null
+     * @param ascending boolean true=升序;false=降序
+     * @return DataFrame 按行索引排序后的新表
+     */
     public static DataFrame sortIndex(DataFrame df, boolean ascending) {
         if (df.index().isRange()) {
             // RangeIndex 本身已有序
@@ -97,19 +113,80 @@ public final class DataFrameSort {
         return df.takeRows(toInt(order));
     }
 
-    /** TopN 最大(对齐 pandas nlargest):按 byCol 降序取前 n 行。 */
+    /**
+     * TopN 最大(对齐 pandas nlargest):按 byCol 降序取前 n 行。
+     * @param df    DataFrame 目标表,非 null
+     * @param n     int 取前 n 行,≥ 0(0 返回空表,n &gt; 行数返回全表排序)
+     * @param byCol String 排序列名,必须存在;非 null
+     * @return DataFrame 前 n 行(byCol 降序,null 排最后)
+     */
     public static DataFrame nlargest(DataFrame df, int n, String byCol) {
         DataFrame sorted = sortValues(df, new String[]{byCol}, new boolean[]{false}, "last");
         return sorted.head(n);
     }
 
-    /** TopN 最小(对齐 pandas nsmallest)。 */
+    /**
+     * TopN 最小(对齐 pandas nsmallest):按 byCol 升序取前 n 行。
+     * @param df    DataFrame 目标表,非 null
+     * @param n     int 取前 n 行,≥ 0
+     * @param byCol String 排序列名,必须存在;非 null
+     * @return DataFrame 前 n 行(byCol 升序,null 排最后)
+     */
     public static DataFrame nsmallest(DataFrame df, int n, String byCol) {
         DataFrame sorted = sortValues(df, new String[]{byCol}, new boolean[]{true}, "last");
         return sorted.head(n);
     }
 
-    /** 倒序行(用于 sort_index descending on RangeIndex)。 */
+    // ┌─ What : 极值位置 —— 列最大/最小值所在首行的下标(对齐 pandas idxmax / idxmin)
+    // │  Why  : 与 nlargest/nsmallest 同源(都是"找极值位置"),按 AGENTS.md §3.1.1.1 内聚到此
+    // │  Who  : 由 DataFrame.idxmax / idxmin 单行委托
+    // │  When : 2026-08-09 阶段 A
+    // │  How  : 单遍扫描列值,跳过缺失(null)与 NaN,记录首个极值下标;空表/全缺失返回 -1
+    /**
+     * 列最大值所在首行下标(对齐 pandas DataFrame.idxmax)。
+     * <p>缺失值(null/NaN)跳过;空表或全缺失返回 -1。
+     * @param df  DataFrame 目标表,非 null
+     * @param col String 列名,必须存在且为数值列;非 null
+     * @return int 最大值首行下标 ∈ [0, rowCount());空表/全缺失时 -1
+     */
+    public static int idxmax(DataFrame df, String col) {
+        Column c = df.getColumn(col);
+        int n = df.rowCount();
+        if (n == 0) return -1;
+        double best = Double.NaN;
+        int bestIdx = -1;
+        for (int i = 0; i < n; i++) {
+            if (c.isNull(i)) continue;
+            double v = c.getDouble(i);
+            if (Double.isNaN(v)) continue;
+            if (bestIdx < 0 || v > best) { best = v; bestIdx = i; }
+        }
+        return bestIdx;
+    }
+
+    /**
+     * 列最小值所在首行下标(对齐 pandas DataFrame.idxmin)。语义同 {@link #idxmax}。
+     */
+    public static int idxmin(DataFrame df, String col) {
+        Column c = df.getColumn(col);
+        int n = df.rowCount();
+        if (n == 0) return -1;
+        double best = Double.NaN;
+        int bestIdx = -1;
+        for (int i = 0; i < n; i++) {
+            if (c.isNull(i)) continue;
+            double v = c.getDouble(i);
+            if (Double.isNaN(v)) continue;
+            if (bestIdx < 0 || v < best) { best = v; bestIdx = i; }
+        }
+        return bestIdx;
+    }
+
+    /**
+     * 倒序行(用于 sort_index descending on RangeIndex)。
+     * @param df DataFrame 目标表
+     * @return DataFrame 行序倒置后的新表
+     */
     private static DataFrame reverseRows(DataFrame df) {
         int n = df.rowCount();
         int[] idx = new int[n];
@@ -117,6 +194,11 @@ public final class DataFrameSort {
         return df.takeRows(idx);
     }
 
+    /**
+     * Integer[] → int[] 拆箱。
+     * @param arr Integer[] 装箱数组
+     * @return int[] 拆箱后的 primitive 数组
+     */
     private static int[] toInt(Integer[] arr) {
         int[] r = new int[arr.length];
         for (int i = 0; i < arr.length; i++) r[i] = arr[i];

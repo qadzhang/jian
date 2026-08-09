@@ -56,10 +56,26 @@ public final class Excel {
 
     // ======================== 读 ========================
 
+    /**
+     * 按 String 路径读取 Excel 的 builder(自动识别 xls/xlsx)。
+     * @param path String Excel 文件路径,需为合法可读文件,不允许 null
+     * @return ExcelReader 配置器,链式调用 .sheet/.header 后 .go() 执行
+     */
     public static ExcelReader read(String path) { return new ExcelReader(Path.of(path)); }
+
+    /**
+     * 按 Path 路径读取 Excel 的 builder(自动识别 xls/xlsx)。
+     * @param path Path Excel 文件路径对象,需为合法可读文件,不允许 null
+     * @return ExcelReader 配置器,链式调用 .sheet/.header 后 .go() 执行
+     */
     public static ExcelReader read(Path path) { return new ExcelReader(path); }
 
-    /** 枚举所有 sheet 名(对齐 pandas.ExcelFile.sheet_names)。 */
+    /**
+     * 枚举所有 sheet 名(对齐 pandas.ExcelFile.sheet_names)。
+     * @param path String Excel 文件路径,需为合法可读文件,不允许 null
+     * @return List&lt;String&gt; 所有 sheet 名称列表(保持文件内顺序),无 sheet 时返回空列表
+     * @throws IOException 文件不存在、格式不支持或读取过程发生 IO 错误时抛出
+     */
     public static List<String> sheetNames(String path) throws IOException {
         try (Workbook wb = WorkbookFactory.create(new File(path), null, true)) {
             List<String> r = new ArrayList<>();
@@ -76,10 +92,33 @@ public final class Excel {
 
         ExcelReader(Path p) { this.path = p; }
 
+        /**
+         * 按 sheet 名读取(优先级高于 sheetIndex)。
+         * @param name String sheet 名称,需与文件内实际 sheet 名一致(大小写敏感),不允许 null
+         * @return ExcelReader 当前配置器,便于链式调用
+         */
         public ExcelReader sheet(String name) { this.sheetName = name; this.sheetIndex = -1; return this; }
+
+        /**
+         * 按 sheet 索引读取(从 0 开始)。
+         * @param i int sheet 序号,范围 [0, sheet 总数-1];默认 0(第一个 sheet)
+         * @return ExcelReader 当前配置器,便于链式调用
+         */
         public ExcelReader sheetIndex(int i) { this.sheetIndex = i; this.sheetName = null; return this; }
+
+        /**
+         * 设置首行是否为表头。
+         * @param h boolean true=首行作列名(默认);false=首行作数据,列名取 _0,_1,...
+         * @return ExcelReader 当前配置器,便于链式调用
+         */
         public ExcelReader header(boolean h) { this.header = h; return this; }
 
+        /**
+         * 执行读取。
+         * @return DataFrame 解析出的数据帧(列名按 header 决定,值类型按列统一精确转换)
+         * @throws IOException 文件不存在或读取过程发生 IO 错误时抛出
+         * @throws IllegalArgumentException 指定的 sheet 名/索引不存在时抛出(提示现有 sheet 列表)
+         */
         public DataFrame go() throws IOException {
             try (FileInputStream fis = new FileInputStream(path.toFile());
                  Workbook wb = WorkbookFactory.create(fis)) {
@@ -268,6 +307,12 @@ public final class Excel {
 
     // ======================== 写 ========================
 
+    /**
+     * 写 Excel(xlsx)的 builder。
+     * @param df DataFrame 要写出的数据帧,不允许 null
+     * @param path String 输出 xlsx 文件路径,需为合法可写路径,不允许 null
+     * @return ExcelWriter 配置器,链式调用 .sheetName/.header 后 .go() 执行
+     */
     public static ExcelWriter write(DataFrame df, String path) { return new ExcelWriter(df, Path.of(path)); }
 
     /** 单 DataFrame 写单 sheet,便捷封装。 */
@@ -279,9 +324,24 @@ public final class Excel {
 
         ExcelWriter(DataFrame df, Path p) { this.df = df; this.path = p; }
 
+        /**
+         * 设置输出 sheet 名。
+         * @param n String sheet 名称;若超过 31 字符会被自动截断(POI 限制),默认 "Sheet1"
+         * @return ExcelWriter 当前配置器,便于链式调用
+         */
         public ExcelWriter sheetName(String n) { this.sheetName = n; return this; }
+
+        /**
+         * 设置是否写表头行。
+         * @param h boolean true=输出表头行(默认);false=不输出表头
+         * @return ExcelWriter 当前配置器,便于链式调用
+         */
         public ExcelWriter header(boolean h) { this.header = h; return this; }
 
+        /**
+         * 执行写出。
+         * @throws IOException 目标路径不可写或写出过程发生 IO 错误时抛出
+         */
         public void go() throws IOException {
             try (Workbook wb = new XSSFWorkbook()) {
                 writeDfToSheet(wb, df, sheetName, header);
@@ -294,7 +354,11 @@ public final class Excel {
         @Override public void close() {}
     }
 
-    /** 多 sheet writer(对齐 pandas.ExcelWriter,try-with-resources)。 */
+    /**
+     * 多 sheet writer(对齐 pandas.ExcelWriter,try-with-resources)。
+     * @param path String 输出 xlsx 文件路径,需为合法可写路径,不允许 null
+     * @return ExcelMultiWriter 多 sheet 上下文,链式调用 .write(df, name)... 后 close() 落盘
+     */
     public static ExcelMultiWriter writer(String path) {
         return new ExcelMultiWriter(Path.of(path));
     }
@@ -307,9 +371,19 @@ public final class Excel {
 
         ExcelMultiWriter(Path p) { this.path = p; }
 
+        /**
+         * 设置后续 write 是否写表头行。
+         * @param h boolean true=输出表头行(默认);false=不输出表头
+         * @return ExcelMultiWriter 当前上下文,便于链式调用
+         */
         public ExcelMultiWriter header(boolean h) { this.header = h; return this; }
 
-        /** 写一个 DataFrame 到指定 sheet。 */
+        /**
+         * 写一个 DataFrame 到指定 sheet。
+         * @param df DataFrame 要写出的数据帧,不允许 null
+         * @param sheetName String 目标 sheet 名称;超 31 字符会被截断(POI 限制)
+         * @return ExcelMultiWriter 当前上下文,便于连续写多个 sheet
+         */
         public ExcelMultiWriter write(DataFrame df, String sheetName) {
             writeDfToSheet(wb, df, sheetName, header);
             return this;
@@ -356,13 +430,42 @@ public final class Excel {
                 } else if (v instanceof Boolean) {
                     cell.setCellValue((Boolean) v);
                 } else {
-                    cell.setCellValue(String.valueOf(v));
+                    String s = String.valueOf(v);
+                    // Web 安全修复(2026-08-08,2026-08-09 增强):
+                    // Excel 公式注入防护(与 CSV 一致)。OWASP 严格版——不只看首字符,
+                    // 跳过前导空白/Tab/CR/LF 后再判定(防 "\t=cmd|..." / " =cmd|..." 绕过)。
+                    if (startsWithFormulaAfterWhitespace(s)) {
+                        cell.setCellValue("'" + s);
+                    } else {
+                        cell.setCellValue(s);
+                    }
                 }
             }
         }
     }
 
-    // ======================== 辅助:空行检测 + 列名去重 + 公式求值 ========================
+    // ======================== 辅助:空行检测 + 列名去重 + 公式求值 + 公式注入防护 ========================
+
+    /**
+     * 公式注入检测(OWASP 严格版,2026-08-09 增强自旧版 isFormulaStart(char))。
+     * <p>不只看首字符——很多注入 payload 用前导空白/Tab/CR/LF 绕过首字符检查
+     * (如 {@code "\t=cmd|..."}、{@code " =cmd|..."}),Excel 解析时会先 trim。
+     * 本方法跳过前导空白类字符后,再看第一个有效字符是否是公式起始符。
+     *
+     * @param s String 待检测的单元格字符串,非 null
+     * @return boolean true=检测到公式起始符,需加单引号前缀防护
+     */
+    private static boolean startsWithFormulaAfterWhitespace(String s) {
+        if (s.isEmpty()) return false;
+        int i = 0;
+        while (i < s.length() && (s.charAt(i) == ' ' || s.charAt(i) == '\t'
+                || s.charAt(i) == '\r' || s.charAt(i) == '\n')) {
+            i++;
+        }
+        if (i >= s.length()) return false;
+        char ch = s.charAt(i);
+        return ch == '=' || ch == '+' || ch == '-' || ch == '@';
+    }
 
     /** 陷阱 #8/#9: 判断一行是否完全为空(所有 cell 为 null 或 BLANK)。 */
     private static boolean isRowEmpty(Row row) {

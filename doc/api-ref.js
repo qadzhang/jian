@@ -197,4 +197,64 @@ const API_REF = [
     params:[],returns:{type:'',desc:''},
     example:'import jian.num.*;\n\npublic class Demo {\n  public static void main(String[] args) {\n    // 矩阵:乘法 / 转置 / 取行 / 解方程 / 求逆\n    Matrix a = Matrix.of(new double[][]{{1, 2}, {3, 4}});\n    Matrix c = a.matmul(Matrix.identity(2));     // == a.mul(b)\n    Matrix t = a.T();                            // 转置\n    double[] row0 = a.row(0);                    // [1, 2]\n    double[] x = a.solve(new double[]{5, 11});   // 解 Ax=b → [1, 2]\n    Matrix inv = a.inverse();\n    // 统计:均值 / 分位(0-100)/ 相关 / 线性拟合\n    double[] xs = {1, 2, 3, 4}, ys = {2, 4, 6, 8};\n    double m = JianNum.mean(xs);\n    double p75 = JianNum.percentile(xs, 75);\n    double r = JianNum.pearson(xs, ys);          // 1.0\n    LinearFit fit = JianNum.linearFit(xs, ys);   // slope=2, rSquared=1\n    System.out.println("x[1]=" + x[1] + " r=" + r + " slope=" + fit.slope());\n  }\n}',throws:[]
   },
+  {
+    id:'ref-columnar-hashmap',module:'jian-core',since:'v1.1',status:'stable',
+    sig:'ColumnarHashMap.buildFromLong/buildFromInt/buildFromDouble + findLong/findInt/findDouble + nextInBucket',
+    summary:'列式 open-addressing hash 表(单列数值 key 专用,JOIN/GroupBy hot path)。容量始终为 2^k,装载因子 ≤ 0.5。同 key 多行通过桶内链表(nextInBucket)解决。500万行 hash build ~120ms。适用于:自定义 JOIN/group-by 算子直接复用,避免 HashMap<List<Object>> 装箱开销。',
+    params:[],returns:{type:'',desc:''},
+    example:'long[] rightKeys = {5L, 1L, 5L, 3L};\nColumnarHashMap map = ColumnarHashMap.buildFromLong(rightKeys);\nint first = map.findLong(5L);\nfor (int r = first; r >= 0; r = map.nextInBucket(r)) { /* 行下标 r */ }',throws:[]
+  },
+  {
+    id:'ref-column-data',module:'jian-core',since:'v1.1',status:'stable',
+    sig:'LongColumn.data() → long[] / DoubleColumn.data() → double[] / *.wrapNoCopy(name, arr, mask)',
+    summary:'Column 子类的 primitive 数组零拷贝访问(高性能 hot path)。data() 返回内部数组直接引用(不 clone);wrapNoCopy 是对应的零拷贝构造。警告:返回数组不得修改。适用于:自定义向量化算子、批量统计、与外部库对接。',
+    params:[],returns:{type:'',desc:''},
+    example:'long[] ids = ((LongColumn) df.getColumn("id")).data();\ndouble[] vs = ((DoubleColumn) df.getColumn("v")).data();\nlong[] newArr = {9L, 8L};\nLongColumn c = LongColumn.wrapNoCopy("x", newArr, null);',throws:[]
+  },
+  {
+    id:'ref-df-ofcolumnarrays',module:'jian-core',since:'v1.1',status:'stable',
+    sig:'DataFrame.ofColumnArrays(List<String> columnNames, Object[] columnArrays)',
+    summary:'直接用 primitive 数组构造 DataFrame(零拷贝)。columnArrays 元素按 Java 类型映射 DType:long[]→LONG, double[]→DOUBLE, int[]→INT(升位 LONG), boolean[]→BOOL, String[]→STRING, 其它 Object[]→OBJECT。零拷贝直接引用(调用方此后不应再修改)。适用于:JOIN/GroupBy/统计 hot path 输出,避免逐行 new Object[] + 装箱。',
+    params:[],returns:{type:'',desc:''},
+    example:'long[] ids = {1L, 2L, 3L};\ndouble[] vals = {10.0, 20.0, 30.0};\nDataFrame df = DataFrame.ofColumnArrays(\n    List.of("id", "val"),\n    new Object[]{ ids, vals });',throws:[]
+  },
+  // ===== 2026-08-09 阶段 A-F + §3.16 补全 新方法卡 =====
+  { id:'ref-resample', module:'jian-core', since:'1.0.0', status:'alpha',
+    sig:'df.resample("ts", "1D").sum() / .mean() / .count() / .ohlc("price")',
+    summary:'时间序列重采样(对齐 pandas DataFrame.resample)。返回 Resampler 对象,链式调聚合(sum/mean/count/min/max/median/std/var/ohlc/agg/first/last 共 17 方法)。',
+    params:[{name:'tsCol',type:'String',desc:'时间列名(LocalDateTime 元素)'},{name:'rule',type:'String',desc:'频率字符串("1D"/"2H"/"1W")'}],
+    returns:{type:'Resampler',desc:'重采样器对象(链式调聚合)'},
+    example:'DataFrame daily = df.resample("ts", "1D").sum();',throws:[]
+  },
+  { id:'ref-corr-matrix', module:'jian-core', since:'1.0.0', status:'alpha',
+    sig:'df.corrMatrix() / df.covMatrix()',
+    summary:'全数值列相关/协方差矩阵(对齐 pandas df.corr/cov)。经 StatsProvider SPI。',
+    params:[],returns:{type:'DataFrame',desc:'方阵(行/列=数值列名)'},
+    example:'DataFrame m = df.corrMatrix();',throws:[]
+  },
+  { id:'ref-idxmax', module:'jian-core', since:'1.0.0', status:'alpha',
+    sig:'df.idxmax("v") / df.idxmin("v")',
+    summary:'极值位置(对齐 pandas df.idxmax/idxmin)。空表/全缺失返回 -1。',
+    params:[{name:'col',type:'String',desc:'数值列名'}],
+    returns:{type:'int',desc:'首行下标;-1=无有效值'},
+    example:'int i = df.idxmax("salary");',throws:[]
+  },
+  { id:'ref-stack-unstack', module:'jian-core', since:'1.0.0', status:'alpha',
+    sig:'df.stack(idCols, valueCols) / df.unstack(idCol, keyCol, valCol)',
+    summary:'长宽转换(对齐 pandas df.stack/unstack)。',
+    params:[],returns:{type:'DataFrame',desc:'长/宽转换后的新表'},
+    example:'DataFrame stacked = df.stack(new String[]{"id"}, new String[]{"q1","q2"});',throws:[]
+  },
+  { id:'ref-interpolate', module:'jian-core', since:'1.0.0', status:'alpha',
+    sig:'df.interpolate()',
+    summary:'线性插值填充缺失(对齐 pandas df.interpolate)。',
+    params:[],returns:{type:'DataFrame',desc:'同结构,数值列缺失被线性插值填充'},
+    example:'DataFrame r = df.interpolate();',throws:[]
+  },
+  { id:'ref-sql-engine', module:'jian-dsl', since:'1.0.0', status:'alpha',
+    sig:'SqlEngines.useRegex() / useJsqlParser() / useCustom(impl)',
+    summary:'L3 SQL 引擎可插拔切换(库无关接口)。',
+    params:[],returns:{type:'void',desc:'切换 ThreadLocal 引擎'},
+    example:'SqlEngines.useCustom(new MyEngine());',throws:[]
+  },
 ];

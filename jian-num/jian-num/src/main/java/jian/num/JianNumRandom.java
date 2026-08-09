@@ -28,16 +28,28 @@ public final class JianNumRandom {
         this.rng = new Random();  // 默认随机种子
     }
 
+    /**
+     * @param seed long 随机种子,取值范围:任意 long 值;同种子产生同序列
+     */
     public JianNumRandom(long seed) {
         this.rng = new Random(seed);
     }
 
-    /** 重设种子(后续序列确定)。 */
+    /**
+     * 重设种子(后续序列确定)。
+     *
+     * @param seed long 随机种子,取值范围:任意 long 值;同种子产生同序列
+     */
     public void setSeed(long seed) {
         this.rng = new Random(seed);
     }
 
-    /** 生成 n 个 uniform[0,1) 随机数(对齐 np.random.rand)。 */
+    /**
+     * 生成 n 个 uniform[0,1) 随机数(对齐 np.random.rand)。
+     *
+     * @param n int 生成个数,约束:n &gt;= 0
+     * @return double[] 长度为 n 的 [0,1) 均匀分布随机数数组
+     */
     public double[] rand(int n) {
         double[] r = new double[n];
         for (int i = 0; i < n; i++) r[i] = rng.nextDouble();
@@ -47,8 +59,11 @@ public final class JianNumRandom {
     /**
      * 生成 n 个正态分布 N(mu, sigma²) 随机数(对齐 np.random.randn / normal)。
      *
-     * @param mu    均值
-     * @param sigma 标准差(>0)
+     * @param n     int 生成个数,约束:n &gt;= 0
+     * @param mu    double 正态分布均值,取值范围:任意实数
+     * @param sigma double 正态分布标准差,约束:sigma &gt; 0
+     * @return double[] 长度为 n 的 N(mu, sigma²) 随机数数组
+     * @throws IllegalArgumentException 当 sigma &lt;= 0 时抛出
      */
     public double[] randn(int n, double mu, double sigma) {
         if (sigma <= 0) throw new IllegalArgumentException("sigma 必须 >0,实际=" + sigma);
@@ -57,7 +72,12 @@ public final class JianNumRandom {
         return r;
     }
 
-    /** 标准正态 N(0,1) n 个(对齐 np.random.randn)。 */
+    /**
+     * 标准正态 N(0,1) n 个(对齐 np.random.randn)。
+     *
+     * @param n int 生成个数,约束:n &gt;= 0
+     * @return double[] 长度为 n 的标准正态分布随机数数组
+     */
     public double[] randn(int n) {
         return randn(n, 0.0, 1.0);
     }
@@ -65,8 +85,11 @@ public final class JianNumRandom {
     /**
      * 生成 n 个 [low, high) 整数(对齐 np.random.randint)。
      *
-     * @param low  含
-     * @param high 不含
+     * @param low  int 区间下界(含),约束:low &lt; high
+     * @param high int 区间上界(不含),约束:high &gt; low
+     * @param n    int 生成个数,约束:n &gt;= 0
+     * @return int[] 长度为 n 的 [low, high) 均匀整数数组
+     * @throws IllegalArgumentException 当 high &lt;= low 时抛出
      */
     public int[] randint(int low, int high, int n) {
         if (high <= low) throw new IllegalArgumentException("high 必须 >low:low=" + low + ", high=" + high);
@@ -79,9 +102,11 @@ public final class JianNumRandom {
     /**
      * 二项分布采样(对齐 np.random.binomial,单次)。
      *
-     * @param n     试验次数
-     * @param p     成功概率 [0,1]
-     * @param count 生成个数
+     * @param n     int 单次试验次数,约束:n &gt;= 0
+     * @param p     double 成功概率,取值范围:[0, 1]
+     * @param count int 生成个数(独立重复采样次数),约束:count &gt;= 0
+     * @return int[] 长度为 count 的二项分布采样结果,每个元素为 [0, n] 的成功次数
+     * @throws IllegalArgumentException 当 p 不在 [0,1] 范围内时抛出
      */
     public int[] binomial(int n, double p, int count) {
         if (p < 0 || p > 1) throw new IllegalArgumentException("p 必须在 [0,1],实际=" + p);
@@ -94,7 +119,14 @@ public final class JianNumRandom {
         return r;
     }
 
-    /** 从数组无放回随机取 k 个(对齐 np.random.choice replace=False 简版)。 */
+    /**
+     * 从数组无放回随机取 k 个(对齐 np.random.choice replace=False 简版)。
+     *
+     * @param pool int[] 候选池数组,约束:不能为 null
+     * @param k    int 采样个数,约束:0 &lt;= k &lt;= pool.length
+     * @return int[] 长度为 k 的无放回随机采样结果
+     * @throws IllegalArgumentException 当 k &gt; pool.length 时抛出
+     */
     public int[] choice(int[] pool, int k) {
         if (k > pool.length) throw new IllegalArgumentException(
                 "无放回采样 k=" + k + " 超过 pool 长度 " + pool.length);

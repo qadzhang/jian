@@ -67,13 +67,23 @@ public final class Ndarray {
 
     // ======================== 工厂:从原始数组创建 ========================
 
-    /** 整数数组 → INT64(拷贝)。 */
+    /**
+     * 整数数组 → INT64(拷贝)。
+     *
+     * @param data long[] 整数数据,约束:不能为 null;会被克隆以防外部修改
+     * @return Ndarray dtype=INT64 的实例
+     */
     public static Ndarray of(long[] data) {
         Objects.requireNonNull(data, "data 不能为 null");
         return new Ndarray(DType.INT64, data.clone(), null, null, null);
     }
 
-    /** 从 int[] 创建 INT64。 */
+    /**
+     * 从 int[] 创建 INT64。
+     *
+     * @param data int[] 整数数据,约束:不能为 null;元素会被拓宽为 long
+     * @return Ndarray dtype=INT64 的实例
+     */
     public static Ndarray of(int[] data) {
         Objects.requireNonNull(data, "data 不能为 null");
         long[] dst = new long[data.length];
@@ -81,31 +91,56 @@ public final class Ndarray {
         return new Ndarray(DType.INT64, dst, null, null, null);
     }
 
-    /** 浮点数组 → FLOAT64(拷贝)。 */
+    /**
+     * 浮点数组 → FLOAT64(拷贝)。
+     *
+     * @param data double[] 浮点数据,约束:不能为 null;可含 NaN(表缺失);会被克隆
+     * @return Ndarray dtype=FLOAT64 的实例
+     */
     public static Ndarray of(double[] data) {
         Objects.requireNonNull(data, "data 不能为 null");
         return new Ndarray(DType.FLOAT64, null, data.clone(), null, null);
     }
 
-    /** 布尔数组 → BOOL(拷贝,允许 null 表示缺失)。 */
+    /**
+     * 布尔数组 → BOOL(拷贝,允许 null 表示缺失)。
+     *
+     * @param data Boolean[] 布尔数据(装箱),约束:不能为 null;元素可为 null(表缺失);会被克隆
+     * @return Ndarray dtype=BOOL 的实例
+     */
     public static Ndarray of(Boolean[] data) {
         Objects.requireNonNull(data, "data 不能为 null");
         return new Ndarray(DType.BOOL, null, null, data.clone(), null);
     }
 
-    /** 对象数组 → OBJECT(拷贝;String/byte[]/嵌套都用它)。 */
+    /**
+     * 对象数组 → OBJECT(拷贝;String/byte[]/嵌套都用它)。
+     *
+     * @param data Object[] 对象数据,约束:不能为 null;元素可为 null(表缺失);会被克隆
+     * @return Ndarray dtype=OBJECT 的实例
+     */
     public static Ndarray of(Object[] data) {
         Objects.requireNonNull(data, "data 不能为 null");
         return new Ndarray(DType.OBJECT, null, null, null, data.clone());
     }
 
-    /** 字符串数组便捷工厂(最高频)。等价 of((Object[]) strs)。 */
+    /**
+     * 字符串数组便捷工厂(最高频)。等价 of((Object[]) strs)。
+     *
+     * @param strs String... 可变参数字符串数组,约束:数组本身不能为 null;元素可为 null(表缺失)
+     * @return Ndarray dtype=OBJECT 的实例
+     */
     public static Ndarray ofStrings(String... strs) {
         Objects.requireNonNull(strs, "strs 不能为 null");
         return new Ndarray(DType.OBJECT, null, null, null, strs.clone());
     }
 
-    /** LocalDateTime 数组 → DATETIME64(内部转 epoch 秒)。 */
+    /**
+     * LocalDateTime 数组 → DATETIME64(内部转 epoch 秒)。
+     *
+     * @param data LocalDateTime[] 日期时间数据,约束:不能为 null;元素可为 null(转 Long.MIN_VALUE 表缺失)
+     * @return Ndarray dtype=DATETIME64 的实例(内部 long[] 存 epoch 秒,UTC)
+     */
     public static Ndarray ofDateTimes(LocalDateTime[] data) {
         Objects.requireNonNull(data, "data 不能为 null");
         long[] secs = new long[data.length];
@@ -118,8 +153,22 @@ public final class Ndarray {
 
     // ======================== 工厂:全零 / 类型转换 ========================
 
+    /**
+     * @param n int 元素个数,约束:n &gt;= 0
+     * @return Ndarray dtype=INT64 的全零数组(长度 n)
+     */
     public static Ndarray zerosInt(int n) { return new Ndarray(DType.INT64, new long[n], null, null, null); }
+
+    /**
+     * @param n int 元素个数,约束:n &gt;= 0
+     * @return Ndarray dtype=FLOAT64 的全零数组(长度 n)
+     */
     public static Ndarray zerosFloat(int n) { return new Ndarray(DType.FLOAT64, null, new double[n], null, null); }
+
+    /**
+     * @param n int 元素个数,约束:n &gt;= 0
+     * @return Ndarray dtype=BOOL 的全 false 数组(长度 n)
+     */
     public static Ndarray zerosBool(int n) { return new Ndarray(DType.BOOL, null, null, new Boolean[n], null); }
 
     /**
@@ -130,6 +179,10 @@ public final class Ndarray {
      *   <li>→ OBJECT:每个元素装箱;</li>
      *   <li>其它方向见实现。</li>
      * </ul>
+     *
+     * @param target DType 目标类型,取值范围:FLOAT64 / INT64 / OBJECT
+     * @return Ndarray 转换类型后的新实例;target 与当前 dtype 相同时返回 this
+     * @throws IllegalArgumentException 当目标类型暂不支持时抛出
      */
     public Ndarray astype(DType target) {
         if (target == dtype) return this;
@@ -178,27 +231,59 @@ public final class Ndarray {
 
     // ======================== 属性 ========================
 
+    /**
+     * @return DType 当前数组的数据类型
+     */
     public DType dtype() { return dtype; }
+
+    /**
+     * @return int 元素个数
+     */
     public int len() { return len; }
+
+    /**
+     * @return int 元素个数(len 的别名,对齐 numpy .size)
+     */
     public int size() { return len; }
 
     // ======================== 取值 ========================
 
+    /**
+     * @param i int 索引(0 基),约束:0 &lt;= i &lt; len
+     * @return long 第 i 个 long 值
+     * @throws IllegalStateException 当 dtype 不为 INT64 时抛出
+     */
     public long getInt(int i) {
         requireDType(DType.INT64, "getInt");
         return longData[i];
     }
 
+    /**
+     * @param i int 索引(0 基),约束:0 &lt;= i &lt; len
+     * @return double 第 i 个 double 值(可能为 NaN)
+     * @throws IllegalStateException 当 dtype 不为 FLOAT64 时抛出
+     */
     public double getFloat(int i) {
         requireDType(DType.FLOAT64, "getFloat");
         return doubleData[i];
     }
 
+    /**
+     * @param i int 索引(0 基),约束:0 &lt;= i &lt; len
+     * @return Boolean 第 i 个布尔值,可能为 null(表缺失)
+     * @throws IllegalStateException 当 dtype 不为 BOOL 时抛出
+     */
     public Boolean getBool(int i) {
         requireDType(DType.BOOL, "getBool");
         return boolData[i];
     }
 
+    /**
+     * 通用取值(任意 dtype 都能取)。
+     *
+     * @param i int 索引(0 基),约束:0 &lt;= i &lt; len
+     * @return Object 第 i 个元素;DATETIME64 缺失或 OBJECT 缺失返回 null;FLOAT64 返回 Double;INT64 返回 Long;BOOL 返回 Boolean;DATETIME64 返回 LocalDateTime
+     */
     public Object get(int i) {
         // 通用取值(任意 dtype 都能取)
         switch (dtype) {
@@ -211,18 +296,31 @@ public final class Ndarray {
         }
     }
 
-    /** 返回内部存储的拷贝(防外部修改;类型须匹配 dtype)。 */
+    /**
+     * 返回内部存储的拷贝(防外部修改;类型须匹配 dtype)。
+     *
+     * @return long[] INT64 或 DATETIME64 的内部数据拷贝(DATETIME64 为 epoch 秒)
+     * @throws IllegalStateException 当 dtype 不为 INT64/DATETIME64 时抛出
+     */
     public long[] toLongArray() {
         if (dtype != DType.INT64 && dtype != DType.DATETIME64)
             throw new IllegalStateException("toLongArray 要求 INT64/DATETIME64,实际 " + dtype);
         return longData.clone();
     }
 
+    /**
+     * @return double[] FLOAT64 的内部数据拷贝(含 NaN)
+     * @throws IllegalStateException 当 dtype 不为 FLOAT64 时抛出
+     */
     public double[] toDoubleArray() {
         requireDType(DType.FLOAT64, "toDoubleArray");
         return doubleData.clone();
     }
 
+    /**
+     * @return Object[] OBJECT 的内部数据拷贝(含 null)
+     * @throws IllegalStateException 当 dtype 不为 OBJECT 时抛出
+     */
     public Object[] toObjArray() {
         requireDType(DType.OBJECT, "toObjArray");
         return objData.clone();
@@ -230,22 +328,76 @@ public final class Ndarray {
 
     // ======================== 数值算术(INT64 / FLOAT64)========================
 
-    /** 加(对齐 numpy +)。整数+浮点 → 浮点;非数值抛异常。 */
+    /**
+     * 加(对齐 numpy +)。整数+浮点 → 浮点;非数值抛异常。
+     *
+     * @param other Ndarray 右操作数,约束:不能为 null;须为数值 dtype(INT64/FLOAT64);长度须与 this 一致
+     * @return Ndarray 逐元素相加结果(INT64+INT64→INT64;混合→FLOAT64)
+     */
     public Ndarray add(Ndarray other) { return arith(other, '+', "add"); }
+
+    /**
+     * 减(对齐 numpy -)。
+     *
+     * @param other Ndarray 右操作数,约束:不能为 null;须为数值 dtype;长度须与 this 一致
+     * @return Ndarray 逐元素相减结果
+     */
     public Ndarray sub(Ndarray other) { return arith(other, '-', "sub"); }
+
+    /**
+     * 乘(对齐 numpy *)。
+     *
+     * @param other Ndarray 右操作数,约束:不能为 null;须为数值 dtype;长度须与 this 一致
+     * @return Ndarray 逐元素相乘结果
+     */
     public Ndarray mul(Ndarray other) { return arith(other, '*', "mul"); }
+
+    /**
+     * 除(对齐 numpy /)。除零得到 Infinity(对齐 IEEE 754)。
+     *
+     * @param other Ndarray 右操作数,约束:不能为 null;须为数值 dtype;长度须与 this 一致
+     * @return Ndarray 逐元素相除结果
+     */
     public Ndarray div(Ndarray other) { return arith(other, '/', "div"); }
 
     // ======================== 标量算术 ========================
 
+    /**
+     * @param s double 标量加数,取值范围:任意实数
+     * @return Ndarray 每个元素加 s 后的新实例
+     */
     public Ndarray add(double s) { return scalarFloat(s, '+'); }
+
+    /**
+     * @param s double 标量减数,取值范围:任意实数
+     * @return Ndarray 每个元素减 s 后的新实例
+     */
     public Ndarray sub(double s) { return scalarFloat(s, '-'); }
+
+    /**
+     * @param s double 标量乘数,取值范围:任意实数
+     * @return Ndarray 每个元素乘 s 后的新实例
+     */
     public Ndarray mul(double s) { return scalarFloat(s, '*'); }
+
+    /**
+     * @param s double 标量除数,取值范围:任意非零实数(为 0 时结果为 ±Infinity 或 NaN)
+     * @return Ndarray 每个元素除以 s 后的新实例
+     */
     public Ndarray div(double s) { return scalarFloat(s, '/'); }
 
     // ======================== 逻辑运算(BOOL)========================
 
+    /**
+     * @param other Ndarray 右操作数,约束:不能为 null;须为 BOOL dtype;长度须与 this 一致
+     * @return Ndarray BOOL dtype,逐元素逻辑与;任一为 null → null
+     */
     public Ndarray and(Ndarray other) { return logic(other, '&', "and"); }
+
+    /**
+     * @param other Ndarray 右操作数,约束:不能为 null;须为 BOOL dtype;长度须与 this 一致
+     * @return Ndarray BOOL dtype,逐元素逻辑或;任一为 null → null
+     */
     public Ndarray or(Ndarray other) { return logic(other, '|', "or"); }
     public Ndarray not() {
         requireDType(DType.BOOL, "not");
@@ -256,17 +408,64 @@ public final class Ndarray {
 
     // ======================== 比较(返回 BOOL)========================
 
-    /** 相等比较(任意 dtype 都支持,null/NaN 视为不等)。 */
+    /**
+     * 相等比较(任意 dtype 都支持,null/NaN 视为不等)。
+     *
+     * @param other Ndarray 右操作数,约束:不能为 null;长度须与 this 一致
+     * @return Ndarray BOOL dtype,逐元素相等比较结果
+     */
     public Ndarray eq(Ndarray other) { return compare(other, '=', "eq"); }
+
+    /**
+     * 不等比较(任意 dtype 都支持,null/NaN 视为不等)。
+     *
+     * @param other Ndarray 右操作数,约束:不能为 null;长度须与 this 一致
+     * @return Ndarray BOOL dtype,逐元素不等比较结果
+     */
     public Ndarray ne(Ndarray other) { return compare(other, '!', "ne"); }
+
+    /**
+     * 小于比较(数值/日期/字符串均支持)。
+     *
+     * @param other Ndarray 右操作数,约束:不能为 null;长度须与 this 一致
+     * @return Ndarray BOOL dtype,逐元素 this &lt; other 结果
+     */
     public Ndarray lt(Ndarray other) { return compare(other, '<', "lt"); }
+
+    /**
+     * 大于比较(数值/日期/字符串均支持)。
+     *
+     * @param other Ndarray 右操作数,约束:不能为 null;长度须与 this 一致
+     * @return Ndarray BOOL dtype,逐元素 this &gt; other 结果
+     */
     public Ndarray gt(Ndarray other) { return compare(other, '>', "gt"); }
+
+    /**
+     * 小于等于比较(数值/日期/字符串均支持)。
+     *
+     * @param other Ndarray 右操作数,约束:不能为 null;长度须与 this 一致
+     * @return Ndarray BOOL dtype,逐元素 this &lt;= other 结果
+     */
     public Ndarray le(Ndarray other) { return compare(other, 'L', "le"); }
+
+    /**
+     * 大于等于比较(数值/日期/字符串均支持)。
+     *
+     * @param other Ndarray 右操作数,约束:不能为 null;长度须与 this 一致
+     * @return Ndarray BOOL dtype,逐元素 this &gt;= other 结果
+     */
     public Ndarray ge(Ndarray other) { return compare(other, 'G', "ge"); }
 
     // ======================== 切片 ========================
 
-    /** 切片 [start, end)(支持负索引)。 */
+    /**
+     * 切片 [start, end)(支持负索引)。
+     *
+     * @param start int 起始索引(含),约束:支持负索引(-1 表末尾);越界抛 IndexOutOfBoundsException
+     * @param end   int 结束索引(不含),约束:支持负索引;start &gt;= end 返回空数组
+     * @return Ndarray 切片后的新实例(dtype 不变)
+     * @throws IndexOutOfBoundsException 当 start/end 越界时抛出
+     */
     public Ndarray slice(int start, int end) {
         start = norm(start); end = norm(end);
         if (start >= end) return emptyLike();
@@ -286,7 +485,12 @@ public final class Ndarray {
 
     // ======================== 字符串专属操作(委托 StrOps,OBJECT 且为 String)========================
 
-    /** 字符串操作入口(对齐 pandas .str accessor)。要求 OBJECT 且元素为 String/null。 */
+    /**
+     * 字符串操作入口(对齐 pandas .str accessor)。要求 OBJECT 且元素为 String/null。
+     *
+     * @return StrOps 字符串操作器
+     * @throws IllegalStateException 当 dtype 不为 OBJECT 时抛出
+     */
     public StrOps str() {
         if (dtype != DType.OBJECT) throw new IllegalStateException(
                 "str() 仅 OBJECT dtype 可用(元素为 String),当前 " + dtype);
@@ -311,7 +515,12 @@ public final class Ndarray {
 
     // ======================== 实例统计(对齐 numpy a.sum() / a.mean(),规范 06 §2.1)========================
 
-    /** 求和(仅数值 dtype;FLOAT64 跳过 NaN;INT64 全量求和;非数值抛异常)。 */
+    /**
+     * 求和(仅数值 dtype;FLOAT64 跳过 NaN;INT64 全量求和;非数值抛异常)。
+     *
+     * @return double 总和(INT64 求和转 double;FLOAT64 跳过 NaN 求和)
+     * @throws IllegalStateException 当 dtype 非数值(BOOL/DATETIME64/OBJECT)时抛出
+     */
     public double sum() {
         switch (dtype) {
             case INT64: {
@@ -329,7 +538,12 @@ public final class Ndarray {
         }
     }
 
-    /** 均值(同上,跳过缺失);空或全缺失 → NaN。 */
+    /**
+     * 均值(同上,跳过缺失);空或全缺失 → NaN。
+     *
+     * @return double 均值;空数组或全缺失时返回 NaN
+     * @throws IllegalStateException 当 dtype 非数值(BOOL/DATETIME64/OBJECT)时抛出
+     */
     public double mean() {
         switch (dtype) {
             case INT64:

@@ -43,8 +43,10 @@ public final class SimpleQueryParser {
     /**
      * 解析并求值表达式,返回每行的布尔掩码。
      *
-     * @param df  目标 DataFrame
-     * @param expr 表达式,如 {@code "age > 18 && city == 'SH'"}
+     * @param df   DataFrame 目标表,非 null;表达式中的标识符须是该表的列名
+     * @param expr String 布尔表达式,如 {@code "age > 18 && city == 'SH'"};支持比较/逻辑/括号/in/between/like/is null;非 null
+     * @return boolean[] 长度 == df.rowCount();每行表达式求值结果 true/false
+     * @throws IllegalArgumentException 表达式语法错(消息含位置),或列名不存在/类型不兼容
      */
     public static boolean[] evaluate(DataFrame df, String expr) {
         List<Token> tokens = new Lexer(expr).tokenize();

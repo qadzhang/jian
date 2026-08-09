@@ -10,10 +10,17 @@ package jian.sql.engine;
 // │ 与 jian-core 的同名类相互独立:jian-sql 不依赖 jian-core(规范 §4.1),各自定义一份,语义一致。
 public class ModuleNotLoadedException extends RuntimeException {
 
+    /**
+     * @param message String 异常消息(建议含驱动 maven 坐标与安装指引)
+     */
     public ModuleNotLoadedException(String message) {
         super(message);
     }
 
+    /**
+     * @param message String 异常消息
+     * @param cause   Throwable 原始异常,约束:可为 null
+     */
     public ModuleNotLoadedException(String message, Throwable cause) {
         super(message, cause);
     }

@@ -38,6 +38,11 @@ public final class Xml {
 
     private static final XmlMapper MAPPER = new XmlMapper();
 
+    /**
+     * 读 XML 的 builder(默认行元素名 "row")。
+     * @param path String XML 文件路径,需为合法可读文件,不允许 null
+     * @return XmlReader 配置器,链式调用 .rowName 后 .go() 执行
+     */
     public static XmlReader read(String path) { return new XmlReader(Path.of(path)); }
 
     public static final class XmlReader {
@@ -46,6 +51,11 @@ public final class Xml {
 
         XmlReader(Path p) { this.path = p; }
 
+        /**
+         * 设置行元素名(每条记录对应的 XML 元素名)。
+         * @param n String 行元素标签名,需与 XML 中的元素名一致(大小写敏感),默认 "row"
+         * @return XmlReader 当前配置器,便于链式调用
+         */
         public XmlReader rowName(String n) { this.rowName = n; return this; }
 
         public DataFrame go() throws IOException {
@@ -54,7 +64,13 @@ public final class Xml {
         }
     }
 
-    /** 解析 XML 字符串(简单实现:正则提取 rowName 元素的字段)。 */
+    /**
+     * 解析 XML 字符串(简单实现:正则提取 rowName 元素的字段)。
+     * @param xml String XML 文本内容,需为合法 XML,不允许 null
+     * @param rowName String 行元素标签名(每条记录对应的元素名),如 "row"/"item",大小写敏感
+     * @return DataFrame 解析出的数据帧(列名取首行元素的字段名,类型自动推断)
+     * @throws IOException XML 解析错误时抛出
+     */
     @SuppressWarnings("unchecked")
     public static DataFrame parse(String xml, String rowName) throws IOException {
         // 用 Jackson readTree 解析
@@ -109,6 +125,12 @@ public final class Xml {
 
     // ======================== 写 ========================
 
+    /**
+     * 写 XML 的 builder。
+     * @param df DataFrame 要写出的数据帧,不允许 null
+     * @param path String 输出 XML 文件路径,需为合法可写路径,不允许 null
+     * @return XmlWriter 配置器,链式调用 .rootName/.rowName 后 .go() 执行
+     */
     public static XmlWriter write(DataFrame df, String path) { return new XmlWriter(df, Path.of(path)); }
 
     public static final class XmlWriter {
@@ -119,9 +141,24 @@ public final class Xml {
 
         XmlWriter(DataFrame df, Path p) { this.df = df; this.path = p; }
 
+        /**
+         * 设置根元素名。
+         * @param n String 根元素标签名,默认 "rows";含非法字符会自动清洗为合法 XML 名称
+         * @return XmlWriter 当前配置器,便于链式调用
+         */
         public XmlWriter rootName(String n) { this.rootName = n; return this; }
+
+        /**
+         * 设置行元素名。
+         * @param n String 每行记录对应的元素标签名,默认 "row";含非法字符会自动清洗为合法 XML 名称
+         * @return XmlWriter 当前配置器,便于链式调用
+         */
         public XmlWriter rowName(String n) { this.rowName = n; return this; }
 
+        /**
+         * 执行写出。
+         * @throws IOException 目标路径不可写或写出过程发生 IO 错误时抛出
+         */
         public void go() throws IOException {
             String xml = render();
             Files.writeString(path, xml, StandardCharsets.UTF_8);

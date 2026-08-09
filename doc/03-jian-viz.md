@@ -16,32 +16,34 @@ jian-viz **大面对齐 pandas 的绘图能力**:10 种 `Plot` 静态入口(含 
 
 | kind | API | 数据要求 | 实现方式 |
 |---|---|---|---|
-| `line` | `df.plot().line("x","y")` | x 任意 + y 数值 | XChart LineChart |
-| `bar` | `df.plot().bar("x","y")` | x 分类 + y 数值 | XChart CategoryChart |
-| `barh` | `df.plot().barh("x","y")` | 同上,水平 | CategoryChart 水平 |
-| `hist` | `df.plot().hist("col",bins=N)` | 数值列 | XChart HistogramChart + jian-num 分箱 |
-| `box` | `df.plot().box("col",groupBy="g")` | 数值列(可分组) | XChart BoxChart + jian-num 五数 |
-| `kde`/`density` | `df.plot().kde("col")` | 数值列 | **jian-num KDE 计算 + XChart LineChart** |
-| `area` | `df.plot().area("x","y")` | x + y 数值 | XChart AreaChart |
-| `pie` | `df.plot().pie("cat","val")` | 分类 + 数值 | XChart PieChart |
-| `scatter` | `df.plot().scatter("x","y")` | 两数值列 | XChart ScatterChart |
-| `hexbin` | `df.plot().hexbin("x","y")` | 两数值列 | **自写六边形分箱 + XChart 散点叠加** |
+| `line` | `Plot.line(df, "x","y")` | x 任意 + y 数值 | XChart LineChart |
+| `bar` | `Plot.bar(df, "x","y")` | x 分类 + y 数值 | XChart CategoryChart |
+| `barh` | `Plot.barh(df, "x","y")` | 同上,水平 | CategoryChart 水平 |
+| `hist` | `Plot.hist(df, "col", bins)` | 数值列 | 自写分箱计数 + CategoryChart(不引 jian-num) |
+| `box` | `Plot.box(df, "col", "g")` | 数值列(可分组) | CategoryChart 多系列箱型近似(min/median/max 三系列,非 BoxChart) |
+| `kde`/`density` | `Plot.kde(df, "col", bins)` | 数值列 | **自写直方图归一化(简化 KDE,不引 jian-num)+ XYChart** |
+| `area` | `Plot.area(df, "x","y")` | x + y 数值 | XChart AreaChart |
+| `pie` | `Plot.pie(df, "cat","val")` | 分类 + 数值 | XChart PieChart |
+| `scatter` | `Plot.scatter(df, "x","y")` | 两数值列 | XChart ScatterChart |
+| `hexbin` | `Plot.hexbin(df, "x","y", gridsize)` | 两数值列 | **自写六边形分箱 + XChart 散点叠加** |
 
-> `kde`/`hexbin` 在 XChart 中无原生支持,需 jian-num 算密度/分箱后用基础图渲染。
+> `kde`/`hexbin` 在 XChart 中无原生支持,jian 采用**自写简化实现**(直方图归一化 / 分箱计数 + 散点大小映射),**不引 jian-num**(M4 决策:保持 jian-viz 零统计依赖;v2 引 jian-num 后可替换为真正高斯核 KDE)。
 
-#### B. plotting 模块的 6 种高维/时序图(对齐 `pandas.plotting`)
+#### B. plotting 模块的高维/时序图(对齐 `pandas.plotting`)
 
-| 方法 | API | 用途 | 实现方式 |
-|---|---|---|---|
-| `scatter_matrix` | `Jian.plotting().scatterMatrix(df)` | 多列两两散点矩阵 | N×N 个 XChart ScatterChart 拼接成图 |
-| `autocorrelation` | `Jian.plotting().autocorrelation(series)` | 时序自相关 | jian-num 算 ACF + XChart |
-| `radviz` | `Jian.plotting().radviz(df,"label")` | 多维点投影到圆 | 自写 Radviz 投影 + ScatterChart |
-| `andrews_curves` | `Jian.plotting().andrewsCurves(df,"label")` | 多维 Andrews 曲线 | 自写投影 + LineChart |
-| `parallel_coordinates` | `Jian.plotting().parallelCoordinates(df,"label")` | 平行坐标 | 自写投影 + LineChart |
-| `bootstrap_plot` | `Jian.plotting().bootstrap(series)` | 统计自助法分布 | jian-num 重采样 + Histogram |
-| `lag_plot` | `Jian.plotting().lagPlot(series,lag=1)` | 时序滞后散点 | jian-num 移位 + ScatterChart |
+> **注(2026-08-09 经源码核实)**:`Plot.java` 实测**仅 3 种已实现**(`scatterMatrix` / `lagPlot` / `autocorrelation`),且全部为**静态方法**(`Plot.scatterMatrix(df, ...)`),**无 `Jian.plotting()` 入口对象**。`radviz` / `andrewsCurves` / `parallelCoordinates` / `bootstrap` 4 种未实现,列入 v2 规划。
 
-> 共 7 种 plotting 高维图(原计划 6,bootstrap/lag 补全)。这些是 pandas 数据探索的标志性功能,必须做。
+| 状态 | 方法 | 实际 API | 用途 | 实现方式 |
+|---|---|---|---|---|
+| ✅ 已实现 | `scatter_matrix` | `Plot.scatterMatrix(df, cols...)` | 多列两两散点矩阵 | N×N 个 XChart ScatterChart 拼接成图 |
+| ✅ 已实现 | `autocorrelation` | `Plot.autocorrelation(df, col, maxLag)` | 时序自相关 | 自写 ACF(不引 jian-num,M4 决策)+ XChart |
+| ✅ 已实现 | `lag_plot` | `Plot.lagPlot(df, col, lag)` | 时序滞后散点 | 移位 + ScatterChart |
+| 🕐 v2 规划 | `radviz` | (未实现) | 多维点投影到圆 | v2:自写 Radviz 投影 + ScatterChart |
+| 🕐 v2 规划 | `andrews_curves` | (未实现) | 多维 Andrews 曲线 | v2:自写投影 + LineChart |
+| 🕐 v2 规划 | `parallel_coordinates` | (未实现) | 平行坐标 | v2:自写投影 + LineChart |
+| 🕐 v2 规划 | `bootstrap_plot` | (未实现) | 统计自助法分布 | v2:jian-num 重采样 + Histogram |
+
+> **总计**:10 plot + 3 plotting = **13 种已实现**;4 种高维图(radviz/andrews/parallel/bootstrap)列入 v2 规划。
 
 ### 1.3 每类图通用能力(对齐 pandas)
 
@@ -70,38 +72,55 @@ jian-viz ── XChart 4.0.3 (org.knowm.xchart)
 
 ## 2. 核心 API
 
+> **⚠️ API 风格说明(2026-08-09 与 AI agent2 共识)**:
+> jian 的 **DataFrame 变换**是链式实例方法;但 **绘图是静态方法收口**(`Plot.line(df, "x","y")` / `Plot.scatter(df,...)`),**不是** `df.plot().line()` 链式。
+> 原因:绘图属于 jian-viz 叶子模块,DataFrame 在 jian-core,core 不能反依赖 viz(模块单向依赖红线,见 AGENTS.md §4.1)。
+> **用户实际写法**:
+> ```java
+> XYChart chart = Plot.line(df.filter("age > 18"), "name", "score");
+> Plot.savePng(chart, "out.png");
+> ```
+> 本分册下方示例中如出现 `df.plot().xxx()` 链式写法,**均为概念示意**(对齐 pandas 用户心智),实际请用 `Plot.xxx(df, ...)` 静态调用。
+
 ### 2.1 11 种基础图
+
+**实际写法**(静态终端,见 §2 顶部 API 风格说明):
 
 ```java
 // 折线(支持多列对比)
-df.plot().line("date","price_a","price_b","price_c")
-  .legend("A","B","C").title("股价").theme(GGPLOT2)
-  .saveAsSvg("price.svg");
+XYChart lineChart = Plot.line(df, "date", "price_a", "price_b", "price_c");
+Plot.saveSvg(lineChart, "price.svg");
 
 // 柱状/水平柱
-df.plot().bar("category","count").vertical(false).saveAsPng("bar.png");
+CategoryChart barChart = Plot.bar(df, "category", "count");
+CategoryChart barhChart = Plot.barh(df, "category", "count");
 
-// 直方图
-df.plot().hist("score",bins=30).colorBy("gender").saveAsPng("hist.png");
+// 直方图(必须传 bins)
+CategoryChart histChart = Plot.hist(df, "score", 30);
 
-// 箱线(按分类分组)
-df.plot().box("salary",groupBy="dept").saveAsPng("box.png");
+// 箱线(按分类分组,valCol + groupCol)
+CategoryChart boxChart = Plot.box(df, "salary", "dept");
 
-// KDE 密度
-df.plot().kde("score").bandwidth(0.5).saveAsPng("kde.png");
+// KDE 密度(简化直方图归一化,必须传 bins)
+XYChart kdeChart = Plot.kde(df, "score", 30);
 
 // 面积
-df.plot().area("date","sales").stacked(true).saveAsPng("area.png");
+XYChart areaChart = Plot.area(df, "date", "sales");
 
 // 饼图
-df.plot().pie("category","share").saveAsPng("pie.png");
+PieChart pieChart = Plot.pie(df, "category", "share");
 
 // 散点
-df.plot().scatter("height","weight").colorBy("gender").saveAsPng("scatter.png");
+XYChart scatterChart = Plot.scatter(df, "height", "weight");
 
-// Hexbin(密集散点的六边形分箱)
-df.plot().hexbin("x","y").gridsize(30).saveAsPng("hexbin.png");
+// Hexbin(必须传 gridsize)
+XYChart hexbinChart = Plot.hexbin(df, "x", "y", 30);
+
+// 落盘(所有 chart 都用 Plot.savePng / Plot.saveSvg)
+Plot.savePng(histChart, "hist.png");
 ```
+
+> **注**:`df.plot().line(...).theme(GGPLOT2).saveAsPng(...)` / `.colorBy("gender")` / `.bandwidth(0.5)` / `.stacked(true)` 等链式写法**在早期文档出现过,但 jian 从未实现**。实际:`Plot.xxx(df, ...)` 返回 XChart 对象,主题/系列样式经 XChart API 配置,落盘用 `Plot.savePng(chart, path)`。
 
 ### 2.2 7 种高维/时序图(plotting 模块)
 
@@ -128,13 +147,13 @@ Jian.plotting().bootstrap(df.getColumn("salary"),samples=1000).saveAsPng("boot.p
 Jian.plotting().lagPlot(df.getColumn("price"),lag=1).saveAsPng("lag.png");
 ```
 
-### 2.3 子图与二级轴
+### 2.3 子图与二级轴 —— v2 规划(未实现)
+
+> **状态**:`subplots(true)` / `secondaryY(col)` 等 API **v2 规划,代码侧从未实现**(2026-08-09 核验)。当前 jian 的绘图都是单图;子图/双轴请用 XChart 原生 API 组合,或等 v2。
 
 ```java
-df.plot().line("date","a","b")
-  .subplots(true)             // 拆成上下两个子图
-  .secondaryY("b")            // b 用右轴
-  .saveAsPng("dual.png");
+// v2 设计示意(未实现)
+// Plot.line(df, "date","a","b") 后续经 XChart 多 chart 组合实现子图/双轴
 ```
 
 ---
@@ -153,13 +172,13 @@ df.plot().line("date","a","b")
 
 ### 3.2 需自写统计后渲染的图
 
-| 图 | 统计计算(走 jian-num) | 渲染 |
+| 图 | 统计计算(自写,不引 jian-num) | 渲染 |
 |---|---|---|
-| `kde` | 核密度估计(高斯核,可配带宽)→ 离散密度曲线 | LineChart |
-| `hist` | 等宽分箱计数(可选归一化 density=True) | HistogramChart |
-| `box` | 五数(min/Q1/median/Q3/max)+ 离群点 | BoxChart |
-| `hexbin` | 六边形栅格聚合计数 | ScatterChart 叠加六边形 |
-| `autocorrelation` | 各 lag 的 ACF 系数 | LineChart + 置信带 |
+| `kde` | 直方图归一化(简化 KDE,无高斯核平滑) | XYChart |
+| `hist` | 等宽分箱计数(可选归一化 density=True) | CategoryChart |
+| `box` | 每组 min/median/max 三系列(简化,无 Q1/Q3/离群点) | CategoryChart 多系列近似 |
+| `hexbin` | 矩形栅格分箱计数(简化,非真正六边形) | XYChart Scatter |
+| `autocorrelation` | 各 lag 的 ACF 系数(简单公式) | XYChart Line |
 | `radviz` | 多维点按弹簧投影到 2D 圆 | ScatterChart |
 | `andrews_curves` | f(t) = x1/√2 + x2·sin(t) + x3·cos(t) + ... | LineChart |
 | `parallel_coordinates` | 每行样本在各维度的折线 | LineChart |
@@ -221,7 +240,7 @@ df.plot().line("date","a","b")
 
 | 文件 | 内容 | 测试 |
 |---|---|---|
-| `Plot.java` + `PlotExtra.java` | 13 种图入口 + PNG/SVG 落盘 | `PlotTest` 16 用例 |
+| `Plot.java` | 13 种图入口(line/scatter/bar/hist/barh/area/pie/box/kde/hexbin/scatterMatrix/lagPlot/autocorrelation)+ PNG/SVG 落盘 | `PlotTest` 16 用例 |
 
 ### 7.2 与需求的偏差
 
@@ -241,4 +260,4 @@ df.plot().line("date","a","b")
 ---
 
 *本分册独立,与 01/02/04-06 无耦合。大面对齐 pandas 的 13 种绘图能力(4 种高维图 v2 规划)。*
-*M3 + M4.5:17 图全实现(11 plot + plotting 高维/时序图)完成于 2026-08-01。*
+*M3 + M4.5:13 种图全实现(10 plot + plotting 高维/时序图)完成于 2026-08-01;radviz/andrews/parallel_coordinates/bootstrap 4 种高维图 v2 规划。*

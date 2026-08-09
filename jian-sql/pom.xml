@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>jian</groupId>
+    <artifactId>jian-parent</artifactId>
+    <version>1.0.0</version>
+    <relativePath>../pom.xml</relativePath>
+  </parent>
+
+  <!-- jian-sql 库 fat jar:4 个子模块 + jOOQ + HikariCP(不依赖 jian) -->
+  <artifactId>jian-sql-all</artifactId>
+  <name>jian-sql-all (fat jar)</name>
+  <packaging>jar</packaging>
+
+  <dependencies>
+    <dependency><groupId>jian</groupId><artifactId>jian-sql-engine</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-sql-expr</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-sql-orm</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-sql-bridge</artifactId><version>${project.version}</version></dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>${maven-shade-plugin.version}</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals><goal>shade</goal></goals>
+            <configuration>
+              <shadedArtifactAttached>true</shadedArtifactAttached>
+              <shadedClassifierName>all</shadedClassifierName>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <manifestEntries>
+                    <Ai-Aggregated>true</Ai-Aggregated>
+                    <Ai-Library>jian-sql</Ai-Library>
+                  </manifestEntries>
+                </transformer>
+              </transformers>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

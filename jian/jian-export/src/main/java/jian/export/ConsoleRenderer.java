@@ -29,7 +29,12 @@ public final class ConsoleRenderer {
 
     private ConsoleRenderer() {}
 
-    /** 默认 maxRows=60, maxColWidth=30。 */
+    /**
+     * 默认 maxRows=60, maxColWidth=30。
+     *
+     * @param df DataFrame 待渲染的 DataFrame,非 null
+     * @return String 控制台对齐表格文本
+     */
     public static String render(DataFrame df) {
         return render(df, 60, 30);
     }
@@ -37,8 +42,10 @@ public final class ConsoleRenderer {
     /**
      * 渲染对齐表格。
      *
-     * @param maxRows 显示最大行数(超过 head/tail 截断)
-     * @param maxColWidth 每列最大宽度(字符,超则截断加 ...)
+     * @param df DataFrame 待渲染的 DataFrame,非 null
+     * @param maxRows int 显示最大行数(超过 head/tail 截断),正整数
+     * @param maxColWidth int 每列最大宽度(字符,超则截断加 ...)
+     * @return String 控制台对齐表格文本(含 CJK 宽度对齐 + 行列数摘要)
      */
     public static String render(DataFrame df, int maxRows, int maxColWidth) {
         if (df.rowCount() == 0) {
@@ -114,7 +121,12 @@ public final class ConsoleRenderer {
         return sb.toString();
     }
 
-    /** 计算字符串的显示宽度(CJK/全角字符 2,其余 1)。 */
+    /**
+     * 计算字符串的显示宽度(CJK/全角字符 2,其余 1)。
+     *
+     * @param s String 待测字符串,null 视为 0 宽
+     * @return int 显示宽度(CJK 字符按 2 计,ASCII 按 1 计)
+     */
     public static int displayWidth(String s) {
         if (s == null) return 0;
         int w = 0;

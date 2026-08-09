@@ -56,22 +56,39 @@ public enum DType {
     /** 任意引用兜底。存 Object[](byte[]/嵌套/未知类型)。缺失 null。 */
     OBJECT;
 
-    /** 是否整数类型(INT/LONG)。 */
+    /**
+     * 是否整数类型(INT/LONG)。
+     * @return boolean true=INT 或 LONG;false=其它(含 DOUBLE/BOOL/STRING/DATE/CATEGORY/OBJECT)
+     */
     public boolean isInt() { return this == INT || this == LONG; }
 
-    /** 是否数值类型(INT/LONG/DOUBLE)。 */
+    /**
+     * 是否数值类型(INT/LONG/DOUBLE)。
+     * @return boolean true=INT/LONG/DOUBLE;false=其它(BOOL/STRING/DATE/CATEGORY/OBJECT)
+     */
     public boolean isNumeric() { return this == INT || this == LONG || this == DOUBLE; }
 
-    /** 是否浮点。 */
+    /**
+     * 是否浮点(仅 DOUBLE)。
+     * @return boolean true=DOUBLE;false=其它。注意 INT/LONG 不算浮点
+     */
     public boolean isFloat() { return this == DOUBLE; }
 
-    /** 是否时间类型(DATETIME/DATE)。 */
+    /**
+     * 是否时间类型(DATETIME/DATE)。
+     * @return boolean true=DATETIME 或 DATE;false=其它
+     */
     public boolean isTemporal() { return this == DATETIME || this == DATE; }
 
     /**
      * 数值类型向上提升(对齐 numpy promotion):
      * INT+INT→INT, INT+LONG→LONG, 任意数值+DOUBLE→DOUBLE;同类型→自身;
      * 非数值混合或类型不兼容 → 抛 IllegalArgumentException。
+     * @param a DType 第一个类型,非 null
+     * @param b DType 第二个类型,非 null
+     * @return DType 提升后的统一类型:同类型返回自身;数值混合按 INT→LONG→DOUBLE 提升;
+     *         一方为 OBJECT 返回 OBJECT(兜底)
+     * @throws IllegalArgumentException 两方都非 OBJECT 且不可数值提升(如 BOOL+STRING)
      */
     public static DType promote(DType a, DType b) {
         if (a == b) return a;

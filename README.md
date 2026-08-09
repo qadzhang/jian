@@ -44,7 +44,7 @@ Jian.write(r, "report.html");
 ![](doc/architecture.svg)
 
 **三个独立库:**
-- **jian** — DataFrame + 12 格式 IO + 17 图 + Styler 导出 + DSL(SQL 子集)
+- **jian** — DataFrame + 12 格式 IO + 13 种图(PNG/SVG,4 种高维图 v2 规划) + Styler 导出 + DSL(SQL 子集)
 - **jian-sql** — Engine(HikariCP) + SqlBuilder(jOOQ) + ORM(Session) + Bridge
 - **jian-num** — Ndarray + 描述统计 + 线代 + 随机数(对标 numpy 子集)
 
@@ -66,7 +66,7 @@ Jian.write(r, "report.html");
 | | jian-io-json | JSON 5 种 orient |
 | | jian-io-html | HTML 表格(jsoup) |
 | | jian-io-xml | XML(Jackson) |
-| | jian-io-sql | 7 数据库通用(JDBC) |
+| | jian-io-sql | 7 库 DbType(3 库真测:H2/SQLite/PG) |
 | | jian-io-parquet | Parquet 列存 |
 | | jian-io-orc | ORC 列存 |
 | | jian-io-pickle | 自定义 .jpk 序列化 |
@@ -85,16 +85,136 @@ Jian.write(r, "report.html");
 
 ---
 
+## 缺失值与 NaN 语义(2026-08-08 统一)
+
+jian 的缺失值处理遵循**"内部不失真、边界做转换"**原则:
+
+| API | 缺失行返回 | 说明 |
+|---|---|---|
+| `isNull(i)` | `true` | 权威判断,全类型一致 |
+| `getDouble(i)` | `NaN` | 数值缺失统一占位(全类型) |
+| `getLong(i)` | `Long.MIN_VALUE` | long 无 NaN,用最小值作缺失标记 |
+| `get(i)` | DoubleColumn 返 `Double.NaN`(不失真);其它返 `null` | **NaN 不再变 null** |
+| `getRow(i)` | `null` | IO 边界安全网(CSV/JSON/SQL 写出) |
+
+> **为什么不用 pandas 的"NaN==null"模型**:pandas 把 NaN 和 null 在数值列等价处理是历史包袱。jian 区分:NaN=计算产生的非数(有效值的一种),null=原始缺失。两者在 `isNull` 统一,但在 `get` 层面 NaN 不失真。
+>
+> **export 层(HTML/Markdown/LaTeX/Excel)缺失行显示空**——不显示 "NaN" 或 "<NA>"。详见 `AGENTS.md §3.5`。
+
+## SQL 跨库支持(7 库 DbType,3 库真测)
+
+jian-io-sql 的 `DbType` 枚举定义 **7 种数据库**:PostgreSQL / MySQL / Doris / SQLite / H2 / Oracle / MS Access(Doris 复用 MySQL 协议)。
+
+> **真实库测试覆盖(2026-08-09 经源码核实)**:**3 库有集成测试**(H2 + SQLite 默认跑,PostgreSQL 经 `-Dtest.pg=true` 激活);**4 库仅 DbType 定义**(MySQL/Doris/Oracle/Access,用户引对应驱动后接口通用,但未经 CI 验证)。早前版本声称"7 库通用 + 7 库各 1 集成测试"是超前表述。
+
+**类型映射自适应**(`Sql.java` 按 `DatabaseMetaData` 探测方言):
+
+| jian 类型 | PG | MySQL | Oracle | SQLite | H2 |
+|---|---|---|---|---|---|
+| DOUBLE | DOUBLE PRECISION | DOUBLE | FLOAT(126) | REAL | DOUBLE PRECISION |
+| STRING(短) | VARCHAR(n) | VARCHAR(n) | **VARCHAR2(n)** | TEXT | VARCHAR(n) |
+| STRING(长>4000) | **TEXT** | **LONGTEXT** | **CLOB** | TEXT | **CLOB** |
+
+> VARCHAR 长度自适应:扫实际数据取 maxLen,≤4000 用 VARCHAR(n),>4000 用大文本类型。
+> JDBC 读回自动规范化:Clob→String、BigDecimal→Double、Timestamp→LocalDateTime。详见 `AGENTS.md §3.6`。
+
+**真实数据库测试**(不只 H2 模拟方言):
+- H2 in-memory + SQLite in-memory:默认跑
+- PostgreSQL 18:`-Dtest.pg=true` 激活(14 个测试覆盖全 dtype/大文本/注入防护)
+
+## Web 环境安全(Tomcat/Spring Boot)
+
+jian 可安全用于 Web 服务器环境。2026-08-08 安全审查修复了 4 个问题:
+
+| 问题 | 风险 | 修复 |
+|---|---|---|
+| ServiceLoader 缓存导致 Tomcat redeploy 内存泄漏 | 🔴 高 | 每次 `current()` 新建 ServiceLoader,不缓存 |
+| `Engine.checkReadOnly` 只读拦截是死代码(从不调用) | 🟠 中 | `engine.sql()` 入口强制调用 checkReadOnly |
+| Excel 写出无公式注入防护(CSV 有) | 🟠 中 | Excel 加 `= + - @` 单引号前缀(同 CSV) |
+| Clipboard 子进程流未关闭 + 无超时 | 🟡 低 | try-with-resources + `waitFor(5s)` + `destroyForcibly()` |
+
+**安全的方面**(无需改):
+- 反序列化:Jackson 未开 defaultTyping;Pickle 走自定义容器 + JSON,无 ObjectInputStream
+- SQL 参数化:全 PreparedStatement + ? 占位符
+- Connection/文件流:全 try-with-resources
+- DataFrame 不可变:构造后无 mutator;Web 场景用 `ofColumnArraysSafe`(防御性 clone)替代 `ofColumnArrays`(零拷贝)
+- 无 ThreadLocal / 无静态可变状态
+
+详见 `AGENTS.md §3.7`。
+
+## 内存管理(Java GC 语义)
+
+jian 的 DataFrame 是**纯内存数据对象**（`long[]`/`double[]`/`String[]`），不持有文件句柄或数据库连接。理解 Java 的 GC 语义对 Web 场景很重要：
+
+### `df = null` 不会立即释放内存
+
+```java
+DataFrame df = Jian.read("big.csv");  // 堆上分配了 ~100MB
+df = null;                             // 只断开引用,100MB 数据仍在堆里
+// → 等 GC 自动运行时才回收(JVM 决定时机,通常几秒内)
+```
+
+Java **没有** C 的 `free()` 或 C++ 的 `delete`。开发者只能断开引用，GC 负责回收。
+
+### Web 场景的正确做法
+
+```java
+// ✅ 方法内局部变量(最推荐)：方法结束后自动断引用，GC 回收
+void handleRequest() {
+    DataFrame df = Jian.read("data.csv");
+    // ... 处理 ...
+    // 方法结束 → df 出栈 → GC 回收
+}
+
+// ✅ 大数据量处理完立刻断引用
+DataFrame df = Jian.read("huge.csv");
+// ... 处理完，后续不再需要 df ...
+df = null;           // 断引用
+System.gc();         // 建议 JVM 赶紧 GC(不保证立即,但通常有效)
+
+// ❌ 危险：static 缓存持有大 DataFrame
+static Map<String, DataFrame> cache = new HashMap<>();
+cache.put("big", df);  // 即使 df=null，cache 还引用着，GC 永远不回收 → OOM
+
+// ✅ 如需缓存，用弱引用(GC 可随时回收)
+static WeakHashMap<String, DataFrame> cache = new WeakHashMap<>();
+```
+
+### 为什么 jian 不提供 close()/dispose()
+
+- DataFrame 是纯内存数据，不持有外部资源
+- `AutoCloseable` 是给**持有外部资源**（文件句柄/连接/锁）的对象用的
+- 加 close 会误导用户以为"不 close 就泄漏"，实际上 GC 会自动回收
+- jian 真正需要 close 的是 `Engine`（HikariCP 连接池）和 `SqlBuilder`（JDBC 连接），它们已实现 `AutoCloseable`
+
+### 不可变语义
+
+DataFrame 是**不可变**的——每个变换返回新 DataFrame，原 DataFrame 不变（类似 Java String / pandas）：
+
+```java
+DataFrame df = DataFrame.of(Schema.of("v", DType.DOUBLE), new Object[][]{{1.0}});
+DataFrame df2 = df.astype("v", DType.LONG);  // 返回新 df2,原 df 不变
+
+// 想"原地改"？用变量覆盖(语义仍是新对象替换旧引用)
+df = df.astype("v", DType.LONG);  // 原 DataFrame 如无人引用,GC 自动回收
+```
+
+线程安全：多个请求可并发读同一个 DataFrame，无需加锁。
+
 ## 构建
 
 ```bash
-./mvnw install          # 全量构建(阿里云镜像,Maven Wrapper 自带)
+./mvnw install                    # 默认 thin jar(22 个子模块)
+./mvnw -Pfat package              # 额外出 3 个 fat jar(jian-all / jian-num-all / jian-sql-all)
 ./mvnw -pl jian/jian-core -am compile    # 只构建 core
-./mvnw test             # 跑全部 342 个测试
+./mvnw test                       # 跑全部测试
 ```
 
+**双形态制品**(AGENTS.md §2.5):
+- **默认 thin jar**:`./mvnw install` 出 22 个细粒度子模块 jar,按需引用,子模块零整合(无 shade)。
+- **可选 fat jar**:`./mvnw -Pfat package` 额外激活顶层三库(jian / jian-num / jian-sql)的 `maven-shade-plugin`,各出一个 `*-all.jar`(含全部依赖,单文件即可上手)。fat jar 是 AI 友好的补充形态,带 `Ai-Aggregated: true` manifest 标记。
+
 依赖管理:Maven 多模块 + 阿里云镜像(配置在 `.mvn/settings.xml`)。
-精细引用,无 uber/fat jar,无 maven-shade(AGENTS.md §2.5)。
 
 ---
 
@@ -104,6 +224,158 @@ Jian.write(r, "report.html");
 - `doc/00-overview.md` ~ `07-jian-dsl.md` — 详细需求与实现说明
 - `NAMING.md` — 命名由来(玉简/简化/简约/吉安)
 - `AGENTS.md` — 开发规范(凌驾全项目)
+
+---
+
+## 测试方法学(给 AI 协作项目用)
+
+> 本项目大量代码由 AI 辅助生成,采用一套**针对 AI 代码弱点设计的系统化测试方法**。
+> 该方法同时装备**人类审查者**和 **AI 审查者(AI agent 1 等)**,两边都按同一份 checklist 工作。
+> 详细论述见 `doc/00-overview.md §10.8-10.9`;此处是大纲与使用指南。
+
+### 为什么 AI 代码需要特殊测试方法
+
+AI 生成代码有个核心难题叫 **oracle problem(预言机难题)**:很难预先知道"正确输出"是什么——
+因为"期望输出"本身也可能是 AI 生成的(它会把期望写错)。所以传统"输入 → 期望输出"的写法常失效。
+解决方案是**绕开 oracle**——用三种方法验证代码"行为符合性质",而不是"输出等于某值"。
+
+### 三种核心方法
+
+| 方法 | 思路 | 例 | 何时用 |
+|---|---|---|---|
+| **蜕变测试**<br>(Metamorphic) | 不验具体输出,验**输入输出间的必要关系** | `sortBy` 后 `rowCount` 必守恒;<br>`filter(p) ∪ filter(¬p)` 必等于原表 | 关系明确但具体值难算 |
+| **差分测试**<br>(Differential) | 同一算子的两个实现跑同输入,**结果应一致** | long key 走 fast path 与 String key 走 generic path 结果应等价 | 有 fast / generic 双实现 |
+| **基于性质测试**<br>(Property-Based) | 声明**性质**,框架自动生成 N 个随机输入 | `reverse(reverse(x)) == x`;<br>`sort(x).size() == x.size()` | 不变量清晰的算子 |
+
+辅助方法:
+
+- **变异测试(Mutation Testing)**:用 PITest 主动改坏代码,看测试能否抓到——**测测试本身是否有效**
+- **静态分析**:SpotBugs / PMD / `-Xlint` 抓编译期问题
+- **多轮 AI 对抗审查**:多个 AI 实例(或同实例多轮)互相找茬,**但 AI 审查不能替代机器化差分/蜕变测试**(见下"实战"案例)
+
+### 已落地的测试代码
+
+| 测试类 | 数量 | 方法 | 覆盖 |
+|---|---|---|---|
+| `MetamorphicTest` | 50 断言 / 27 方法 | 蜕变 | sortBy/filter/merge/concat/groupBy/astype/head/tail/slice/agg 等,`@RepeatedTest` 多轮 |
+| `PropertyBasedTest`(jqwik 1.9.3) | 22 | PBT | sortBy/filter/head/concat/dropDuplicates/merge/groupBy/fillna/dropna/ffill/astype/select/drop/slice/nlargest/nsmallest/colAdd/colMul/assign,`tries=100` 自动随机输入 |
+| `DifferentialTest` | 38 断言 | 差分 | long/int/double key fast vs generic path 等价 + INT×LONG 混合 + DATE 保留 + ofColumnsDirect vs ofColumnArrays + getIntColumn LONG→INT |
+| `NullNaNPropagationTest` | 9 | 蜕变 | **NaN/缺失值全链路不失真**:get 不失真 + getDouble 返 NaN + getLong 返 MIN_VALUE + getRow 边界转 null + ffill/bfill + merge 补 null + 排序 + 算术传播 |
+| `ColumnarPerfTest` | 27 | 单元 + BUG 回归 | 每个修复点都有"重现代码"防止回归 |
+| `tests-pbt/properties/test_jian_properties.py`(Python Hypothesis) | 24 | PBT 同行评议 | 与 jqwik 同样性质 + colSub/colDiv 双语言交叉验证(**v 含 NaN 边界注入**) |
+| `tests-pbt/properties/test_pandas_diff.py`(pandas 1.5.3) | 38 | pandas 对照(d1-d38) | 以 pandas 为 oracle,覆盖 head/tail/sortBy/filter/dropDuplicates/merge/concat/nlargest/nsmallest/select/drop/slice/colSub/colDiv/colLt/fillna/dropna/ffill/astype/groupBy/idxmax/idxmin/duplicated/sample/isin/where/mask/cumsum/diff/pct_change/clip/quantile/rank/round/prod/pivot/explode/merge_asof |
+| `SqlPostgresTest`(PostgreSQL 18) | 14 | 真实 PG | 全 dtype 往返 / 参数化 / 4 种写入模式 / 缺失值 / **VARCHAR 自适应** / **大文本不截断** / **PG 小写列名** / 万行 / SQL 注入防护 |
+| 其它既有测试 | ~157 | 单元 | 模块正常功能(dsl/export/io/num/sql/viz/facade 各子模块) |
+| **合计 jian-core** | **412**(见 [doc/api-counts.md](doc/api-counts.md)) | | 阶段 A-F 新增 60+ DataFrame 方法(idxmax/sample/isin/where/mask/pivot/explode/join/merge_asof/corr/cov/skew/kurt/cumsum/diff/quantile/rank/clip/interpolate/astype 8种/Resampler/DatetimeIndex/Frequency/MultiIndex N级 等) |
+| **合计 jian 全量(Java)** | **637** | 22 模块 | 实测 @Test 数(口径见 doc/api-counts.md);另有 @RepeatedTest/@Property 展开 + PG skip 14 |
+| **合计 jian-io-sql** | **33** | H2+SQLite+PG | 10(H2,含 SQL 注入防护) + 9(SQLite) + 14(PG,`-Dtest.pg=true` 激活) |
+| **合计 jian-export** | **23** | | 含缺失值显示(空 vs "NaN")验证 |
+| **合计 Python 端** | **62** | Hypothesis+pandas | 24(PBT 同行评议) + 38(pandas 对照 d1-d38,2026-08-09 阶段 A-D 补 d21-d38),`pytest tests-pbt/` |
+
+### 变异测试(PITest)已落地——测"测试本身是否有效"
+
+本项目用 [PITest](https://pitest.org/) 1.19.1 + JUnit 5 plugin 跑变异分析(主动注入 bug 看测试能否抓到)。
+配置在 `jian/jian-core/pom.xml`,跑法:
+
+```bash
+mvn -pl jian/jian-core -o test-compile org.pitest:pitest-maven:mutationCoverage
+# 报告:jian/jian-core/target/pit-reports/<时间戳>/index.html
+```
+
+**最近一次变异分数(2026-08-08)**:
+
+| 类 | 行覆盖 | 变异杀死率 | 测试强度 |
+|---|---|---|---|
+| ColumnarHashMap | 92% | 75% | 80% |
+| DataFrame | 81% | 61% | 78% |
+| DataFrameMerge | 91% | 68% | 79% |
+| GroupBy | 92% | **72%(从 50% 提升)** | 78% |
+
+变异测试**真的发现了测试盲点**:GroupBy 一开始只有 50% 变异杀死率(很多聚合分支没测),根据报告补 6 个聚合性质测试后提升到 72%。这就是变异测试的价值——它**客观量化测试质量**,不像 AI 审查会"自判收敛"。
+
+### 双语言交叉 PBT(jqwik 1.9.3 + Python Hypothesis)
+
+本项目同时用两套独立的 PBT 实现验证同样 22 条核心性质,形成"**同行评议**"——任一方出错都能被另一方对出。
+
+**Java 端(jqwik 1.9.3)**:`jian/jian-core/src/test/java/jian/core/PropertyBasedTest.java`
+```bash
+mvn -pl jian/jian-core test -Dtest=PropertyBasedTest    # 22 性质各 tries=100
+```
+
+**Python 端(Hypothesis 6.165.2)**:`tests-pbt/properties/test_jian_properties.py`
+```bash
+python3 -m pytest tests-pbt/properties/test_jian_properties.py  # 24 性质各 max_examples=100-200
+# 通过 tests-pbt/harness/JianPbtBridge.java 用 subprocess 跨语言调 jian jar
+```
+
+### pandas 对照测试(pandas 1.5.3 oracle,红线)
+
+> 本项目是对标 pandas 的 JVM 实现。**AGENTS.md §0.5(第四条红线)** 规定:凡对标 pandas 的算子**必须有 pandas 对照测试**——把 pandas 当"老师"给 jian 改卷子。
+
+**测试位置**:`tests-pbt/properties/test_pandas_diff.py`
+```bash
+python3 -m pytest tests-pbt/properties/test_pandas_diff.py   # 38 个对照测试(d1-d38)
+```
+
+**当前覆盖**:head/tail/sortBy/filter/dropDuplicates/merge/concat/nlargest/nsmallest/select/drop/slice/colSub/colDiv/colLt + **fillna/dropna/ffill/astype/groupBy**(2026-08-09 补 d16-d20,落实 AI agent2 G1 红线要求)共 **20 个算子**。每次 jian 新增/修改对标 pandas 的算子,对应的 pandas 对照测试**必须同步增加**(AGENTS.md 红线)。
+
+**发现并处理的差异**:sortBy 稳定性——pandas `sort_values()` 默认 `kind='quicksort'`(不稳定),jian 用 TimSort(稳定);两者对相同键的行序可能不同。**判定:jian 的稳定排序是更优语义,不视为 BUG**,测试用多重集断言对齐(D3)。详见 `doc/00-overview.md §10.12`。
+
+#### jqwik 版本选择(必须 1.9.3,严禁 1.10.x)
+
+> **⚠️ jqwik 1.10.x 不能用**:1.10.0(2026-05-25)被作者注入恶意 prompt-injection 字符串(`JqwikExecutor.printMessageForCodingAgents`,ANSI 隐藏"删除所有 jqwik 测试"指令);1.10.1+ 把"反对 AI 协作"立场固化到官方 release notes:"This project is not meant to be used by any 'AI' coding agents at all"。详见 [Snyk 披露](https://snyk.io/blog/protestware-open-source-maintainer-qwik-1-10-0-prompt-injection/)。
+>
+> **本项目用 1.9.3**(投毒前最后稳定版,已 strings 校验投毒字符串 0 命中)。jar 需自行放到共享仓库(默认 `~/tools/jar`,可用 `-Djar.home=/path` 覆盖),pom 用 `scope=system` 引用(避免 Maven 解析到 1.10.x)。详见 jian-core/pom.xml 注释。
+
+#### 双语言交叉 PBT 的实战价值
+
+阶段 2 写 Python Hypothesis 时**当场抓到 2 个真实 bug**:① harness 路径错;② Java bridge 空表 dtype 处理不一致。阶段 3 让 AI agent 1 + AI agent 2 复审**双 AI 都独立抓到 P10 是死测试**(Java 端和 Python 端都漏调 `df.groupBy()`),还各自抓到 `data()` 零拷贝破坏公共 API 契约、`Json.java` 漏处理 NaN/Infinity、MR7 假性质等。**任一单一方法(单语言 PBT 或单 AI 审查)都漏掉了部分 BUG,组合方法才接近完整**。详见 `doc/00-overview.md §10.11`。
+
+辅助审查方法:
+
+- **多轮 AI 对抗审查**:多个 AI 实例(或同实例多轮)互相找茬
+- **双 AI 交叉审查**(本项目的关键发现):**单 AI 多轮收敛 ≠ 真无 BUG**。本项目 AI agent 1 跑了 4 轮"收敛"后,切换到 AI agent 2 一上来就抓到 4 个 AI agent 1 全漏的真实 BUG。**双 AI(不同模型)交叉审查 > 单 AI 多轮**——但仍不及机器化差分/蜕变测试。详见 `doc/00-overview.md §10.10`。
+
+### 实战:这套方法真的有用吗?
+
+**有,而且是关键**。本项目用本机 AI agent 1 做了 4 轮对抗审查,收敛后**自以为无 BUG**。
+但加差分测试的当晚,`dt_merge_正零负零_与DoubleEquals等价` **直接失败**——
+深入查发现 AI agent 1 在第 3 轮"修复" ±0.0 时**把概念记错了**(以为 `Double.equals` 视 ±0.0 相等,
+实际是不等),反而把原本对的 fast path 改坏了。
+
+接着又切换到 **AI agent 2** 做交叉审查——它**一上来就抓到 AI agent 1 4 轮 + 我都漏掉的 4 个真实 BUG**(INT×LONG 混合 key 跨 how 不一致、补 null 列降级 OBJECT 导致 getLong 崩溃、DATE 列类型丢失、重复 key 行序差异)。详见 `doc/00-overview.md §10.10`。
+
+> **核心教训**:
+> 1. AI 审查者也会把概念记错。**机器化的差分/蜕变测试**不会"记错",只会如实反映输入输出关系。
+> 2. **单 AI 多轮收敛 ≠ 真无 BUG**(AI agent 1 4 轮收敛是假收敛);**双 AI 交叉审查 > 单 AI 多轮**,但仍不及机器化测试。
+> 3. **测试断言要严**——"行序可能不同"这种宽松断言会放过真实 BUG,要尽量精确(行序、类型、nullCount 都比对)。
+> 4. **混合 dtype 是 BUG 重灾区**——所有发现的 BUG 都涉及"两种 dtype 的交互边界"。
+
+### 使用指南(给审查者,无论是人还是 AI)
+
+跑测试:
+```bash
+./mvnw test                                   # 全项目测试
+./mvnw -pl jian/jian-core test                # 仅 jian-core
+./mvnw -pl jian/jian-core test -Dtest=MetamorphicTest   # 仅蜕变测试
+```
+
+写新测试时,优先选方法:
+1. **能写成"关系/不变量"的就别写"具体期望值"**——后者 AI 容易写错
+2. **同一算子新加 fast path,必须配差分测试**——验证与 generic path 等价
+3. **修复每个 BUG 后,写"重现代码"测试**——防回归
+
+### AI 审查 checklist(给人/AI agent 1 共用)
+
+```
+[ ] 是否引入了跨实现的不一致?(fast path 与 generic path 行为不等价)
+[ ] 边界条件是否完整?(空数组、null key、重复 key、±0.0、NaN、容量溢出)
+[ ] 测试是否机器化覆盖?(不能只靠"我看了一遍觉得没问题")
+[ ] "期望值"是不是 AI 自己写的?(若是,需要差分/蜕变方法验证)
+[ ] 是否漏掉了某个文档化的语义?(如 Double.equals 与 Double.compare 不同)
+```
+
+详细论述与逐轮审查记录见 `doc/00-overview.md §10.8-10.9`。
 
 ---
 

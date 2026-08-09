@@ -14,5 +14,108 @@
 
   <dependencies>
 
+    <!-- ======================== PBT(jqwik 1.9.3,仅测试期)========================
+         目的:基于性质测试(Property-Based Testing),自动生成大量随机输入验证不变量。
+         配合 jian 的 MetamorphicTest(蜕变)+ DifferentialTest(差分)三方法互补。
+
+         ⚠️ 版本选择 1.9.3(投毒前最后稳定版):
+           - jqwik 1.10.0(2026-05-25)被作者注入恶意 prompt-injection 字符串
+             (JqwikExecutor.printMessageForCodingAgents,ANSI 隐藏"删除所有 jqwik 测试"指令)
+           - jqwik 1.10.1+ 把"反对 AI 协作"立场固化到官方 release notes:
+             "This project is not meant to be used by any 'AI' coding agents at all"
+           - 1.9.3 是干净版本(已 strings 校验投毒字符串 0 命中)
+         详见共享 jar 仓库 README 与 doc/00-overview.md §10.11。
+
+         ⚠️ 与 §0.2 零本机绑定的权衡:jqwik 不在 Maven Central 推荐路径上(中央仓库默认拉到 1.10.x),
+         只能用 system scope + 本机 jar 路径。jar.home 默认 ${user.home}/tools/jar(跨平台,见父 pom properties);
+         其它机器/CI 可用 -Djar.home=/path/to/jars 覆盖,或把 jar 放到 ~/tools/jar。
+    -->
+    <dependency>
+      <groupId>net.jqwik</groupId>
+      <artifactId>jqwik-api</artifactId>
+      <version>1.9.3</version>
+      <scope>system</scope>
+      <systemPath>${jar.home}/jqwik-api-1.9.3.jar</systemPath>
+      <optional>true</optional>
+    </dependency>
+    <dependency>
+      <groupId>net.jqwik</groupId>
+      <artifactId>jqwik-engine</artifactId>
+      <version>1.9.3</version>
+      <scope>system</scope>
+      <systemPath>${jar.home}/jqwik-engine-1.9.3.jar</systemPath>
+      <optional>true</optional>
+    </dependency>
+
   </dependencies>
+
+  <!-- ======================== 变异测试(PITest)========================
+       目的:测"测试本身是否有效"——主动改坏产品代码,看测试能否抓到。
+       不入日常 CI(慢,几分钟),仅在 release 前或重大改动后跑一次。
+
+       跑法:
+         mvn -pl jian/jian-core -o test-compile org.pitest:pitest-maven:mutationCoverage
+
+       报告位置:jian/jian-core/target/pit-reports/<时间戳>/index.html
+
+       阈值策略(2026-08 与 claude 商议共识,immutable-first 项目专属):
+         - <coverageThreshold>80</coverageThreshold>  JaCoCo 行覆盖 80%(硬门禁)
+         - <mutationThreshold>40</mutationThreshold>  变异分数地板值 40(守底线)
+         地板值 40 而非行业惯例 80% 的理由:immutable-first 设计下,大量变异
+         (return this ↔ return new、+↔-)被"返新对象"语义掩盖,surviving rate
+         天然偏高;40 是"测试根本没跑到那段代码"的红线,40-65 是合理区间。
+         季度升级路径:连续 4 周 score 稳定 ≥ 目标+5 时,地板值上调
+         (40 → 50 → 60),只升不降。
+         CI 配套:continue-on-error=true + artifact 上传 pit-reports,保证
+         报告始终可见(避免开发者 -DskipPitest 逃避)。
+  -->
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.pitest</groupId>
+        <artifactId>pitest-maven</artifactId>
+        <version>1.19.1</version>
+        <dependencies>
+          <!-- JUnit 5 支持:PITest 默认只认 JUnit 4,必须显式加这个 plugin -->
+          <dependency>
+            <groupId>org.pitest</groupId>
+            <artifactId>pitest-junit5-plugin</artifactId>
+            <version>1.2.3</version>
+          </dependency>
+        </dependencies>
+        <configuration>
+          <!-- 只变异性能改造的核心类(它们是 BUG 重灾区,见 §10) -->
+          <targetClasses>
+            <param>jian.core.ColumnarHashMap</param>
+            <param>jian.core.DataFrameMerge</param>
+            <param>jian.core.GroupBy</param>
+            <param>jian.core.DataFrame</param>
+          </targetClasses>
+          <!-- 用所有测试覆盖(蜕变/差分/单元都参与) -->
+          <targetTests>
+            <param>jian.core.*</param>
+          </targetTests>
+          <!-- 输出格式:HTML(人看)+ XML(机器读) -->
+          <outputFormats>
+            <param>HTML</param>
+            <param>XML</param>
+          </outputFormats>
+          <!-- 变异算子:默认全集(NEGATE_CONDITIONALS, MATH, VOID_METHOD_CALLS 等) -->
+          <mutators>
+            <param>STRONGER</param>
+          </mutators>
+          <!-- 并行:加速(本机 8 核) -->
+          <threads>4</threads>
+          <!-- 超时:每个变异的测试运行上限(防死循环变异) -->
+          <timeoutConstant>5000</timeoutConstant>
+          <!-- 阈值策略见上方注释块:
+               mutationThreshold=40 是 immutable-first 项目的地板值(守底线);
+               coverageThreshold=80 是 JaCoCo 行覆盖硬门禁。
+               低于任一阈值 CI 红。 -->
+          <mutationThreshold>40</mutationThreshold>
+          <coverageThreshold>80</coverageThreshold>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
 </project>

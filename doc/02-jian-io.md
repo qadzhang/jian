@@ -8,7 +8,7 @@
 
 ### 1.1 一句话定位
 
-jian-io 负责 **DataFrame 与外部数据源之间的双向转换**,**大面对齐 pandas 3.x 的 IO 接口矩阵**。覆盖 pandas 全部主流格式 + 7 种数据库,冷门统计软件格式(Stata/SAS/SPSS/GBQ/Iceberg/HDF5/Feather)**留接口、不实现**。
+jian-io 负责 **DataFrame 与外部数据源之间的双向转换**,**大面对齐 pandas 3.x 的 IO 接口矩阵**。覆盖 pandas 全部主流格式 + 7 种数据库;冷门统计软件格式(Stata/SAS/SPSS/GBQ/Iceberg/HDF5/Feather)**不计划支持**(见 §1.2 Tier 2)。
 
 ### 1.2 支持的数据源全景(对齐 pandas IO 参考)
 
@@ -29,31 +29,35 @@ jian-io 负责 **DataFrame 与外部数据源之间的双向转换**,**大面对
 | 11 | `to_latex` | LaTeX 表格 | 写 | — | 纯 JDK 自写 | jian-io-latex |
 | 12 | `to_markdown` | Markdown 表格 | 写 | ✅ | 纯 JDK 自写(已含于 export) | jian-io-latex |
 
-#### 7 种 SQL 数据库(对齐用户要求)
+#### 7 种 SQL 数据库 DbType 定义(3 库真测,2026-08-09 核实)
 
-| # | 数据库 | JDBC 驱动 jar | 默认端口 | 备注 |
-|---|---|---|---|---|
-| 1 | **PostgreSQL** | `postgresql-42.7.x` | 5432 | 标准 |
-| 2 | **MySQL** | `mysql-connector-j-9.7.x` | 3306 | 注意 SSL 等参数 |
-| 3 | **Apache Doris** | 复用 MySQL 驱动 | 9030 | MySQL 协议兼容 |
-| 4 | **SQLite** | `sqlite-jdbc-3.53.x`(自带 native) | — | 文件型,动态类型 |
-| 5 | **H2** | `h2-2.4.x` | — | 内存/文件双模 |
-| 6 | **Oracle** | `ojdbc11-23.26.1.0.0`(2026-02) | 1521 | NUMBER 默认 BigDecimal |
-| 7 | **MS Access**(.mdb/.accdb) | `ucanaccess-5.x` + Jackcess + HSQLDB | — | 纯 Java |
+> **测试覆盖说明**:`DbType` 枚举定义了 7 库,但 `jian-io-sql` 集成测试**只覆盖 3 库**(H2/SQLite 默认跑,PostgreSQL `-Dtest.pg=true` 激活)。**MySQL/Doris/Oracle/Access 仅 DbType 定义,接口通用但未经 CI 验证**——用户引对应驱动 jar 后理论可用,需自验。
 
-#### Tier 2 —— 留接口、不实现(场景冷或 Java 圈无活跃库)
+| # | 数据库 | JDBC 驱动 jar | 默认端口 | CI 测试覆盖 | 备注 |
+|---|---|---|---|---|---|
+| 1 | **PostgreSQL** | `postgresql-42.7.x` | 5432 | ✅ 真测(14 测试) | `-Dtest.pg=true` 激活 |
+| 2 | **MySQL** | `mysql-connector-j-9.7.x` | 3306 | ❌ 仅 DbType | 注意 SSL 等参数 |
+| 3 | **Apache Doris** | 复用 MySQL 驱动 | 9030 | ❌ 仅 DbType | MySQL 协议兼容 |
+| 4 | **SQLite** | `sqlite-jdbc-3.53.x`(自带 native) | — | ✅ 真测(9 测试) | 文件型,动态类型 |
+| 5 | **H2** | `h2-2.4.x` | — | ✅ 真测(10 测试) | 内存/文件双模 |
+| 6 | **Oracle** | `ojdbc8-23.6.0.24.10`(2024;选 ojdbc8 兼容 Oracle 12c,见 doc/00 §2.3) | 1521 | ❌ 仅 DbType | NUMBER 默认 BigDecimal |
+| 7 | **MS Access**(.mdb/.accdb) | `ucanaccess-5.x` + Jackcess + HSQLDB | — | ❌ 仅 DbType | 纯 Java |
 
-| pandas 对应 | 状态 | 理由 |
-|---|---|---|
-| `read_feather` / `to_feather` | 留接口,抛 `UnsupportedFormatException` | Java 圈无成熟活跃库(Arrow 的 Feather 是 Python 优先) |
-| `read_stata` / `to_stata` | 同上 | 统计软件格式,Java 圈冷门 |
-| `read_sas` | 同上 | 同上 |
-| `read_spss` | 同上 | 同上 |
-| `read_gbq` / `to_gbq`(BigQuery) | 同上 | 需 Google Cloud SDK,场景特殊 |
-| `read_iceberg` / `to_iceberg` | 同上 | Apache Iceberg 表格式,需 Spark/Flink 生态 |
-| `read_hdf` / `HDFStore` | 同上 | Java HDF5 库(jhdf)活跃度低且 API 不稳 |
+#### Tier 2 —— 不计划支持(与 jian 轻量 DataFrame 定位不符)
 
-> **留接口策略**:统一抽象 `DataFrameReader` / `DataFrameWriter` 接口,Tier 2 格式各占一个空实现,方法体抛 `UnsupportedFormatException("Feather 暂未实现,见 references/format-status.md")`,并附文档页列出"为什么不实现 + 未来如何补"。这样 API 表面对齐 pandas,但 jar 不膨胀。
+jian-io 当前支持上方 Tier 1 的 10 种格式。以下 pandas 也有的格式**不计划支持**(不留接口、不留 stub):
+
+| pandas 对应 | 不支持理由 |
+|---|---|
+| `read_feather` / `to_feather` | Java 圈无成熟活跃库(Arrow 的 Feather 是 Python 优先);未来如有跨语言需求,优先 Arrow IPC |
+| `read_stata` / `to_stata` | 统计软件格式,Java 圈冷门 |
+| `read_sas` | 同上 |
+| `read_spss` | 同上 |
+| `read_gbq` / `to_gbq`(BigQuery) | 需 Google Cloud SDK,场景特殊 |
+| `read_iceberg` / `to_iceberg` | Apache Iceberg 表格式,需 Spark/Flink 生态 |
+| `read_hdf` / `HDFStore` | 格式规范庞大;Java 端只有 jhdf 可用,依赖 native lib,违反「纯 Java」原则 |
+
+> **决策**(2026-08-09 与 AI agent2 共识):早期文档曾写"留接口 + stub 抛 `UnsupportedFormatException`",但代码侧从未实现 stub 类与异常类,**这是空头承诺,误导用户以为"支持但需装包"**。现明确改为"不支持",更诚实。pandas 自己对这些格式也是"直接不支持"(无 stub)。如用户有强需求,走 GitHub Issue 重新评估。
 
 ### 1.3 职责边界
 
@@ -92,39 +96,51 @@ commons poi jackson jsoup JDK 各jdbc parquet orc 自写 自写 JDK
 
 ## 2. 顶层 API 设计
 
+> **⚠️ API 风格说明(2026-08-09 与 AI agent2 共识)**:
+> jian 的 **DataFrame 变换**(filter/sortBy/select/merge 等)是**链式实例方法**(返新 DataFrame,immutable-first);
+> 但 **IO 终端**(读/写文件、数据库、剪贴板)是**静态方法收口**(`Jian.readCsv(path)` / `Jian.toCsv(df, path)` / `Csv.write(df, path)`),**不是** `df.toCsv()` 实例方法。
+> 原因:IO 属于 jian-io-* 叶子模块,DataFrame 在 jian-core,core 不能反依赖叶子(模块单向依赖红线,见 AGENTS.md §4.1)。
+> **用户实际写法**(变换链 + 静态终端):
+> ```java
+> Jian.toCsv(df.filter("age > 18").sortBy("name").select("name","age"), "out.csv");
+> ```
+> 本分册下方示例中如出现 `df.toCsv(...)` / `df.readXxx()` 等链式写法,**均为概念示意**,实际请按上述"变换链 + 静态终端"风格调整。
+
 ### 2.1 读入(对齐 pandas 命名)
 
 > ⚠️ 下方代码块为**需求示意写法**(伪代码,说明能力);**实际 API 统一为 `Xxx.read(path).配置().go()`**,可编译的完整示例见 §9.2 偏差表与本目录 `index.html` 门户的方法卡。
 
 ```java
 // === 文本类 ===
-Jian.readCsv("data.csv").delimiter(',').header(true).encoding("UTF-8").read();
-Jian.readTable("data.tsv").delimiter('\t').read();          // = readCsv 的 TSV 别名
-Jian.readFwf("data.txt").widths(10, 20, 5).read();          // 定宽
+// 门面:直接返回 DataFrame(默认逗号分隔)
+DataFrame df = Jian.readCsv("data.csv");
+// builder 形式(改分隔符/编码):Csv.read(path).delimiter(...).encoding(...).go()
+DataFrame tsv = Csv.read("data.tsv").delimiter('\t').go();
+DataFrame fwf = Jian.readFwf("data.txt", 10, 20, 5);          // 定宽,宽度作 varargs
 
 // === Excel(支持 xls/xlsx + 多 sheet)===
-List<String> sheets = Jian.ExcelFile("data.xlsx").sheetNames();
-DataFrame s1 = Jian.readExcel("data.xlsx").sheet("Sheet1").header(true).range("A1:D100").read();
+List<String> sheets = Excel.sheetNames("data.xlsx");          // 列 sheet 名(无 Jian.ExcelFile 门面)
+DataFrame s1 = Jian.readExcel("data.xlsx");                   // 默认读第 0 个 sheet
 
 // === JSON(支持 pandas 全部 orient)===
-Jian.readJson("data.json").orient(JsonOrient.RECORDS).read();   // records / columns / values / index / split
-DataFrame flat = Jian.jsonNormalize(jsonStr, "list_path");       // 嵌套展平
+DataFrame j = Jian.readJson("data.json");                     // 默认 RECORDS orient;改 orient 用 Json.read(path).orient(...).go()
+DataFrame flat = Jian.jsonNormalize(jsonStr, "list_path");    // 嵌套展平
 
-// === HTML(从 HTML 文件/URL 提取所有 <table>)===
-List<DataFrame> tables = Html.read("page.html").match(".*用户.*").go();  // 实际 API:builder + go()
-List<DataFrame> all = Jian.readHtml("page.html");                        // 门面:直接返回全部表
+// === HTML(从 HTML 文件提取所有 <table>)===
+List<DataFrame> all = Jian.readHtml("page.html");             // 门面:直接返回全部表
+// builder 形式(按正则筛表):Html.readAll(path) 后用 stream filter
 
 // === XML ===
-Jian.readXml("data.xml").xpath("//row").read();
+DataFrame x = Jian.readXml("data.xml");                       // 默认 rootName="rows"/rowName="row"
 
 // === SQL(7 数据库通用)===
-Jian.readSql(conn).query("SELECT * FROM users WHERE age > ?").params(18).read();
-Jian.readSqlTable(conn, "users").schema("public").read();
-Jian.readSqlQuery(conn, "SELECT id,name FROM users").read();
+DataFrame u = Jian.readSql(conn, "SELECT * FROM users WHERE age > ?", 18);   // sql + params varargs
+DataFrame t = Jian.readSqlTable(conn, "users");               // 整表读(无 schema 链)
+DataFrame q = Jian.readSqlQuery(conn, "SELECT id,name FROM users");
 
 // === 列式二进制 ===
-Jian.readParquet("data.parquet").columns("id","name").read();
-Jian.readOrc("data.orc").read();
+DataFrame p = Jian.readParquet("data.parquet");
+DataFrame o = Jian.readOrc("data.orc");
 
 // === 序列化 ===
 Jian.readPickle("data.pkl");
@@ -135,38 +151,50 @@ DataFrame clip = Jian.readClipboard();
 
 ### 2.2 写出(对齐 pandas)
 
-```java
-df.toCsv("out.csv").delimiter(',').header(true).encoding("UTF-8").write();
+**实际写法**(静态终端,见 §2 顶部 API 风格说明):
 
-// Excel 多 sheet —— ExcelWriter 上下文(对齐 pandas)
-try (ExcelWriter writer = Jian.ExcelWriter("out.xlsx")) {
-    df1.toExcel(writer, "Sheet1").write();
-    df2.toExcel(writer, "Sheet2").freezeHeader(true).write();
+```java
+// CSV(默认逗号;要改分隔符/编码用 Csv.write builder)
+Jian.toCsv(df, "out.csv");
+Csv.write(df, "out.tsv").delimiter('\t').encoding("UTF-8").go();   // builder 形式,终结用 .go()
+
+// Excel 多 sheet(ExcelMultiWriter)
+try (Excel.ExcelMultiWriter w = Excel.writer("out.xlsx")) {
+    w.write(df1, "Sheet1");
+    w.write(df2, "Sheet2");
 }
 
-df.toJson("out.json").orient(JsonOrient.RECORDS).dateFormat("yyyy-MM-dd").write();
-df.toHtml("out.html").index(true).border(1).classes("jian-table").write();
-df.toXml("out.xml").root("rows").row("row").write();
-df.toSql(conn, "users").mode(CREATE_OR_REPLACE).ifExists("replace").batchSize(1000).write();
-df.toParquet("out.parquet").compression(SNAPPY).write();
-df.toOrc("out.orc").compression(ZLIB).write();
-df.toPickle("out.pkl");
-df.toClipboard();
+Jian.toJson(df, "out.json");
+Jian.toHtml(df, "out.html");                  // HTML 渲染经 jian-export HtmlRenderer
+Jian.toXml(df, "out.xml");
+Jian.toSql(df, conn, "users");                                       // 默认 CREATE_OR_REPLACE
+Jian.toSql(df, conn, "users", Sql.Mode.FAIL_IF_EXISTS);              // Mode 位置参数(非链式)
+Jian.toParquet(df, "out.parquet");
+Jian.toOrc(df, "out.orc");
+Jian.toPickle(df, "out.pkl");
+Jian.toClipboard(df);
 
-df.toLatex("out.tex").caption("用户表").label("tab:users").index(false).write();
-df.toMarkdown("out.md").align(AUTO).write();
+Jian.toLatex(df, "out.tex");
+Jian.toMarkdown(df, "out.md");
 ```
 
-### 2.3 大表流式(防 OOM)
+> **注**:`df.toCsv(...)` / `df.toSql(...).ifExists("replace").batchSize(1000)` 等链式写法**在早期文档出现过,但 jian 从未实现**。实际请用上方的 `Jian.toXxx(df, ...)` 静态调用或 `Csv.write(df, path).delimiter(...).go()` builder(终结 `.go()`)。Mode 是**位置参数** `Sql.Mode.CREATE_OR_REPLACE`,不是 `.mode(...)` 链式。
+
+### 2.3 大表流式(防 OOM)—— v2 规划(未实现)
+
+> **状态**:`DataFrameIterator` / `chunkSize` / `iterate()` / `batchIndex()` 等 API **v2 规划,代码侧从未实现**(2026-08-09 核验)。
+> 当前 jian 的 IO 都是**全量加载**(`Jian.readParquet(path)` 返回完整 DataFrame)。处理超大文件时,建议先用外部工具切分,或等 v2 流式 API 落地。
+> 下方伪代码仅作 v2 设计示意,**勿抄,抄了会编译失败**(类不存在)。
 
 ```java
-try (DataFrameIterator it = Jian.readParquet("big.parquet")
+// v2 设计示意(未实现)
+try (DataFrameIterator it = Jian.readParquet("big.parquet")   // ← 未实现
         .columns("id","name")
         .chunkSize(10_000)
         .iterate()) {
     while (it.hasNext()) {
         DataFrame chunk = it.next();
-        chunk.filter(...).toParquet("out_" + it.batchIndex() + ".parquet").write();
+        Jian.toParquet(chunk.filter("age > 18"), "out_" + it.batchIndex() + ".parquet");
     }
 }
 ```
@@ -187,7 +215,7 @@ try (DataFrameIterator it = Jian.readParquet("big.parquet")
 
 - **依赖**:`org.apache.poi:poi-ooxml:5.5.1`(**非 uber**,按原生 artifact 引用,见 AGENTS.md §2.5)。POI 的传递依赖(`poi`、`xmlbeans`、`commons-compress`、`commons-collections4` 等)由 Maven 自动拉取,不手动整合。
 - 读:`WorkbookFactory.create()` 自动识别 xls/xlsx;多 sheet 通过 `ExcelFile` 枚举。
-- 写:`XSSFWorkbook`(xlsx)/`HSSFWorkbook`(xls);大文件用 `SXSSFWorkbook`(流式)。
+- 写:**仅 `XSSFWorkbook`(.xlsx)**(2026-08-09 经源码核实);`.xls` 写(HSSF)与 `SXSSFWorkbook` 流式大文件写留 v2(XSSF 覆盖 95% 场景)。
 - `ExcelWriter`:封装 workbook 生命周期,支持多 DataFrame 写不同 sheet。
 - 类型映射:CellType → dtype(NUMERIC→Double、STRING→String、BOOLEAN→Bool、FORMULA→求值)。
 - **样式/条件格式/图表**:由 `jian-export` 模块的 Styler 子系统统一处理(见 04-export),Excel 是输出目标之一。
@@ -247,7 +275,13 @@ try (DataFrameIterator it = Jian.readParquet("big.parquet")
 | BLOB/BINARY | 默认 skip(warning) |
 | 其他 | ObjectColumn |
 
-> 各数据库特有类型(PG JSONB、Oracle NUMBER、SQLite 动态类型、Access 的 OLE)通过 dialect 表查 JDBC 通用类型再映射,见 `references/sql-dialect.md`。
+> 各数据库特有类型(PG JSONB、Oracle NUMBER、SQLite 动态类型、Access 的 OLE)通过 dialect 表查 JDBC 通用类型再映射。具体方言差异(2026-08-09 修订,原指向不存在的 `references/sql-dialect.md` 已合并到本处):
+> - **PostgreSQL**:JSONB/JSON → String;BIGSERIAL → LONG;TIMESTAMPTZ → LocalDateTime(时区信息丢失,UTC 化);NUMERIC(p,s) → DOUBLE(精度可能损失,大数值建议用 String)。
+> - **MySQL**:TINYINT(1) → BOOL(约定);DATETIME → LocalDateTime;JSON → String;ENUM/SET → String。
+> - **Oracle**:NUMBER → DOUBLE;VARCHAR2 → String(长度 ≤4000);CLOB → String;DATE 含时分秒 → LocalDateTime(Oracle DATE 与 SQL 标准 DATE 不同);TIMESTAMP WITH LOCAL TIME ZONE → LocalDateTime。
+> - **SQLite**:动态类型(TYPE AFFINITY)按实际存储值推断;INTEGER → LONG;REAL → DOUBLE;TEXT → String;BLOB → byte[]。
+> - **H2**:与 PG 高度相似;BOOLEAN → BOOL;BIGINT → LONG;CLOB → String;BLOB → byte[]。
+> - **Access**(若通过 UCanAccess):OLE → byte[];MEMO → String;YES/NO → BOOL。
 
 #### 7 数据库方言差异
 
@@ -290,15 +324,13 @@ try (DataFrameIterator it = Jian.readParquet("big.parquet")
 ### 3.9 Pickle(自写 jian-io-pickle 格式,不依赖 Kryo/JDK 序列化)
 
 > **关键决策**:不用 JDK 自带序列化(已被 JEP 标记废弃,不安全);不用 Kryo(活跃但有 CVE-2026-41862 反序列化漏洞)。
-> 自写一套 **基于魔数头 + JSON schema + 列式二进制** 的格式,可控、安全、可跨语言。
+> 自写一套 **基于魔数头 + JSON records 内核 + CRC32 校验** 的格式,可控、安全、可跨语言。
+> **注(2026-08-09 经源码核实)**:`Pickle.java` 实测 `MAGIC = 0x4A504B32`("JPK2"),前版二进制调试困难,v2 改为 JSON 内核;早前文档写 "JPK1"/"schema+列式二进制" 是 v1 残留,已修正。
 
-- **格式定义**(自定义 `.jpk` 格式):
+- **格式定义**(自定义 `.jpk` 格式 v2):
   ```
-  [魔数 4字节 "JPK1"]
-  [schema JSON 长度 4字节][schema JSON:columns/dtypes/index]
-  [列1二进制:类型标记+长度+数据]
-  [列2二进制:...]
-  ...
+  [魔数 4字节 "JPK2"]
+  [records JSON 长度 4字节][records JSON:每行一个 JSON 对象,含所有列]
   [CRC32 校验 4字节]
   ```
 - 读写:序列化用 `DataOutputStream`;反序列化用 `DataInputStream` + 校验魔数与 CRC。
@@ -368,7 +400,7 @@ try (DataFrameIterator it = Jian.readParquet("big.parquet")
 | Parquet/ORC schema 与 DataFrame dtype 冲突 | 优先 DataFrame dtype,做安全转换 |
 | Pickle 文件魔数/CRC 校验失败 | 抛 `IOException("文件损坏或非 jian-io-pickle 格式")` |
 | 剪贴板命令不存在 | 降级为内存变量 + warning,不崩溃 |
-| Tier 2 格式调用 | 抛 `UnsupportedFormatException` + 文档指引 |
+| Tier 2 格式调用 | 无对应 API,Tier 2 格式(Feather/Stata/SAS/SPSS/GBQ/Iceberg/HDF5)不计划支持(见 §1.2) |
 
 ---
 
@@ -452,7 +484,7 @@ CSV/JSON 读回的值统一为字符串,经 `Schema.infer` 推断:
 - XML XPath 选行、`attributeMode` 属性列模式:未实现(仅 rowName 递归查找)。
 - Parquet/ORC 压缩参数(compression codec)可配:未实现(默认 SNAPPY)。
 - HTML colspan/rowspan 合并单元格展开:未实现(纯取单元格文本)。
-- Tier 2 格式(Feather/Stata/SAS/SPSS/GBQ/Iceberg/HDF5)与 `UnsupportedFormatException`:留接口不实现。
+- Tier 2 格式(Feather/Stata/SAS/SPSS/GBQ/Iceberg/HDF5):**不计划支持**(2026-08-09 决策,见 §1.2;原"留接口 + stub 抛 UnsupportedFormatException"是空头承诺,代码侧从未实现)。
 
 ### 9.6 安全与健壮性修复(2026-08-02 全项目审查)
 
@@ -465,5 +497,5 @@ CSV/JSON 读回的值统一为字符串,经 `Schema.infer` 推断:
 
 ---
 
-*本分册独立,与 01/03-06 无耦合。覆盖 pandas 主流 IO 接口矩阵;冷门统计格式留接口不实现。*
+*本分册独立,与 01/03-06 无耦合。覆盖 pandas 主流 IO 接口矩阵;冷门统计格式(Feather/Stata/SAS/SPSS/GBQ/Iceberg/HDF5)不计划支持(见 §1.2)。*
 *M3 + M4:全 12 格式(CSV/Excel/JSON/HTML/XML/SQL/Parquet/Pickle/Clipboard/LaTeX;ORC 完整实现(orc-core 1.9.5 + hadoop-client-runtime + protobuf))实现完成于 2026-08-01;2026-08-02 安全审查后 72 个 io 测试全过。*

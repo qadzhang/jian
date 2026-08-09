@@ -1,5 +1,6 @@
 package jian.sql.engine;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.sql.Connection;
@@ -9,6 +10,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class EngineTest {
+
+    // 测试用占位密码的 system property key。
+    // 历史 bug:之前硬编码 "secret123" 并 setProperty 后从未清理,污染 JVM 全局。
+    // 修复后:测试用自描述占位符 PLACEHOLDER_NOT_A_SECRET(不是凭据,静态扫描会识别),
+    //       真实凭据通过环境变量 DB_TEST_PW 注入;setProperty 后由 @AfterEach 清理。
+    private static final String TEST_PW_KEY = "DB_TEST_PW";
+    private static final String TEST_PW_PLACEHOLDER = "PLACEHOLDER_NOT_A_SECRET";
+
+    @AfterEach
+    void clearTestSystemProperty() {
+        // 修复 §5.1:setProperty 后必须 clearProperty,避免污染同 JVM 后续测试
+        System.clearProperty(TEST_PW_KEY);
+    }
 
     private Engine h2Engine() {
         // H2 内存库
@@ -100,10 +114,15 @@ class EngineTest {
 
     @Test
     void parseUrl环境变量占位() {
-        System.setProperty("DB_TEST_PW", "secret123");
+        // 测试目的:验证 ${DB_TEST_PW} 占位符替换逻辑(纯解析,不连真 DB)。
+        // PLACEHOLDER_NOT_A_SECRET 是自描述占位符,不是凭据 —— 静态扫描工具会识别。
+        // 真实凭据通过环境变量 DB_TEST_PW 注入(本地无 env 时用此占位符,测试仍能跑)。
+        String placeholder = TEST_PW_PLACEHOLDER;
+        String pw = System.getenv().getOrDefault(TEST_PW_KEY, placeholder);
+        System.setProperty(TEST_PW_KEY, pw);
         Engine.ParsedUrl p = Engine.parseUrl("mysql://root:${DB_TEST_PW}@localhost/test");
         assertThat(p.dbType()).isEqualTo(DbType.MYSQL);
-        assertThat(p.config().password).isEqualTo("secret123");
+        assertThat(p.config().password).isEqualTo(pw);
     }
 
     @Test

@@ -32,13 +32,24 @@ public final class Matrix {
 
     private Matrix(RealMatrix real) { this.real = real; }
 
-    /** 从二维数组构造(拷贝入参)。 */
+    /**
+     * 从二维数组构造(拷贝入参)。
+     *
+     * @param data double[][] 二维数组,data[i][j] 为第 i 行第 j 列元素;约束:不能为 null;行长度可不等(按实际)
+     * @return Matrix 包装的矩阵对象
+     * @throws IllegalArgumentException 当 data 为 null 时抛出
+     */
     public static Matrix of(double[][] data) {
         if (data == null) throw new IllegalArgumentException("data 不能为 null");
         return new Matrix(new Array2DRowRealMatrix(data, true));
     }
 
-    /** 单位矩阵 n×n。 */
+    /**
+     * 单位矩阵 n×n。
+     *
+     * @param n int 矩阵维度,约束:n &gt;= 0
+     * @return Matrix n×n 单位矩阵(对角线为 1,其余为 0)
+     */
     public static Matrix identity(int n) {
         double[][] d = new double[n][n];
         for (int i = 0; i < n; i++) d[i][i] = 1.0;
@@ -47,48 +58,106 @@ public final class Matrix {
 
     // ======================== 属性 ========================
 
+    /**
+     * @return int 矩阵行数
+     */
     public int rows() { return real.getRowDimension(); }
+
+    /**
+     * @return int 矩阵列数
+     */
     public int cols() { return real.getColumnDimension(); }
+
+    /**
+     * @return int[] 形状数组 [rows, cols]
+     */
     public int[] shape() { return new int[]{rows(), cols()}; }
 
+    /**
+     * @param i int 行索引(0 基),约束:0 &lt;= i &lt; rows()
+     * @param j int 列索引(0 基),约束:0 &lt;= j &lt; cols()
+     * @return double 第 (i, j) 位置的元素值
+     */
     public double get(int i, int j) { return real.getEntry(i, j); }
 
+    /**
+     * @return double[][] 矩阵数据的二维数组拷贝
+     */
     public double[][] toArray() { return real.getData(); }
 
     // ======================== 运算(返回新 Matrix)========================
 
-    /** 矩阵乘 A·B(对齐 numpy @ / np.matmul)。 */
+    /**
+     * 矩阵乘 A·B(对齐 numpy @ / np.matmul)。
+     *
+     * @param other Matrix 右乘矩阵,约束:不能为 null;要求 other.rows() == this.cols()
+     * @return Matrix 乘积矩阵(this × other)
+     */
     public Matrix mul(Matrix other) {
         return new Matrix(real.multiply(other.real));
     }
 
-    /** 加 A+B(逐元素,形状须一致)。 */
+    /**
+     * 加 A+B(逐元素,形状须一致)。
+     *
+     * @param other Matrix 加数矩阵,约束:不能为 null;要求与 this 形状一致
+     * @return Matrix 逐元素相加结果
+     */
     public Matrix add(Matrix other) {
         return new Matrix(real.add(other.real));
     }
 
-    /** 减 A-B(逐元素,形状须一致)。 */
+    /**
+     * 减 A-B(逐元素,形状须一致)。
+     *
+     * @param other Matrix 减数矩阵,约束:不能为 null;要求与 this 形状一致
+     * @return Matrix 逐元素相减结果
+     */
     public Matrix sub(Matrix other) {
         return new Matrix(real.subtract(other.real));
     }
 
-    /** 标量乘。 */
+    /**
+     * 标量乘。
+     *
+     * @param s double 标量系数,取值范围:任意实数
+     * @return Matrix 每个元素乘 s 后的新矩阵
+     */
     public Matrix mul(double s) {
         return new Matrix(real.scalarMultiply(s));
     }
 
-    /** 转置(对齐 numpy .T)。 */
+    /**
+     * 转置(对齐 numpy .T)。
+     *
+     * @return Matrix 转置矩阵
+     */
     public Matrix transpose() {
         return new Matrix(real.transpose());
     }
 
-    /** numpy 风格别名:a.T == a.transpose()。 */
+    /**
+     * numpy 风格别名:a.T == a.transpose()。
+     *
+     * @return Matrix 转置矩阵
+     */
     public Matrix T() { return transpose(); }
 
-    /** numpy 风格别名:a @ b 矩阵乘法 == a.mul(b)。 */
+    /**
+     * numpy 风格别名:a @ b 矩阵乘法 == a.mul(b)。
+     *
+     * @param other Matrix 右乘矩阵,约束:不能为 null;要求 other.rows() == this.cols()
+     * @return Matrix 乘积矩阵
+     */
     public Matrix matmul(Matrix other) { return mul(other); }
 
-    /** 取第 i 行(返回拷贝,对齐 numpy a[i, :])。 */
+    /**
+     * 取第 i 行(返回拷贝,对齐 numpy a[i, :])。
+     *
+     * @param i int 行索引(0 基),约束:0 &lt;= i &lt; rows()
+     * @return double[] 第 i 行元素的拷贝数组
+     * @throws IllegalArgumentException 当 i 超出 [0, rows()) 范围时抛出
+     */
     public double[] row(int i) {
         if (i < 0 || i >= rows()) {
             throw new IllegalArgumentException("行号 " + i + " 超出范围 [0, " + rows() + ")");
@@ -101,9 +170,10 @@ public final class Matrix {
     /**
      * 解线性方程组 Ax = b(对齐 np.linalg.solve)。
      *
-     * @param b 右端向量,长度须等于 rows()
-     * @return 解向量 x
-     * @throws SingularMatrixException A 奇异不可逆时,建议改用 {@link #leastSquares}
+     * @param b double[] 右端向量,约束:b.length 须等于 rows();this 须为方阵
+     * @return double[] 解向量 x(长度 = cols())
+     * @throws IllegalArgumentException                当 b 长度不等于 rows() 或 this 非方阵时抛出
+     * @throws SingularMatrixExceptionWithHint        A 奇异不可逆时抛出,建议改用 {@link #leastSquares}
      */
     public double[] solve(double[] b) {
         if (b.length != rows()) {
@@ -123,6 +193,10 @@ public final class Matrix {
 
     /**
      * 行列式(对齐 np.linalg.det)。要求方阵。
+     *
+     * @return double 行列式值
+     * @throws IllegalArgumentException                当 this 非方阵时抛出
+     * @throws SingularMatrixExceptionWithHint        矩阵数值奇异时可能抛出
      */
     public double determinant() {
         if (!isSquare()) {
@@ -134,6 +208,10 @@ public final class Matrix {
 
     /**
      * 逆矩阵(对齐 np.linalg.inv)。要求方阵非奇异。
+     *
+     * @return Matrix 逆矩阵
+     * @throws IllegalArgumentException                当 this 非方阵时抛出
+     * @throws SingularMatrixExceptionWithHint        矩阵奇异不可逆时抛出
      */
     public Matrix inverse() {
         if (!isSquare()) {
@@ -151,8 +229,10 @@ public final class Matrix {
      * 最小二乘解(对齐 np.linalg.lstsq)。
      * <p>解超定方程 Ax ≈ b,返回使 ||Ax-b||² 最小的 x。
      *
-     * @param b 右端向量,长度须等于 rows()
-     * @return 最小二乘解 x(长度 = cols())
+     * @param b double[] 右端向量,约束:b.length 须等于 rows()
+     * @return double[] 最小二乘解 x(长度 = cols())
+     * @throws IllegalArgumentException                当 b 长度不等于 rows() 时抛出
+     * @throws SingularMatrixExceptionWithHint        正规方程 AᵀA 奇异(通常因列共线性)时抛出
      */
     public double[] leastSquares(double[] b) {
         if (b.length != rows()) {
@@ -187,6 +267,10 @@ public final class Matrix {
      * 带提示的奇异矩阵异常:把 Commons Math 的裸异常包装成带中文建议。
      */
     public static final class SingularMatrixExceptionWithHint extends RuntimeException {
+        /**
+         * @param rows int 矩阵行数(用于错误提示)
+         * @param cols int 矩阵列数(用于错误提示)
+         */
         public SingularMatrixExceptionWithHint(int rows, int cols) {
             super("矩阵奇异(r=" + rows + ", c=" + cols + "),无法求逆/解;"
                     + "若为超定方程请用 leastSquares;若为数据共线性,请去冗余列");

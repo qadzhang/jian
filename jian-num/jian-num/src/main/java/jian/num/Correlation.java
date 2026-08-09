@@ -28,6 +28,11 @@ public final class Correlation {
 
     /**
      * 协方差(样本,ddof=1,对齐 np.cov 默认)。
+     *
+     * @param x double[] 第一变量观测序列,约束:不能为 null;可含 NaN(配对剔除);长度须与 y 一致
+     * @param y double[] 第二变量观测序列,约束:不能为 null;可含 NaN(配对剔除);长度须与 x 一致
+     * @return double 样本协方差;正值正相关,负值负相关
+     * @throws IllegalArgumentException 当 x/y 为 null、长度不一致、或有效配对样本数 &lt; 3 时抛出
      */
     public static double cov(double[] x, double[] y) {
         double[][] pair = pairFilterNaN(x, y);
@@ -37,6 +42,11 @@ public final class Correlation {
     /**
      * 皮尔逊相关系数(对齐 np.corrcoef / scipy.stats.pearsonr)。
      * <p>取值 [-1, 1],1=完全正相关,-1=完全负相关,0=无线性相关。
+     *
+     * @param x double[] 第一变量观测序列,约束:不能为 null;可含 NaN(配对剔除);长度须与 y 一致
+     * @param y double[] 第二变量观测序列,约束:不能为 null;可含 NaN(配对剔除);长度须与 x 一致
+     * @return double 皮尔逊相关系数,取值范围 [-1, 1]
+     * @throws IllegalArgumentException 当 x/y 为 null、长度不一致、或有效配对样本数 &lt; 3 时抛出
      */
     public static double pearson(double[] x, double[] y) {
         double[][] pair = pairFilterNaN(x, y);
@@ -46,6 +56,11 @@ public final class Correlation {
     /**
      * 斯皮尔曼秩相关系数(对齐 scipy.stats.spearmanr)。
      * <p>对非线性单调关系也敏感,对离群点更稳健。
+     *
+     * @param x double[] 第一变量观测序列,约束:不能为 null;可含 NaN(配对剔除);长度须与 y 一致
+     * @param y double[] 第二变量观测序列,约束:不能为 null;可含 NaN(配对剔除);长度须与 x 一致
+     * @return double 斯皮尔曼秩相关系数,取值范围 [-1, 1]
+     * @throws IllegalArgumentException 当 x/y 为 null、长度不一致、或有效配对样本数 &lt; 3 时抛出
      */
     public static double spearman(double[] x, double[] y) {
         double[][] pair = pairFilterNaN(x, y);
@@ -55,8 +70,8 @@ public final class Correlation {
     /**
      * 协方差矩阵(对齐 np.cov(matrix.T))。
      *
-     * @param matrix 列优先存于 double[][] 的每行(即 matrix[i] 是第 i 个变量的观测序列),
-     *               返回 k×k 协方差矩阵,k = matrix.length
+     * @param matrix double[][] 二维数组,matrix[i] 是第 i 个变量的观测序列;约束:不能为 null;行长度可不一致(按各对计算);可含 NaN
+     * @return double[][] k×k 对称协方差矩阵,k = matrix.length;对角线为各变量方差
      */
     public static double[][] covarianceMatrix(double[][] matrix) {
         int k = matrix.length;
@@ -73,6 +88,9 @@ public final class Correlation {
 
     /**
      * 相关矩阵(对齐 np.corrcoef)。
+     *
+     * @param matrix double[][] 二维数组,matrix[i] 是第 i 个变量的观测序列;约束:不能为 null;可含 NaN
+     * @return double[][] k×k 对称相关矩阵,k = matrix.length;对角线恒为 1.0
      */
     public static double[][] correlationMatrix(double[][] matrix) {
         int k = matrix.length;
