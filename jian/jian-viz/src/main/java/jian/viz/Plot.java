@@ -64,8 +64,9 @@ public final class Plot {
      * @throws IllegalStateException 当 xCol/yCol 不是数值列时抛出
      */
     public static XYChart line(DataFrame df, String xCol, String yCol) {
-        List<Double> xs = numericColumn(df, xCol);
-        List<Double> ys = numericColumn(df, yCol);
+        // 成对收集(任一侧缺失整行跳过,两列恒等长)
+        List<Double> xs = new ArrayList<>(), ys = new ArrayList<>();
+        pairedNumeric(df, xCol, yCol, xs, ys);
         XYChart chart = new XYChartBuilder().width(800).height(600)
                 .title(yCol + " vs " + xCol).xAxisTitle(xCol).yAxisTitle(yCol).build();
         chart.addSeries(yCol, new ArrayList<>(xs), new ArrayList<>(ys));
@@ -82,11 +83,32 @@ public final class Plot {
      * @throws IllegalStateException 当 xCol 或任一 yCol 不是数值列时抛出
      */
     public static XYChart line(DataFrame df, String xCol, String... yCols) {
-        List<Double> xs = numericColumn(df, xCol);
+        // x 或任一 y 缺失 → 整行跳过(全列对齐过滤):
+        // 因为逐列独立跳 NaN 会让含缺失的 y 列长度短于 xs 而崩 XChart,
+        // 所以保证每条 series 与 xs 等长
+        Column xc = df.getColumn(xCol);
+        if (!xc.dtype().isNumeric()) throw new IllegalStateException(MISSING_MSG + xc.dtype() + "(列 \"" + xCol + "\")");
+        List<Column> ycs = new ArrayList<>();
+        for (String y : yCols) {
+            Column yc = df.getColumn(y);
+            if (!yc.dtype().isNumeric()) throw new IllegalStateException(MISSING_MSG + yc.dtype() + "(列 \"" + y + "\")");
+            ycs.add(yc);
+        }
+        List<Double> xs = new ArrayList<>();
+        List<List<Double>> yss = new ArrayList<>();
+        for (String y : yCols) yss.add(new ArrayList<>());
+        for (int i = 0; i < df.rowCount(); i++) {
+            if (xc.isNull(i)) continue;
+            boolean anyMissing = false;
+            for (Column yc : ycs) if (yc.isNull(i)) { anyMissing = true; break; }
+            if (anyMissing) continue;
+            xs.add(xc.getDouble(i));
+            for (int k = 0; k < ycs.size(); k++) yss.get(k).add(ycs.get(k).getDouble(i));
+        }
         XYChart chart = new XYChartBuilder().width(800).height(600)
                 .title("line").xAxisTitle(xCol).yAxisTitle("").build();
-        for (String y : yCols) {
-            chart.addSeries(y, new ArrayList<>(xs), new ArrayList<>(numericColumn(df, y)));
+        for (int k = 0; k < yCols.length; k++) {
+            chart.addSeries(yCols[k], new ArrayList<>(xs), new ArrayList<>(yss.get(k)));
         }
         return chart;
     }
@@ -103,8 +125,9 @@ public final class Plot {
      * @throws IllegalStateException 当 xCol/yCol 不是数值列时抛出
      */
     public static XYChart scatter(DataFrame df, String xCol, String yCol) {
-        List<Double> xs = numericColumn(df, xCol);
-        List<Double> ys = numericColumn(df, yCol);
+        // R6:同 line,成对收集(同类隐患一并修)
+        List<Double> xs = new ArrayList<>(), ys = new ArrayList<>();
+        pairedNumeric(df, xCol, yCol, xs, ys);
         XYChart chart = new XYChartBuilder().width(800).height(600)
                 .title(yCol + " vs " + xCol).xAxisTitle(xCol).yAxisTitle(yCol).build();
         chart.addSeries(yCol, new ArrayList<>(xs), new ArrayList<>(ys));
@@ -124,8 +147,10 @@ public final class Plot {
      * @throws IllegalStateException 当 valCol 不是数值列时抛出
      */
     public static CategoryChart bar(DataFrame df, String catCol, String valCol) {
-        List<String> cats = stringColumn(df, catCol);
-        List<Double> vals = numericColumn(df, valCol);
+        // 成对收集(cats/vals 同步跳缺失,恒等长)
+        List<String> cats = new ArrayList<>();
+        List<Double> vals = new ArrayList<>();
+        pairedCatVal(df, catCol, valCol, cats, vals);
         CategoryChart chart = new CategoryChartBuilder().width(800).height(600)
                 .title(valCol + " by " + catCol).xAxisTitle(catCol).yAxisTitle(valCol).build();
         chart.addSeries(valCol, cats, new ArrayList<>(vals));
@@ -145,6 +170,17 @@ public final class Plot {
      */
     public static CategoryChart hist(DataFrame df, String valCol, int bins) {
         List<Double> vals = numericColumn(df, valCol);
+        // 因为全缺失列的 min/max 会保持 ±Inf、产出 NaN~NaN 桶标签的退化图
+        // (matplotlib 全 NaN 给空图/警告),所以 fail-fast 教学式报错
+        if (vals.isEmpty()) {
+            throw new IllegalArgumentException("列 \"" + valCol + "\" 全为缺失,无法分箱;"
+                    + "请先 dropna 或检查数据来源");
+        }
+        // 因为 (max-min)/bins 为 0/负/NaN 时会直接漏到 XChart 深层异常,
+        // 所以 bins 非正数在入口 fail-fast、教学式报错
+        if (bins <= 0) {
+            throw new IllegalArgumentException("bins 必须为正整数,实际:" + bins);
+        }
         double min = Double.POSITIVE_INFINITY, max = Double.NEGATIVE_INFINITY;
         for (double v : vals) { if (v < min) min = v; if (v > max) max = v; }
         final double widthRaw = (max - min) / bins;
@@ -167,7 +203,7 @@ public final class Plot {
         return chart;
     }
 
-    // ======================== 扩展图(2026-08 与 AI agent1 共识:PlotExtra 已合并到本类,对齐 AGENTS.md §3.1.1.1 内聚原则)========================
+    // ======================== 扩展图(同域图种内聚于本类,对齐 AGENTS.md §3.1.1.1 内聚原则)========================
 
     /**
      * 水平柱状图(对齐 df.plot().barh)。
@@ -178,8 +214,10 @@ public final class Plot {
      * @return CategoryChart XChart 柱状图对象(水平方向需后续 chart 配置)
      */
     public static CategoryChart barh(DataFrame df, String catCol, String valCol) {
-        List<String> cats = stringColumn(df, catCol);
-        List<Double> vals = numericColumn(df, valCol);
+        // 成对收集(barh 与 bar 同语义,多入口同步)
+        List<String> cats = new ArrayList<>();
+        List<Double> vals = new ArrayList<>();
+        pairedCatVal(df, catCol, valCol, cats, vals);
         CategoryChart chart = new CategoryChartBuilder().width(800).height(600)
                 .title(valCol + " by " + catCol).xAxisTitle(valCol).yAxisTitle(catCol).build();
         // XChart 的 CategoryChart 没有直接水平开关;水平柱图通过 chart 配置后续支持
@@ -196,8 +234,9 @@ public final class Plot {
      * @return XYChart XChart 面积图对象
      */
     public static XYChart area(DataFrame df, String xCol, String yCol) {
-        List<Double> xs = numericColumn(df, xCol);
-        List<Double> ys = numericColumn(df, yCol);
+        // R6:同 line,成对收集(多入口同步)
+        List<Double> xs = new ArrayList<>(), ys = new ArrayList<>();
+        pairedNumeric(df, xCol, yCol, xs, ys);
         XYChart chart = new XYChartBuilder().width(800).height(600)
                 .title(yCol + " area").xAxisTitle(xCol).yAxisTitle(yCol).build();
         chart.addSeries(yCol, new ArrayList<>(xs), new ArrayList<>(ys));
@@ -214,8 +253,16 @@ public final class Plot {
      * @return PieChart XChart 饼图对象
      */
     public static PieChart pie(DataFrame df, String catCol, String valCol) {
-        List<String> cats = stringColumn(df, catCol);
-        List<Double> vals = numericColumn(df, valCol);
+        // 成对收集(labels/values 同步跳缺失,恒等长)
+        List<String> cats = new ArrayList<>();
+        List<Double> vals = new ArrayList<>();
+        pairedCatVal(df, catCol, valCol, cats, vals);
+        // 负值/NaN 在入口校验(不让脏值传到 XChart 渲染时才抛错)
+        for (double v : vals) {
+            if (Double.isNaN(v) || v < 0) {
+                throw new IllegalArgumentException("pie 值必须 ≥ 0 且非 NaN,实际:" + v);
+            }
+        }
         PieChart chart = new PieChartBuilder().width(800).height(600)
                 .title(valCol + " by " + catCol).build();
         for (int i = 0; i < cats.size(); i++) {
@@ -232,6 +279,19 @@ public final class Plot {
      * @param groupCol String 分组列名,非 null;按其值分桶计算五数
      * @return CategoryChart XChart 简化箱线图(min/median/max 三系列)
      */
+    /**
+     * 箱线图(对齐 df.plot().box):用每组五数渲染(CategoryChart 简化版,展示 min/median/max 三系列)。
+     *
+     * <p>值全缺失的组<b>整组跳过</b>(不参与任何系列)——
+     * 为对齐三系列长度伪造 min/median/max = 0.0 会产出 0 处伪箱线误导读图;
+     * 所有组全缺失时抛教学式 IAE(对齐 hist 的 fail-fast 风格)。
+     *
+     * @param df DataFrame 数据源,非 null;需含 valCol、groupCol 两列
+     * @param valCol String 数值列名,非 null;必须为数值列
+     * @param groupCol String 分组列名,非 null;按其值分桶计算五数
+     * @return CategoryChart XChart 简化箱线图(min/median/max 三系列)
+     * @throws IllegalArgumentException 值列全为缺失时(无组可画)
+     */
     public static CategoryChart box(DataFrame df, String valCol, String groupCol) {
         Column vals = df.getColumn(valCol);
         Column groups = df.getColumn(groupCol);
@@ -242,15 +302,24 @@ public final class Plot {
             buckets.computeIfAbsent(g, k -> new ArrayList<>());
             if (!vals.isNull(i)) buckets.get(g).add(vals.getDouble(i));
         }
+        // 全缺失组直接不进系列(不伪造 0.0);全部组缺失 → 教学 IAE
+        List<String> groupNames = new ArrayList<>();
+        for (java.util.Map.Entry<String, List<Double>> e : buckets.entrySet()) {
+            if (!e.getValue().isEmpty()) groupNames.add(e.getKey());
+        }
+        if (groupNames.isEmpty()) {
+            throw new IllegalArgumentException("列 \"" + valCol + "\" 在全部分组均为缺失,无法画箱线图;"
+                    + "请先 dropna 或检查数据来源");
+        }
         // 每组算 min/median/max
-        List<String> groupNames = new ArrayList<>(buckets.keySet());
         List<Double> mins = new ArrayList<>(), medians = new ArrayList<>(), maxs = new ArrayList<>();
         for (String g : groupNames) {
             List<Double> v = buckets.get(g);
-            if (v.isEmpty()) { mins.add(0.0); medians.add(0.0); maxs.add(0.0); continue; }
             java.util.Collections.sort(v);
             mins.add(v.get(0));
-            medians.add(v.get(v.size() / 2));
+            // 偶数长度取上下中位平均(与 pandas/numpy 线性插值一致)
+            int mid = v.size() / 2;
+            medians.add(v.size() % 2 == 1 ? v.get(mid) : (v.get(mid - 1) + v.get(mid)) / 2);
             maxs.add(v.get(v.size() - 1));
         }
         CategoryChart chart = new CategoryChartBuilder().width(800).height(600)
@@ -269,8 +338,25 @@ public final class Plot {
      * @param bins int 分箱数,正整数
      * @return XYChart XChart 密度图对象(纵轴为归一化密度)
      */
+    /**
+     * KDE 密度图(对齐 df.plot().kde):简化为直方图归一化(平滑 KDE 需 jian-num,v2 引入)。
+     *
+     * <p>全缺失列 fail-fast(对齐 hist 的风格)——
+     * min/max 保持 ±Inf 会产出 NaN 密度的垃圾图。
+     *
+     * @param df DataFrame 数据源,非 null;需含 valCol 列
+     * @param valCol String 数值列名,非 null;必须为数值列
+     * @param bins int 分箱数,正整数
+     * @return XYChart XChart 密度图对象(纵轴为归一化密度)
+     * @throws IllegalArgumentException 列全为缺失时
+     */
     public static XYChart kde(DataFrame df, String valCol, int bins) {
         List<Double> vals = numericColumn(df, valCol);
+        // 全缺失列 fail-fast(否则产出 NaN~NaN 退化图)
+        if (vals.isEmpty()) {
+            throw new IllegalArgumentException("列 \"" + valCol + "\" 全为缺失,无法估计密度;"
+                    + "请先 dropna 或检查数据来源");
+        }
         double min = Double.POSITIVE_INFINITY, max = Double.NEGATIVE_INFINITY;
         for (double v : vals) { if (v < min) min = v; if (v > max) max = v; }
         double width = (max - min) / bins;
@@ -297,15 +383,23 @@ public final class Plot {
     /**
      * Hexbin(对齐 df.plot().hexbin):简化为分箱计数 + 散点大小映射(真正六边形需自写渲染)。
      *
+     * <p><b>实现方式(诚实声明)</b>:XChart 4.x 的 XYChart
+     * <b>不支持每点半径</b>(markerSize 是图级全局,extraValues 仅作误差棒)——
+     * 密度经「一箱一个 series + 自定义 {@link CountScaledCircleMarker}(绘制直径 ∝ 归一化
+     * 计数,0.3~2.5 倍基准 markerSize)」映射到点大小;因 series 数量 = 非空箱数,图例
+     * 已关闭(防刷屏)。counts 真实进入渲染(经归一化映射驱动每点大小,兑现
+     * "散点大小映射"的语义)。
+     *
      * @param df DataFrame 数据源,非 null;需含 xCol、yCol 两列
      * @param xCol String X 轴列名,非 null;必须为数值列
      * @param yCol String Y 轴列名,非 null;必须为数值列
      * @param gridsize int 分箱网格大小,正整数
-     * @return XYChart XChart 散点对象(每箱一个点,坐标取箱中心)
+     * @return XYChart XChart 散点对象(每箱一个点,坐标取箱中心,点大小 ∝ 箱计数)
      */
     public static XYChart hexbin(DataFrame df, String xCol, String yCol, int gridsize) {
-        List<Double> xs = numericColumn(df, xCol);
-        List<Double> ys = numericColumn(df, yCol);
+        // R6:同 line,成对收集(多入口同步)
+        List<Double> xs = new ArrayList<>(), ys = new ArrayList<>();
+        pairedNumeric(df, xCol, yCol, xs, ys);
         double xMin = Double.POSITIVE_INFINITY, xMax = Double.NEGATIVE_INFINITY;
         double yMin = Double.POSITIVE_INFINITY, yMax = Double.NEGATIVE_INFINITY;
         for (double v : xs) { if (v < xMin) xMin = v; if (v > xMax) xMax = v; }
@@ -317,26 +411,61 @@ public final class Plot {
         java.util.Map<Long, Integer> counts = new java.util.HashMap<>();
         java.util.Map<Long, double[]> centers = new java.util.HashMap<>();
         for (int i = 0; i < xs.size(); i++) {
-            final int gx = (int) ((xs.get(i) - fxMin) / xStep);
-            final int gy = (int) ((ys.get(i) - fyMin) / yStep);
+            // 边界点(xs==xMax)clamp 到 gridsize-1,防越界
+            final int gx = Math.min(gridsize - 1, (int) ((xs.get(i) - fxMin) / xStep));
+            final int gy = Math.min(gridsize - 1, (int) ((ys.get(i) - fyMin) / yStep));
             long key = ((long) gx << 32) | (gy & 0xFFFFFFFFL);
             counts.merge(key, 1, Integer::sum);
             centers.computeIfAbsent(key, k -> new double[]{
                     fxMin + (gx + 0.5) * xStep, fyMin + (gy + 0.5) * yStep});
         }
-        // 转 series(单 series,大小用 BubbleSize 不行;XChart XYChart 用 markers)
-        List<Double> plotX = new ArrayList<>();
-        List<Double> plotY = new ArrayList<>();
-        for (long key : counts.keySet()) {
-            double[] c = centers.get(key);
-            plotX.add(c[0]);
-            plotY.add(c[1]);
-        }
+        // counts 归一化 → 每箱一个 series + 按计数缩放的 Circle marker(见 javadoc 实现声明)
         XYChart chart = new XYChartBuilder().width(800).height(600)
                 .title("Hexbin " + xCol + " vs " + yCol).xAxisTitle(xCol).yAxisTitle(yCol).build();
-        chart.addSeries("hex", plotX, plotY);
-        chart.getStyler().setDefaultSeriesRenderStyle(org.knowm.xchart.XYSeries.XYSeriesRenderStyle.Scatter);
+        int maxCount = 1;
+        for (int c : counts.values()) maxCount = Math.max(maxCount, c);
+        List<java.util.Map.Entry<Long, Integer>> entries = new ArrayList<>(counts.entrySet());
+        org.knowm.xchart.style.markers.Marker[] markers =
+                new org.knowm.xchart.style.markers.Marker[entries.size()];
+        for (int k = 0; k < entries.size(); k++) {
+            java.util.Map.Entry<Long, Integer> e = entries.get(k);
+            double[] c = centers.get(e.getKey());
+            // 归一化计数 → 0.3~2.5 倍基准 markerSize(空箱不出现,最低 0.3 保底可见)
+            double scale = 0.3 + 2.2 * (e.getValue() / (double) maxCount);
+            chart.addSeries("bin" + k, List.of(c[0]), List.of(c[1]));
+            markers[k] = new CountScaledCircleMarker(scale);
+        }
+        chart.getStyler().setDefaultSeriesRenderStyle(XYSeries.XYSeriesRenderStyle.Scatter);
+        // markers 按 series 加入顺序逐个对应(Styler.setSeriesMarkers 是按序数组)
+        chart.getStyler().setSeriesMarkers(markers);
+        // 一箱一系列 → 图例只会刷屏,关闭
+        chart.getStyler().setLegendVisible(false);
         return chart;
+    }
+
+    /**
+     * 按计数缩放的圆形 marker(hexbin 密度 → 点大小映射)。
+     *
+     * <p>XChart 的 Marker.paint 收到的 markerSize 来自图级 Styler(全局一致),本类在
+     * paint 内部按构造时给定的倍率缩放,实现"每箱一个 series、每 series 一个尺寸"。
+     *
+     * <p>绘制口径:xchart 内建 Circle 同款 —— 以 (xOffset, yOffset) 为圆心的正圆填充。
+     */
+    static final class CountScaledCircleMarker extends org.knowm.xchart.style.markers.Marker {
+        private final double scale;
+
+        /**
+         * @param scale double 相对基准 markerSize 的倍率(&gt;0;hexbin 归一化到 0.3~2.5)
+         */
+        CountScaledCircleMarker(double scale) { this.scale = scale; }
+
+        @Override public void paint(java.awt.Graphics2D g, double xOffset, double yOffset, int markerSize) {
+            int size = Math.max(3, (int) Math.round(markerSize * scale));
+            double half = size / 2.0;
+            java.awt.geom.Ellipse2D.Double circle =
+                    new java.awt.geom.Ellipse2D.Double(xOffset - half, yOffset - half, size, size);
+            g.fill(circle);
+        }
     }
 
     /**
@@ -351,10 +480,41 @@ public final class Plot {
         List<XYChart> charts = new ArrayList<>();
         for (String x : numCols) {
             for (String y : numCols) {
-                charts.add(Plot.scatter(df, x, y));
+                if (x.equals(y)) {
+                    // 对角线画该列直方图(参考 seaborn.pairplot),
+                    // 不再画无意义的自相关散点
+                    charts.add(diagonalHistogram(df, x));
+                } else {
+                    charts.add(Plot.scatter(df, x, y));
+                }
             }
         }
         return charts;
+    }
+
+    /** 对角线直方图(XYChart Bar 渲染;桶口径与 {@link #hist} 一致:闭-开,末桶含 max)。 */
+    private static XYChart diagonalHistogram(DataFrame df, String col) {
+        List<Double> vals = numericColumn(df, col);
+        List<Double> xs = new ArrayList<>(), ys = new ArrayList<>();
+        if (!vals.isEmpty()) {
+            double min = Double.POSITIVE_INFINITY, max = Double.NEGATIVE_INFINITY;
+            for (double v : vals) { if (v < min) min = v; if (v > max) max = v; }
+            int bins = Math.max(1, (int) Math.sqrt(vals.size()));
+            final double width = ((max - min) / bins) == 0 ? 1 : (max - min) / bins;
+            for (int b = 0; b < bins; b++) {
+                final double lo = min + b * width, hi = lo + width;
+                final boolean last = (b == bins - 1);
+                long cnt = vals.stream().filter(v -> v >= lo && (v < hi || (last && v <= hi))).count();
+                xs.add(lo + width / 2);
+                ys.add((double) cnt);
+            }
+        }
+        XYChart chart = new XYChartBuilder().width(800).height(600)
+                .title("Hist of " + col).xAxisTitle(col).yAxisTitle("count").build();
+        chart.addSeries(col, xs, ys);
+        // XChart 4.x XYChart 无 Bar 样式(仅 Line/Area/Step/StepArea/Scatter),用 StepArea 近似直方图
+        chart.getStyler().setDefaultSeriesRenderStyle(org.knowm.xchart.XYSeries.XYSeriesRenderStyle.StepArea);
+        return chart;
     }
 
     /**
@@ -390,10 +550,27 @@ public final class Plot {
      * @param maxLag int 最大滞后阶数,正整数
      * @return XYChart XChart 折线对象(lag 0..maxLag 的 ACF 估计)
      */
+    /**
+     * 自相关图(对齐 pandas.plotting.autocorrelation):简化 ACF 估计。
+     *
+     * <p>全缺失列 fail-fast(对齐 hist 的风格)——
+     * mean/var 对空序列得 0/0,会产出全 NaN ACF 的垃圾图。
+     *
+     * @param df DataFrame 数据源,非 null;需含 col 列
+     * @param col String 数值列名,非 null
+     * @param maxLag int 最大滞后阶数,正整数
+     * @return XYChart XChart 折线对象(lag 0..maxLag 的 ACF 估计)
+     * @throws IllegalArgumentException 列全为缺失时
+     */
     public static XYChart autocorrelation(DataFrame df, String col, int maxLag) {
         Column c = df.getColumn(col);
         List<Double> vals = new ArrayList<>();
         for (int i = 0; i < c.size(); i++) if (!c.isNull(i)) vals.add(c.getDouble(i));
+        // 全缺失列 fail-fast(否则 var=0 → ACF 全 0/NaN 垃圾图)
+        if (vals.isEmpty()) {
+            throw new IllegalArgumentException("列 \"" + col + "\" 全为缺失,无法估计自相关;"
+                    + "请先 dropna 或检查数据来源");
+        }
         double mean = vals.stream().mapToDouble(Double::doubleValue).average().orElse(0);
         double var = vals.stream().mapToDouble(v -> (v - mean) * (v - mean)).sum() / vals.size();
         List<Integer> lags = new ArrayList<>();
@@ -458,5 +635,40 @@ public final class Plot {
         List<String> r = new ArrayList<>();
         for (int i = 0; i < c.size(); i++) r.add(String.valueOf(c.get(i)));
         return r;
+    }
+
+    // ======================== 成对收集器 ========================
+
+    // 因为 x/y(或 cat/val)两列若各自独立收集(数值列跳缺失、分类列不跳),列长不等直接喂
+    // XChart 会抛 "X and Y-Axis sizes are not the same!!!"/IOOBE,所以成对收集:任一侧缺失
+    // 整行同步跳过(matplotlib 对 NaN 画空/断线,不崩);对 line 多 Y 采用"x 或任一 y 缺失
+    // 即整行跳过"的全列对齐过滤,保证每条 series 与 xs 等长。
+
+    /** 数值×数值成对收集(任一侧缺失整行跳过)。 */
+    private static void pairedNumeric(DataFrame df, String xCol, String yCol,
+                                      List<Double> xs, List<Double> ys) {
+        Column xc = df.getColumn(xCol), yc = df.getColumn(yCol);
+        if (!xc.dtype().isNumeric() || !yc.dtype().isNumeric()) {
+            throw new IllegalStateException(MISSING_MSG + "要求两列均数值:" + xCol + "/" + yCol);
+        }
+        for (int i = 0; i < df.rowCount(); i++) {
+            if (xc.isNull(i) || yc.isNull(i)) continue;
+            xs.add(xc.getDouble(i));
+            ys.add(yc.getDouble(i));
+        }
+    }
+
+    /** 分类×数值成对收集(任一侧缺失整行跳过)。 */
+    private static void pairedCatVal(DataFrame df, String catCol, String valCol,
+                                     List<String> cats, List<Double> vals) {
+        Column cc = df.getColumn(catCol), vc = df.getColumn(valCol);
+        if (!vc.dtype().isNumeric()) {
+            throw new IllegalStateException(MISSING_MSG + vc.dtype() + "(列 \"" + valCol + "\")");
+        }
+        for (int i = 0; i < df.rowCount(); i++) {
+            if (cc.isNull(i) || vc.isNull(i)) continue;
+            cats.add(String.valueOf(cc.get(i)));
+            vals.add(vc.getDouble(i));
+        }
     }
 }

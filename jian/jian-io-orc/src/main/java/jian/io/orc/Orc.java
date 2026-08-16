@@ -31,7 +31,8 @@ import java.nio.file.Path;
  * ORC 列式二进制读写,对齐 pandas.read_orc / to_orc。
  *
  * <p>基于 orc-core 1.9.5 + hive-storage-api 2.8.1 + hadoop-client-runtime 3.3.6
- * (hadoop-client-runtime 内含 shaded woodstox,修复 ORC 读写的 NoClassDefFoundError,见 pom 注释)。
+ * (因为 hadoop-client-runtime 内含 shaded woodstox,缺它时 ORC 读写会抛 NoClassDefFoundError,
+ * 所以显式引入,见 pom 注释)。
  *
  * <p>用法:
  * <pre>{@code
@@ -74,35 +75,70 @@ public final class Orc {
         OrcReader(Path p) { this.path = p; }
 
         public DataFrame go() throws Exception {
+            // Reader/RecordReader 用 try-with-resources,异常路径也释放 native 资源
             Configuration conf = new Configuration();
-            Reader reader = OrcFile.createReader(
+            try (Reader reader = OrcFile.createReader(
                     new org.apache.hadoop.fs.Path(path.toAbsolutePath().toString()),
-                    OrcFile.readerOptions(conf));
-            TypeDescription schema = reader.getSchema();
-            java.util.List<String> names = schema.getFieldNames();
-            Reader.Options options = reader.options().schema(schema);
-            org.apache.orc.RecordReader rows = reader.rows(options);
-            java.util.List<Object[]> data = new java.util.ArrayList<>();
-            VectorizedRowBatch batch = schema.createRowBatch();
-            while (rows.nextBatch(batch)) {
-                ColumnVector[] cols = batch.cols;
-                for (int r = 0; r < batch.size; r++) {
-                    Object[] row = new Object[names.size()];
-                    for (int c = 0; c < names.size(); c++) row[c] = vectorValue(cols[c], r);
-                    data.add(row);
+                    OrcFile.readerOptions(conf))) {
+                TypeDescription schema = reader.getSchema();
+                java.util.List<String> names = schema.getFieldNames();
+                // 因为 LongColumnVector 同时承载 boolean/int/bigint(ORC 的向量化表示
+                // 都是 long 数组),不回溯 schema 就无法区分(一律装箱 Long 会导致
+                // BOOL→LONG(0/1)、INT→LONG),所以列的 ORC 类型元数据随行传递给 vectorValue。
+                java.util.List<TypeDescription> children = schema.getChildren();
+                Reader.Options options = reader.options().schema(schema);
+                try (org.apache.orc.RecordReader rows = reader.rows(options)) {
+                    java.util.List<Object[]> data = new java.util.ArrayList<>();
+                    VectorizedRowBatch batch = schema.createRowBatch();
+                    while (rows.nextBatch(batch)) {
+                        ColumnVector[] cols = batch.cols;
+                        for (int r = 0; r < batch.size; r++) {
+                            Object[] row = new Object[names.size()];
+                            for (int c = 0; c < names.size(); c++) row[c] = vectorValue(cols[c], children.get(c), r);
+                            data.add(row);
+                        }
+                    }
+                    // 因为 0 行时 Schema.infer 会全列退化 STRING,
+                    // 所以用文件 schema 元数据(名字+类型)建列,与 Json/Xml/Pickle 口径一致。
+                    if (data.isEmpty()) {
+                        java.util.List<DType> dts = new java.util.ArrayList<>(names.size());
+                        for (TypeDescription child : children) dts.add(orcTypeToDType(child));
+                        return DataFrame.of(new Schema(names, dts), new Object[0][]);
+                    }
+                    Object[][] arr = data.toArray(new Object[0][]);
+                    return DataFrame.of(Schema.infer(names, arr), arr);
                 }
             }
-            rows.close();
-            Object[][] arr = data.toArray(new Object[0][]);
-            return DataFrame.of(Schema.infer(names, arr), arr);
         }
     }
 
-    /** 从 ColumnVector 取第 r 行的值。 */
-    private static Object vectorValue(ColumnVector v, int r) {
+    // ┌─ What : vectorValue —— 从 ColumnVector 取第 r 行的值(按 ORC schema 类型分流)
+    // │  Why  : 因为 LongColumnVector 同时承载 boolean/int/bigint(ORC 向量化表示都是
+    // │         long 数组),一律装箱 Long 会让 BOOL 列往返变 LONG(值 0/1)、INT 列变 LONG,
+    // │         所以按 schema 类型分流取值
+    // │  Who  : OrcReader.go()
+    // │  When : 逐行取值时
+    // │  Where: jian-io-orc/Orc.java
+    // │  How  : 关键变量变化:
+    // │           - raw(long 数组元素):boolean 列 0/1;int 列整值;bigint 列整值 —— 数值同型,
+    // │             仅靠 type 参数区分语义;
+    // │           - 返回值:BOOLEAN→Boolean(raw!=0);BYTE/SHORT/INT→Integer(窄化 (int) raw,
+    // │             Schema.infer 据此推 INT);LONG/默认→Long(推 LONG);DOUBLE→Double;BYTES→String。
+    // │         逻辑路线(四条路径):
+    // │           路径 A(isNull)→ null;
+    // │           路径 B(LongColumnVector)→ 按 category 分流 Boolean/Integer/Long;
+    // │           路径 C(DoubleColumnVector)→ Double;
+    // │           路径 D(BytesColumnVector)→ UTF-8 String。
+    private static Object vectorValue(ColumnVector v, TypeDescription type, int r) {
         if (v.isNull[r]) return null;
         if (v instanceof org.apache.hadoop.hive.ql.exec.vector.LongColumnVector) {
-            return ((org.apache.hadoop.hive.ql.exec.vector.LongColumnVector) v).vector[r];
+            long raw = ((org.apache.hadoop.hive.ql.exec.vector.LongColumnVector) v).vector[r];
+            TypeDescription.Category cat = type != null ? type.getCategory() : TypeDescription.Category.LONG;
+            switch (cat) {
+                case BOOLEAN: return raw != 0;                 // boolean 向量也是 long 0/1
+                case BYTE: case SHORT: case INT: return (int) raw;   // int 系 → Integer(INT dtype)
+                default: return raw;                            // bigint 等默认 → Long
+            }
         }
         if (v instanceof org.apache.hadoop.hive.ql.exec.vector.DoubleColumnVector) {
             return ((org.apache.hadoop.hive.ql.exec.vector.DoubleColumnVector) v).vector[r];
@@ -115,6 +151,18 @@ public final class Orc {
         return null;
     }
 
+    /** ORC 类型 → jian DType(0 行重建 Schema 的元数据映射,与写侧 buildOrcSchema 对称)。 */
+    private static DType orcTypeToDType(TypeDescription t) {
+        if (t == null) return DType.STRING;
+        switch (t.getCategory()) {
+            case BOOLEAN: return DType.BOOL;
+            case BYTE: case SHORT: case INT: return DType.INT;
+            case LONG: return DType.LONG;
+            case FLOAT: case DOUBLE: return DType.DOUBLE;
+            default: return DType.STRING;   // string/varchar/char/其余 → STRING
+        }
+    }
+
     // ======================== 写 ========================
 
     public static final class OrcWriter {
@@ -124,26 +172,27 @@ public final class Orc {
         OrcWriter(DataFrame df, Path p) { this.df = df; this.path = p; }
 
         public void go() throws Exception {
+            // Writer 用 try-with-resources,addRowBatch 抛错时也 close(防 native 泄漏)
             TypeDescription schema = buildOrcSchema(df);
             Configuration conf = new Configuration();
-            org.apache.orc.Writer writer = OrcFile.createWriter(
+            try (org.apache.orc.Writer writer = OrcFile.createWriter(
                     new org.apache.hadoop.fs.Path(path.toAbsolutePath().toString()),
-                    OrcFile.writerOptions(conf).setSchema(schema));
-            VectorizedRowBatch batch = schema.createRowBatch();
-            java.util.List<String> cols = df.columnNames();
-            java.util.List<DType> dtypes = df.dtypes();
-            for (Object[] row : df.iterRows()) {
-                int rowIdx = batch.size++;
-                for (int c = 0; c < cols.size(); c++) {
-                    setVector(batch.cols[c], rowIdx, row[c], dtypes.get(c));
+                    OrcFile.writerOptions(conf).setSchema(schema))) {
+                VectorizedRowBatch batch = schema.createRowBatch();
+                java.util.List<String> cols = df.columnNames();
+                java.util.List<DType> dtypes = df.dtypes();
+                for (Object[] row : df.iterRows()) {
+                    int rowIdx = batch.size++;
+                    for (int c = 0; c < cols.size(); c++) {
+                        setVector(batch.cols[c], rowIdx, row[c], dtypes.get(c));
+                    }
+                    if (batch.size == batch.getMaxSize()) {
+                        writer.addRowBatch(batch);
+                        batch.reset();
+                    }
                 }
-                if (batch.size == batch.getMaxSize()) {
-                    writer.addRowBatch(batch);
-                    batch.reset();
-                }
+                if (batch.size != 0) writer.addRowBatch(batch);
             }
-            if (batch.size != 0) writer.addRowBatch(batch);
-            writer.close();
         }
     }
 
@@ -164,6 +213,9 @@ public final class Orc {
                 break;
             }
             case BOOL: {
+                // 说明:ORC 的 boolean 列在向量化表示里就是 LongColumnVector 的 0/1
+                // (orc-core 无 boolean 专用向量),写侧本就正确;
+                // 保真丢失的根因在读侧不回溯 schema(见 vectorValue),此处不改。
                 ((org.apache.hadoop.hive.ql.exec.vector.LongColumnVector) v).vector[r] = (Boolean) val ? 1 : 0;
                 break;
             }

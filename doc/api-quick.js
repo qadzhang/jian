@@ -18,7 +18,7 @@ const API_QUICK = [
     { sig:'df.mergeAsof(right, "ts") / df.join(right, "id", "left")', mod:"jian-core", status:"alpha" },
     { sig:'df.resample("ts","1D").sum() / .mean() / .ohlc("price")', mod:"jian-core", status:"alpha" },
     { sig:'df.interpolate() / df.where(mask, 0) / df.mask(mask, 0)', mod:"jian-core", status:"alpha" },
-    { sig:'df.astype("v", DType.BOOL/DATETIME/DATE) (7种)', mod:"jian-core", status:"alpha" },
+    { sig:'df.astype("v", DType.BOOL/DATETIME/DATE) (8种)', mod:"jian-core", status:"alpha" },
     { sig:'df.tzLocalize("ts","UTC") / df.tzConvert("ts","Asia/Shanghai")', mod:"jian-core", status:"alpha" },
     { sig:'series.argmax() / .argmin() / .tolist() / .between(1,10) / .hasnans()', mod:"jian-core", status:"alpha" }
   ]},

@@ -25,7 +25,7 @@ import java.util.regex.*;
  * <ul>
  *   <li><b>子日级</b>:`"Ns"`(秒)、`"Nmin"`(分)、`"Nh"`(小时)</li>
  *   <li><b>日级</b>:`"ND"`(天)、`"NW"`(周)</li>
- *   <li><b>月级</b>:`"NM"`(月)、`"NME"`(月末)、`"NMS"`(月初)</li>
+ *   <li><b>月级</b>:`"NM"`(月,无锚点)、`"NME"`(月末对齐,pandas MonthEnd)、`"NMS"`(月初对齐,pandas MonthBegin)</li>
  *   <li><b>季级</b>:`"NQ"`(季)、`"NQE"`(季末)</li>
  *   <li><b>年级</b>:`"NY"`(年)、`"NYS"`(年初)、`"NYE"`(年末)</li>
  * </ul>
@@ -50,7 +50,12 @@ public final class Frequency {
         DAYS(ChronoUnit.DAYS),
         WEEKS(ChronoUnit.WEEKS),
         MONTHS(ChronoUnit.MONTHS),
-        QUARTERS(null),   // 季 = 3 个月,特殊处理
+        // 月初/月末锚点单位,区分 pandas 的 1MS(MonthBegin)
+        // 与 1ME(MonthEnd)—— m/ms/me 不能全映射到 MONTHS,否则月末/月初对齐语义丢失。
+        // 锚点:MONTH_START 对齐每月 1 日,MONTH_END 对齐每月最后一天。
+        MONTH_START(ChronoUnit.MONTHS),
+        MONTH_END(ChronoUnit.MONTHS),
+        QUARTERS(ChronoUnit.MONTHS),   // 季 = 3 个月,特殊处理;chrono 给 MONTHS(留 null 未来误用会 NPE)
         YEARS(ChronoUnit.YEARS);
 
         final ChronoUnit chrono;
@@ -92,7 +97,9 @@ public final class Frequency {
             case "h" -> Unit.HOURS;
             case "d" -> Unit.DAYS;
             case "w" -> Unit.WEEKS;
-            case "m", "ms", "me" -> Unit.MONTHS;
+            case "m" -> Unit.MONTHS;
+            case "ms" -> Unit.MONTH_START;   // 月初对齐(pandas MonthBegin,如 1MS)
+            case "me" -> Unit.MONTH_END;     // 月末对齐(pandas MonthEnd,如 1ME)
             case "q", "qe" -> Unit.QUARTERS;
             case "y", "ys", "ye" -> Unit.YEARS;
             default -> throw new IllegalArgumentException("未知频率单位:" + unitStr);
@@ -112,21 +119,50 @@ public final class Frequency {
 
     /**
      * 在时间点 t 上加一个频率步。
+     * 因为先加月再对齐锚点可防"1/31 + 1 月 = 3/3"漂移(对齐 pandas MonthBegin/MonthEnd 的加法语义),
+     * 所以 MONTH_START/MONTH_END 采用"先加月再对齐锚点"。
+     * 因为 t=2/28 时 t.plusMonths(1)=3/28 → monthAnchor floor 回 2/28 本身会让网格循环永不推进
+     * (resample("1ME") 跨短月必抛"网格点数超过 100000"),所以 MONTH_END 保证单调前进,
+     * 按 pandas MonthEnd 滚动语义:结果若 ≤ t,则推到 result 所在月的下一个月末
+     * (result.withDayOfMonth(1).plusMonths(2).minusDays(1)),
+     * 例 2/28→3/31、12/31→1/31;循环兜底保证严格 &gt; t。
      * @param t LocalDateTime 时间点,非 null
-     * @return LocalDateTime t + amount × unit
+     * @return LocalDateTime t + amount × unit;MONTH_END/AMOUNT&gt;0 时保证严格晚于 t
      */
     public LocalDateTime plus(LocalDateTime t) {
         Objects.requireNonNull(t);
-        return switch (unit) {
-            case SECONDS -> t.plusSeconds(amount);
-            case MINUTES -> t.plusMinutes(amount);
-            case HOURS -> t.plusHours(amount);
-            case DAYS -> t.plusDays(amount);
-            case WEEKS -> t.plusWeeks(amount);
-            case MONTHS -> t.plusMonths(amount);
-            case QUARTERS -> t.plusMonths(amount * 3);
-            case YEARS -> t.plusYears(amount);
-        };
+        // 伪代码:
+        //   1. 常规:t 先加 amount 月,再 floor 到月末锚点(2/28 的 1ME 滚动 = 3/31)
+        //   2. 防御:结果没前进(≤ t,如 2/28 floor 回 2/28)→ 推到"result 所在月的下一个月末"
+        //      (withDayOfMonth(1).plusMonths(2).minusDays(1)),循环保证 > t
+        switch (unit) {
+            case SECONDS: return t.plusSeconds(amount);
+            case MINUTES: return t.plusMinutes(amount);
+            case HOURS: return t.plusHours(amount);
+            case DAYS: return t.plusDays(amount);
+            case WEEKS: return t.plusWeeks(amount);
+            case MONTHS: return t.plusMonths(amount);
+            case MONTH_START: {
+                // 单调性验证:monthAnchor(start=true) 取"目标月 1 日 00:00",
+                // plusMonths(amount≥1) 必落在 t 之后的月份(Java 日号钳制只会更早不会跨回),
+                // 数学上恒 > t。防御循环保留,与 MONTH_END 对称,保证网格永不空转。
+                LocalDateTime result = monthAnchor(t.plusMonths(amount), true);
+                while (amount > 0 && !result.isAfter(t)) result = result.plusMonths(1);
+                return result;
+            }
+            case MONTH_END: {
+                LocalDateTime result = monthAnchor(t.plusMonths(amount), false);
+                while (amount > 0 && !result.isAfter(t)) {
+                    // 下一个月末锚点:本月 1 日 + 2 月 - 1 天(例 2/28 → 3/31,锚点语义见决策记录);
+                    // monthAnchor 已把时间归零为 00:00,无需再 atStartOfDay
+                    result = result.withDayOfMonth(1).plusMonths(2).minusDays(1);
+                }
+                return result;
+            }
+            case QUARTERS: return t.plusMonths(amount * 3);
+            case YEARS: return t.plusYears(amount);
+            default: throw new IllegalStateException("未知频率单位:" + unit);
+        }
     }
 
     /**
@@ -143,9 +179,39 @@ public final class Frequency {
             case DAYS -> t.minusDays(amount);
             case WEEKS -> t.minusWeeks(amount);
             case MONTHS -> t.minusMonths(amount);
+            case MONTH_START -> monthAnchor(t.minusMonths(amount), true);
+            case MONTH_END -> monthAnchor(t.minusMonths(amount), false);
             case QUARTERS -> t.minusMonths(amount * 3);
             case YEARS -> t.minusYears(amount);
         };
+    }
+
+    /**
+     * 把时间点对齐到该频率的锚点(仅 MONTH_START/MONTH_END 生效,其它单位原样返回)。
+     * 语义:返回"不晚于 t 的最近锚点"(floor):
+     *   MONTH_START:t 所在月的 1 日(1/15 → 1/1);
+     *   MONTH_END:t 所在月的最后一天(1/15 → 12/31,1/31 → 1/31)。
+     * 时间部分归零(对齐 pandas resample 桶边界的时间戳语义)。
+     * 供 Resampler 生成网格起点,1MS 桶边界在月初、1ME 在月末。
+     * @param t LocalDateTime 时间点,非 null
+     * @return LocalDateTime 对齐后的锚点
+     */
+    public LocalDateTime alignStart(LocalDateTime t) {
+        Objects.requireNonNull(t);
+        return switch (unit) {
+            case MONTH_START -> monthAnchor(t, true);
+            case MONTH_END -> monthAnchor(t, false);
+            default -> t;
+        };
+    }
+
+    /** 取 t 所在月的锚点:start=true 取当月 1 日,start=false 取"不晚于 t 的最近月末"(floor,时间归零)。
+     *  floor 语义保证:1/15 的 1ME 锚点 = 12/31,数据点总能落进它之后紧跟的桶 [12/31, 1/31)。 */
+    private static LocalDateTime monthAnchor(LocalDateTime t, boolean start) {
+        if (start) return t.toLocalDate().withDayOfMonth(1).atStartOfDay();
+        java.time.LocalDate d = t.toLocalDate();
+        if (d.getDayOfMonth() == d.lengthOfMonth()) return d.atStartOfDay();  // t 本身是月末
+        return d.withDayOfMonth(1).minusDays(1).atStartOfDay();               // floor:上个月末
     }
 
     /**
@@ -180,7 +246,7 @@ public final class Frequency {
             case HOURS -> from.until(to, ChronoUnit.HOURS) / amount;
             case DAYS -> from.until(to, ChronoUnit.DAYS) / amount;
             case WEEKS -> from.until(to, ChronoUnit.WEEKS) / amount;
-            case MONTHS -> from.until(to, ChronoUnit.MONTHS) / amount;
+            case MONTHS, MONTH_START, MONTH_END -> from.until(to, ChronoUnit.MONTHS) / amount;
             case QUARTERS -> from.until(to, ChronoUnit.MONTHS) / (amount * 3);
             case YEARS -> from.until(to, ChronoUnit.YEARS) / amount;
         };

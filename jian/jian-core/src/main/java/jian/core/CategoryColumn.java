@@ -91,7 +91,10 @@ public final class CategoryColumn implements Column {
     @Override public DType dtype() { return DType.CATEGORY; }
     /** @return String 列名 */
     @Override public String name() { return name; }
-    /** @return Column 改名后的新实例(noCopy,共享 categories) */
+    /**
+     * @return Column 改名后的新实例(noCopy,共享 categories)
+     * @param newName String 新列名;非 null
+     */
     @Override public Column rename(String newName) { return new CategoryColumn(newName, codes, categories, true); }
     /** @return int 行数 == codes.length */
     @Override public int size() { return codes.length; }
@@ -105,7 +108,7 @@ public final class CategoryColumn implements Column {
     }
     /**
      * @param i int 行下标
-     * @return double (double) codes[i](**-1 即缺失**,返回 -1.0)
+     * @return double (double) codes[i];缺失行返回 NaN(对齐 AGENTS.md §3.5.1)
      */
     @Override public double getDouble(int i) {
         if (codes[i] == -1) return Double.NaN;

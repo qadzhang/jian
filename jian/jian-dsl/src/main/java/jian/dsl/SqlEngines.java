@@ -31,6 +31,15 @@ import java.util.Set;
  * }</pre>
  *
  * <p>线程安全:ThreadLocal 隔离每个线程的引擎选择。
+ *
+ * <p><b>Web 容器警示</b>:Tomcat/Spring Boot 的线程池会
+ * <b>跨请求复用线程</b>——某请求 {@code useCustom(engine)} 后未 {@code reset()},
+ * 同一线程的下一个请求会<b>继承该引擎</b>(状态泄漏,非数据泄漏但行为漂移)。容器中
+ * useCustom 必须 try-finally 包裹:
+ * <pre>{@code
+ * try { SqlEngines.useCustom(myEngine); ... } finally { SqlEngines.reset(); }
+ * }</pre>
+ * 且自定义引擎不应持有 WebappClassLoader 可达的强引用实例字段(redeploy 类卸载受阻)。
  */
 public final class SqlEngines {
 
@@ -46,6 +55,9 @@ public final class SqlEngines {
 
     public static void useRegex() { CURRENT.set(REGEX_DEFAULT); }
 
+    /**
+     * @param engine 参数;非 null
+     */
     public static void useCustom(SqlEngineInterface engine) {
         if (engine == null) throw new IllegalArgumentException("useCustom engine 不能为 null");
         CURRENT.set(engine);
@@ -57,6 +69,9 @@ public final class SqlEngines {
         return CURRENT.get().capabilities();
     }
 
+    /**
+     * @param cap 参数;非 null
+     */
     public static boolean currentSupports(SqlEngineInterface.Capability cap) {
         return CURRENT.get().supports(cap);
     }

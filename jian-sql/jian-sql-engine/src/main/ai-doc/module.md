@@ -4,6 +4,7 @@
 - **library**: jian-sql
 - **entryClass**: jian.sql.engine.Engine
 - **deps**: HikariCP(连接池);JDBC API;七库驱动由用户按需引入(反射探测 driverClassName)
+- **tests**: 26
 
 ## 摘要
 数据库连接管理引擎,对齐 sqlalchemy.create_engine;基于 HikariCP,DbType 覆盖 7 库,EngineConfig 走 .env 零本机绑定,readOnly 模式拦截写 SQL。
@@ -16,6 +17,15 @@
 - `connect()`:借连接(自动提交);`begin()`:借连接 + setAutoCommit(false)(try-with-resources 自动提交/回滚)
 - 只读安全:readOnly 模式下 DROP/DELETE/TRUNCATE 等写 SQL 抛 SecurityException
 - 驱动缺失友好报错:抛 ModuleNotLoadedException 并给出 driverHint(如 `org.postgresql:postgresql`)
+
+### 行为细节
+- parseUrl/fromUrl 异常过 sanitize(不回显密码);readOnly 时 dsl() 拒绝 + Hikari 只读
+
+- 只读拦截大小写不敏感((?i),小写 drop 无法绕过)
+
+### 行为细节(续 1)
+- checkReadOnly 拦截 REPLACE/CALL/COPY/LOAD 等写关键字
+- sanitize 密码含 @ 不泄漏;scrub 支持 `#` 注释 / 反引号标识符 / `$$` 字符串
 
 ## 限制
 - jOOQ OSS Edition 不含 Oracle/DB2 等商业方言,Engine 仍可连但类型安全 SQL 受限(见 jian-sql-expr)

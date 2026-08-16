@@ -6,7 +6,7 @@
   <parent>
     <groupId>jian</groupId>
     <artifactId>jian-parent</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <relativePath>../../pom.xml</relativePath>
   </parent>
   <artifactId>jian-facade</artifactId>
@@ -23,8 +23,8 @@
     <dependency><groupId>jian</groupId><artifactId>jian-io-html</artifactId></dependency>
     <dependency><groupId>jian</groupId><artifactId>jian-io-xml</artifactId></dependency>
     <dependency><groupId>jian</groupId><artifactId>jian-io-sql</artifactId></dependency>
-    <dependency><groupId>jian</groupId><artifactId>jian-io-parquet</artifactId></dependency>
-    <dependency><groupId>jian</groupId><artifactId>jian-io-orc</artifactId></dependency>
+    <!-- 列存(parquet/orc)编译期解耦:模块默认不构建(-Pcolumnar 激活,
+         自带 ~45MB Hadoop 依赖),Jian 门面经反射调用 + ModuleNotLoadedException(§4.2 按需加载) -->
     <dependency><groupId>jian</groupId><artifactId>jian-io-pickle</artifactId></dependency>
     <dependency><groupId>jian</groupId><artifactId>jian-io-clipboard</artifactId></dependency>
     <dependency><groupId>jian</groupId><artifactId>jian-io-latex</artifactId></dependency>
@@ -36,4 +36,23 @@
     <!-- 测试 -->
     <dependency><groupId>com.h2database</groupId><artifactId>h2</artifactId><scope>test</scope></dependency>
   </dependencies>
+
+  <build>
+    <resources>
+      <!-- 注意:Maven 显式声明 <resources> 会覆盖默认的 src/main/resources,必须一并补回 -->
+      <resource>
+        <directory>src/main/resources</directory>
+      </resource>
+      <!-- AI 管辖(§0.3 第四轨):把真实场景的【完整可执行标准答案】(JUnit 源码,
+           含构造数据 + 逐条断言)随 jar 分发 —— scenarios.md 只放简版预期值速查,
+           完整版在 META-INF/ai/scenarios-src/,AI 拿 jar 即可读到全部断言与 API 用法 -->
+      <resource>
+        <directory>src/test/java</directory>
+        <targetPath>META-INF/ai/scenarios-src</targetPath>
+        <includes>
+          <include>jian/scenario/*.java</include>
+        </includes>
+      </resource>
+    </resources>
+  </build>
 </project>

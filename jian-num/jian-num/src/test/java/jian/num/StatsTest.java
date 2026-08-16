@@ -44,28 +44,35 @@ class StatsTest {
 
     @Test
     void percentile_中位数与Q1() {
-        // 注:Commons Math Percentile 默认插值方法(R-6/Hyndman-Fan type 6)与 numpy 默认(R-7/linear)不同,
-        // 中位数(50%)两者一致;非中位数有差异。本测试验证中位数精确 + Q1/Q3 在合理范围。
-        // M1 阶段会提供对齐 numpy linear 的可选插值(见 doc/06-jian-num.md TODO)。
+        // 钉 R-6 精确值(区间断言覆盖不了 R-6/R-7 差异,测不出插值方法是否被无意改动):
+        // Commons Math Percentile 默认 R-6(h=(n+1)·p):Q1 = 1 + 0.5×(2-1) = 1.5,Q3 = 4 + 0.5 = 4.5;
+        // 对照 numpy 'linear'/R-7(h=(n-1)·p+1)为 2.0/4.0 —— 差异是 doc/06 §取舍 声明的口径,
+        // numpy/pandas 口径请用 jian-core 的 DataFrameStats.percentile(自写 R-7)。
         double[] d = {1, 2, 3, 4, 5};
         assertThat(Stats.percentile(d, 50)).isEqualTo(3.0);   // 中位数两种算法都 = 3
-        assertThat(Stats.percentile(d, 25)).isBetween(1.5, 2.0);  // R-6=1.5, R-7=2.0
-        assertThat(Stats.percentile(d, 75)).isBetween(4.0, 4.5);
+        assertThat(Stats.percentile(d, 25)).as("R-6 Q1 精确值").isEqualTo(1.5);
+        assertThat(Stats.percentile(d, 75)).as("R-6 Q3 精确值").isEqualTo(4.5);
     }
 
     @Test
     void quantile_小数制() {
-        // np.quantile([1,2,3,4,5], 0.5) = 3
+        // np.quantile([1,2,3,4,5], 0.5) = 3(中位数 R-6/R-7 一致)
         assertThat(Stats.quantile(new double[]{1, 2, 3, 4, 5}, 0.5)).isEqualTo(3.0);
+        // 非中位数分位钉 R-6 口径(0.25 → 25%):1.5,与小数制换算一致
+        assertThat(Stats.quantile(new double[]{1, 2, 3, 4, 5}, 0.25)).isEqualTo(1.5);
     }
 
     @Test
     void describe_完整摘要() {
+        // Summary 8 字段全量验证:[1..5]:std(ddof=1)=√2.5 ≈ 1.5811,q1/q3 为 R-6 精确值(见上)
         Summary s = Stats.describe(new double[]{1, 2, 3, 4, 5});
         assertThat(s.count()).isEqualTo(5);
         assertThat(s.mean()).isEqualTo(3.0);
+        assertThat(s.std()).isCloseTo(Math.sqrt(2.5), within(1e-12));   // 样本标准差 ddof=1
         assertThat(s.min()).isEqualTo(1.0);
+        assertThat(s.q1()).isEqualTo(1.5);                              // R-6
         assertThat(s.median()).isEqualTo(3.0);
+        assertThat(s.q3()).isEqualTo(4.5);                              // R-6
         assertThat(s.max()).isEqualTo(5.0);
     }
 

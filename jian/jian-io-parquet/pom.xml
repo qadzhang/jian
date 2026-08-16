@@ -6,7 +6,7 @@
   <parent>
     <groupId>jian</groupId>
     <artifactId>jian-parent</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <relativePath>../../pom.xml</relativePath>
   </parent>
   <artifactId>jian-io-parquet</artifactId>
@@ -21,14 +21,71 @@
       <groupId>org.apache.parquet</groupId>
       <artifactId>parquet-avro</artifactId>
     </dependency>
-    <!-- parquet-avro API 间接引用 hadoop Path/Configuration;不启动 Hadoop 运行时(仅用 IO 类)-->
+    <!-- ┌─ 依赖治理(jian 只读写【本地】parquet,§2.5.1 精细引用)─────
+     │  hadoop-common / mapreduce-client-core 只用 jar 本身的本地 IO 类(Path/Configuration/
+     │  LocalFileSystem/TaskAttemptID 桩),其【全部传递依赖】通配排除 —— YARN/HDFS-Client/
+     │  Jersey/Guice/ZooKeeper/Curator/Netty/okhttp/kotlin 等分布式 WebHDFS 组件 jian 一概不用
+     │  (okhttp 4.x 是 Kotlin 写的,曾把 kotlin-stdlib 拖进 fat jar,违 §1.1「只用 Java」精神)。
+     │  运行必需的少量组件(shaded-guava/protobuf/slf4j/commons-io)按测试反馈在下方精确放回。 -->
     <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-common</artifactId>
+      <exclusions>
+        <exclusion><groupId>*</groupId><artifactId>*</artifactId></exclusion>
+      </exclusions>
     </dependency>
     <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-mapreduce-client-core</artifactId>
+      <exclusions>
+        <exclusion><groupId>*</groupId><artifactId>*</artifactId></exclusion>
+      </exclusions>
+    </dependency>
+    <!-- 放回:hadoop-common 本地 IO 运行最小集(版本 = hadoop 3.3.6 传递原版,防漂移) -->
+    <dependency>
+      <groupId>org.apache.hadoop.thirdparty</groupId>
+      <artifactId>hadoop-shaded-guava</artifactId>
+      <version>1.1.1</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hadoop.thirdparty</groupId>
+      <artifactId>hadoop-shaded-protobuf_3_7</artifactId>
+      <version>1.1.1</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-annotations</artifactId>
+      <version>3.3.6</version>
+    </dependency>
+    <dependency>
+      <groupId>commons-io</groupId>
+      <artifactId>commons-io</artifactId>
+      <version>2.21.0</version>
+    </dependency>
+    <dependency>
+      <groupId>com.google.protobuf</groupId>
+      <artifactId>protobuf-java</artifactId>
+      <version>3.25.5</version>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+    </dependency>
+    <!-- woodstox:hadoop Configuration 静态初始化需要(版本 = hadoop 3.3.6 传递原版) -->
+    <dependency>
+      <groupId>com.fasterxml.woodstox</groupId>
+      <artifactId>woodstox-core</artifactId>
+      <version>5.4.0</version>
+    </dependency>
+    <dependency>
+      <groupId>org.codehaus.woodstox</groupId>
+      <artifactId>stax2-api</artifactId>
+      <version>4.2.1</version>
+    </dependency>
+    <dependency>
+      <groupId>commons-collections</groupId>
+      <artifactId>commons-collections</artifactId>
+      <version>3.2.2</version>
     </dependency>
   </dependencies>
 </project>

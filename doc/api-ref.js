@@ -80,7 +80,7 @@ const API_REF = [
   {
     id:'ref-plot',module:'jian-viz',since:'v1.0',status:'stable',
     sig:'Plot.line/scatter/bar/hist/box(df, x, y) / Plot.savePng/saveSvg(chart, path)',
-    summary:'17种图表,对齐pandas.plot。line/scatter/bar/hist/box/kde/area/pie/hexbin/barh + scatterMatrix/autocorrelation/lagPlot。PNG/SVG双格式。适用于:数据探索可视化。',
+    summary:'13种图表,对齐pandas.plot。line/scatter/bar/hist/box/kde/area/pie/hexbin/barh + scatterMatrix/autocorrelation/lagPlot。PNG/SVG双格式。适用于:数据探索可视化。',
     params:[],returns:{type:'',desc:''},
     example:'import jian.viz.Plot;\nimport jian.core.*;\npublic class Demo {\n  public static void main(String[] args) throws Exception {\n    DataFrame df = DataFrame.of(\n        Schema.of("date",STRING,"price",DOUBLE),\n        new Object[][]{{"1日",100.0},{"2日",105.0},{"3日",102.0}});\n    // 折线图\n    Plot.savePng(Plot.line(df,"date","price"), "line.png");\n    // 柱状图\n    Plot.savePng(Plot.bar(df,"date","price"), "bar.png");\n    // 直方图(5个分箱)\n    Plot.savePng(Plot.hist(df,"price",5), "hist.png");\n    // SVG矢量输出(推荐用于报告)\n    Plot.saveSvg(Plot.line(df,"date","price"), "line.svg");\n  }\n}',throws:[]
   },
@@ -130,7 +130,7 @@ const API_REF = [
   {
     id:'ref-facade-full',module:'jian-facade',since:'v1.0',status:'stable',
     sig:'Jian.readOrc/readPickle/readSqlQuery/readFwf + Jian.toOrc/toPickle/toClipboard/toLatex/toMarkdown/toHtml',
-    summary:'门面 pandas 风格方法全量补齐(2026-08-02)。读:readCsv/readTable(TSV)/readFwf/readJson/readExcel/readHtml/readXml/readParquet/readOrc/readPickle/readSql/readSqlQuery/readSqlTable/readClipboard。写:toCsv/toTable/toJson/toExcel/toHtml/toXml/toParquet/toOrc/toPickle/toLatex/toMarkdown/toClipboard/toSql。read/write(path) 按扩展名分发,支持 .tsv/.orc。适用于:一个 jar 全格式读写。',
+    summary:'门面 pandas 风格方法全量补齐。读:readCsv/readTable(TSV)/readFwf/readJson/readExcel/readHtml/readXml/readParquet/readOrc/readPickle/readSql/readSqlQuery/readSqlTable/readClipboard。写:toCsv/toTable/toJson/toExcel/toHtml/toXml/toParquet/toOrc/toPickle/toLatex/toMarkdown/toClipboard/toSql。read/write(path) 按扩展名分发,支持 .tsv/.orc。适用于:一个 jar 全格式读写。',
     params:[],returns:{type:'',desc:''},
     example:'import jian.Jian;\nimport jian.core.*;\npublic class Demo {\n  public static void main(String[] args) throws Exception {\n    DataFrame df = DataFrame.of(\n        Schema.of("id",LONG,"name",STRING),\n        new Object[][]{{1L,"alice"},{2L,"bob"}});\n    // 全格式写出\n    Jian.toPickle(df, "data.jpk");\n    Jian.toOrc(df, "data.orc");\n    Jian.toMarkdown(df, "out.md");\n    Jian.write(df, "data.tsv");   // 按扩展名分发(含 .tsv)\n    // 全格式读回\n    DataFrame a = Jian.readPickle("data.jpk");\n    DataFrame b = Jian.readOrc("data.orc");\n    DataFrame c = Jian.read("data.tsv");\n    System.out.println(a.rowCount() + " " + b.rowCount() + " " + c.rowCount());\n  }\n}',throws:[]
   },
@@ -151,7 +151,7 @@ const API_REF = [
   {
     id:'ref-parquet-orc',module:'jian-io-parquet',since:'v1.0',status:'stable',
     sig:'Parquet.read(path).go() / Parquet.write(df, path).go() + Orc.read(path).go() / Orc.write(df, path).go()',
-    summary:'列式存储读写(对齐 pd.read_parquet / read_orc)。Parquet 基于 parquet-avro + LocalInputFile(不依赖 Hadoop);ORC 基于 orc-core 1.9.5(hadoop-client-runtime 提供 shaded woodstox,修复 NoClassDefFoundError)。写读往返类型一致。适用于:大数据量列存、数仓文件。',
+    summary:'列式存储读写(对齐 pd.read_parquet / read_orc)。Parquet 基于 parquet-avro + LocalInputFile(不依赖 Hadoop);ORC 基于 orc-core 1.9.5(hadoop-client-runtime 提供 shaded woodstox,避免 NoClassDefFoundError)。写读往返类型一致。适用于:大数据量列存、数仓文件。',
     params:[],returns:{type:'',desc:''},
     example:'import jian.io.parquet.Parquet;\nimport jian.io.orc.Orc;\nimport jian.core.*;\n\npublic class Demo {\n  public static void main(String[] args) throws Exception {\n    DataFrame df = DataFrame.of(\n        Schema.of("id", DType.LONG, "name", DType.STRING, "score", DType.DOUBLE),\n        new Object[][]{{1L, "alice", 90.5}, {2L, "bob", 85.0}});\n    // Parquet 列存(默认 SNAPPY 压缩)\n    Parquet.write(df, "data.parquet").go();\n    DataFrame p = Parquet.read("data.parquet").go();\n    // ORC 列存(orc-core 1.9.5 + hadoop-client-runtime)\n    Orc.write(df, "data.orc").go();\n    DataFrame o = Orc.read("data.orc").go();\n    System.out.println("parquet=" + p.rowCount() + " orc=" + o.rowCount());\n  }\n}',throws:[]
   },
@@ -179,7 +179,7 @@ const API_REF = [
   {
     id:'ref-excel-multi',module:'jian-io-excel',since:'v1.0',status:'stable',
     sig:'Excel.writer(path).write(df, "sheet1").write(df2, "sheet2")...(try-with-resources) + Excel.sheetNames(path) + Excel.read(path).sheet(name).go()',
-    summary:'Excel 多 sheet 读写(POI 5.5.1 原生,非 uber)。Excel.writer 返回 ExcelMultiWriter(AutoCloseable,close 时落盘);sheetNames 枚举;read().sheet(name) 读指定页。读路径含两阶段逐列类型推断与全套 POI 陷阱修复(空行/重名表头/≥15位 Long/公式缓存值)。适用于:多页报表导出。',
+    summary:'Excel 多 sheet 读写(POI 5.5.1 原生,非 uber)。Excel.writer 返回 ExcelMultiWriter(AutoCloseable,close 时落盘);sheetNames 枚举;read().sheet(name) 读指定页。读路径含两阶段逐列类型推断与全套 POI 陷阱处理(空行/重名表头/≥15位 Long/公式缓存值)。适用于:多页报表导出。',
     params:[],returns:{type:'',desc:''},
     example:'import jian.io.excel.Excel;\nimport jian.core.*;\n\npublic class Demo {\n  public static void main(String[] args) throws Exception {\n    DataFrame users = DataFrame.of(\n        Schema.of("id", DType.LONG, "name", DType.STRING),\n        new Object[][]{{1L, "alice"}});\n    DataFrame depts = DataFrame.of(\n        Schema.of("did", DType.STRING, "dname", DType.STRING),\n        new Object[][]{{"RD", "研发"}});\n    // 多 sheet 写(对齐 pandas.ExcelWriter,try-with-resources 自动落盘)\n    try (Excel.ExcelMultiWriter w = Excel.writer("multi.xlsx")) {\n      w.write(users, "users").write(depts, "depts");\n    }\n    // 枚举 sheet 名\n    System.out.println(Excel.sheetNames("multi.xlsx"));\n    // 读指定 sheet\n    DataFrame r = Excel.read("multi.xlsx").sheet("depts").go();\n    System.out.println(r.getStringColumn("dname").get(0));\n  }\n}',throws:[]
   },
@@ -218,40 +218,40 @@ const API_REF = [
     params:[],returns:{type:'',desc:''},
     example:'long[] ids = {1L, 2L, 3L};\ndouble[] vals = {10.0, 20.0, 30.0};\nDataFrame df = DataFrame.ofColumnArrays(\n    List.of("id", "val"),\n    new Object[]{ ids, vals });',throws:[]
   },
-  // ===== 2026-08-09 阶段 A-F + §3.16 补全 新方法卡 =====
-  { id:'ref-resample', module:'jian-core', since:'1.0.0', status:'alpha',
+  // ===== 扩展方法卡(各分册 §3.16 等)=====
+  { id:'ref-resample', module:'jian-core', since:'1.0.1', status:'alpha',
     sig:'df.resample("ts", "1D").sum() / .mean() / .count() / .ohlc("price")',
     summary:'时间序列重采样(对齐 pandas DataFrame.resample)。返回 Resampler 对象,链式调聚合(sum/mean/count/min/max/median/std/var/ohlc/agg/first/last 共 17 方法)。',
     params:[{name:'tsCol',type:'String',desc:'时间列名(LocalDateTime 元素)'},{name:'rule',type:'String',desc:'频率字符串("1D"/"2H"/"1W")'}],
     returns:{type:'Resampler',desc:'重采样器对象(链式调聚合)'},
     example:'DataFrame daily = df.resample("ts", "1D").sum();',throws:[]
   },
-  { id:'ref-corr-matrix', module:'jian-core', since:'1.0.0', status:'alpha',
+  { id:'ref-corr-matrix', module:'jian-core', since:'1.0.1', status:'alpha',
     sig:'df.corrMatrix() / df.covMatrix()',
     summary:'全数值列相关/协方差矩阵(对齐 pandas df.corr/cov)。经 StatsProvider SPI。',
     params:[],returns:{type:'DataFrame',desc:'方阵(行/列=数值列名)'},
     example:'DataFrame m = df.corrMatrix();',throws:[]
   },
-  { id:'ref-idxmax', module:'jian-core', since:'1.0.0', status:'alpha',
+  { id:'ref-idxmax', module:'jian-core', since:'1.0.1', status:'alpha',
     sig:'df.idxmax("v") / df.idxmin("v")',
     summary:'极值位置(对齐 pandas df.idxmax/idxmin)。空表/全缺失返回 -1。',
     params:[{name:'col',type:'String',desc:'数值列名'}],
     returns:{type:'int',desc:'首行下标;-1=无有效值'},
     example:'int i = df.idxmax("salary");',throws:[]
   },
-  { id:'ref-stack-unstack', module:'jian-core', since:'1.0.0', status:'alpha',
+  { id:'ref-stack-unstack', module:'jian-core', since:'1.0.1', status:'alpha',
     sig:'df.stack(idCols, valueCols) / df.unstack(idCol, keyCol, valCol)',
     summary:'长宽转换(对齐 pandas df.stack/unstack)。',
     params:[],returns:{type:'DataFrame',desc:'长/宽转换后的新表'},
     example:'DataFrame stacked = df.stack(new String[]{"id"}, new String[]{"q1","q2"});',throws:[]
   },
-  { id:'ref-interpolate', module:'jian-core', since:'1.0.0', status:'alpha',
+  { id:'ref-interpolate', module:'jian-core', since:'1.0.1', status:'alpha',
     sig:'df.interpolate()',
     summary:'线性插值填充缺失(对齐 pandas df.interpolate)。',
     params:[],returns:{type:'DataFrame',desc:'同结构,数值列缺失被线性插值填充'},
     example:'DataFrame r = df.interpolate();',throws:[]
   },
-  { id:'ref-sql-engine', module:'jian-dsl', since:'1.0.0', status:'alpha',
+  { id:'ref-sql-engine', module:'jian-dsl', since:'1.0.1', status:'alpha',
     sig:'SqlEngines.useRegex() / useJsqlParser() / useCustom(impl)',
     summary:'L3 SQL 引擎可插拔切换(库无关接口)。',
     params:[],returns:{type:'void',desc:'切换 ThreadLocal 引擎'},

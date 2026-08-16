@@ -10,7 +10,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 // ┌─ What : 阶段 C 重塑合并测试 —— pivot / explode / join / merge_asof / addScalarAllColumns / duplicated
 // │  Why  : §3.16 路线图重塑合并类方法,A 级断言
 // │  Who  : 阶段 C 落地回归测试
-// │  When : 2026-08-09 阶段 C
+// │  When : jian-core 测试套件常规执行
 // │  Where: jian-core/src/test/java/jian/core/StageCTest.java
 class StageCTest {
 

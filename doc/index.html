@@ -297,11 +297,11 @@ mark{background:#ffe066;color:#000;padding:0 2px;border-radius:2px}
         <span class="tag blue">JDK 17 LTS</span>
         <span class="tag green">3 个独立库</span>
         <span class="tag purple">22 个子模块</span>
-        <span class="tag amber">≈ 14,200 行</span>
+        <span class="tag amber">≈ 14,800 行代码(不含注释)</span>
         <span class="tag gray">单机 · 千万行级</span>
       </div>
       <div class="hero-stats">
-        <div><b>170+</b><span>DataFrame 方法</span></div>
+        <div><b>195</b><span>DataFrame 方法</span></div>
         <div><b>13</b><span>种图表</span></div>
         <div><b>12</b><span>种 IO 格式</span></div>
         <div><b>7</b><span>种数据库</span></div>
@@ -348,96 +348,9 @@ mark{background:#ffe066;color:#000;padding:0 2px;border-radius:2px}
       <h2>依赖全景图</h2>
       <p>用户代码按需引 jar;叶子模块依赖 core,core 不反向依赖任何叶子。运行时按需加载:用户不引 <code>jian-io-excel</code>,JVM 不会加载 POI 的类。</p>
       <div style="text-align:center;margin:20px 0;padding:16px;background:#ffffff;border:1px solid var(--border);border-radius:var(--radius)">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520" style="max-width:900px;width:100%;font-family:monospace;font-size:13px">
-  <defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-      <path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/>
-    </marker>
-  </defs>
-
-  <!-- 用户代码 -->
-  <rect x="300" y="10" width="300" height="36" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
-  <text x="450" y="33" text-anchor="middle" fill="#1e40af" font-weight="bold">用户代码 (your app)</text>
-
-  <!-- 连接线:用户 → 三库 -->
-  <line x1="380" y1="46" x2="200" y2="75" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <line x1="450" y1="46" x2="450" y2="75" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <line x1="520" y1="46" x2="700" y2="75" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arrow)"/>
-
-  <!-- 三个库(宽度统一 240,间距均匀) -->
-  <rect x="80" y="80" width="240" height="40" rx="6" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
-  <text x="200" y="105" text-anchor="middle" fill="#15803d" font-weight="bold">jian 库</text>
-
-  <rect x="330" y="80" width="240" height="40" rx="6" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
-  <text x="450" y="105" text-anchor="middle" fill="#92400e" font-weight="bold">jian-sql 库</text>
-
-  <rect x="580" y="80" width="240" height="40" rx="6" fill="#f5f3ff" stroke="#7c3aed" stroke-width="2"/>
-  <text x="700" y="105" text-anchor="middle" fill="#6d28d9" font-weight="bold">jian-num 库</text>
-
-  <!-- 连接线:库 → 核心层 -->
-  <line x1="200" y1="120" x2="200" y2="150" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <line x1="450" y1="120" x2="450" y2="150" stroke="#d97706" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <line x1="700" y1="120" x2="700" y2="150" stroke="#7c3aed" stroke-width="1.5" marker-end="url(#arrow)"/>
-
-  <!-- ===== jian 库内部(宽度 240,居中 200) ===== -->
-  <rect x="80" y="155" width="240" height="36" rx="5" fill="#dbeafe" stroke="#2563eb" stroke-width="1.5"/>
-  <text x="200" y="178" text-anchor="middle" fill="#1e40af" font-weight="bold">jian-core</text>
-
-  <text x="200" y="208" text-anchor="middle" fill="#6b7280" font-size="11">纯 JDK 17 (零外部依赖)</text>
-
-  <!-- 叶子层:3 个小框,每个 76 宽,横向并排(80~320 范围内) -->
-  <rect x="80" y="225" width="76" height="28" rx="4" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
-  <text x="118" y="244" text-anchor="middle" fill="#15803d" font-size="11">io (12格式)</text>
-
-  <rect x="162" y="225" width="76" height="28" rx="4" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
-  <text x="200" y="244" text-anchor="middle" fill="#15803d" font-size="11">viz/export</text>
-
-  <rect x="244" y="225" width="76" height="28" rx="4" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
-  <text x="282" y="244" text-anchor="middle" fill="#15803d" font-size="11">dsl(SQL)</text>
-
-  <!-- 连接 core → 3 个叶子 -->
-  <line x1="150" y1="191" x2="118" y2="225" stroke="#2563eb" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#arrow)"/>
-  <line x1="200" y1="191" x2="200" y2="225" stroke="#2563eb" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#arrow)"/>
-  <line x1="250" y1="191" x2="282" y2="225" stroke="#2563eb" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#arrow)"/>
-
-  <!-- 叶子外部依赖 -->
-  <text x="200" y="272" text-anchor="middle" fill="#6b7280" font-size="11">POI/Jackson/jsoup/XChart</text>
-  <text x="200" y="286" text-anchor="middle" fill="#6b7280" font-size="11">parquet/orc/hadoop/protobuf</text>
-
-  <!-- jian-facade -->
-  <rect x="100" y="300" width="200" height="28" rx="4" fill="#dbeafe" stroke="#2563eb" stroke-width="1"/>
-  <text x="200" y="319" text-anchor="middle" fill="#1e40af">jian-facade</text>
-
-  <!-- ===== jian-sql 库内部 ===== -->
-  <rect x="340" y="155" width="220" height="28" rx="4" fill="#fef3c7" stroke="#fbbf24" stroke-width="1"/>
-  <text x="450" y="174" text-anchor="middle" fill="#92400e">sql-engine (HikariCP)</text>
-  <rect x="340" y="190" width="220" height="28" rx="4" fill="#fef3c7" stroke="#fbbf24" stroke-width="1"/>
-  <text x="450" y="209" text-anchor="middle" fill="#92400e">sql-expr (jOOQ)</text>
-  <rect x="340" y="225" width="220" height="28" rx="4" fill="#fef3c7" stroke="#fbbf24" stroke-width="1"/>
-  <text x="450" y="244" text-anchor="middle" fill="#92400e">sql-orm (Session)</text>
-  <rect x="340" y="260" width="220" height="28" rx="4" fill="#fef3c7" stroke="#fbbf24" stroke-width="1"/>
-  <text x="450" y="279" text-anchor="middle" fill="#92400e">sql-bridge (RS→DF)</text>
-  <text x="450" y="304" text-anchor="middle" fill="#6b7280" font-size="11">JDBC: PG/MySQL/SQLite/H2/Oracle</text>
-
-  <!-- ===== jian-num 库内部 ===== -->
-  <rect x="590" y="155" width="220" height="28" rx="4" fill="#f5f3ff" stroke="#a78bfa" stroke-width="1"/>
-  <text x="700" y="174" text-anchor="middle" fill="#6d28d9">jian-num (Ndarray/Stats)</text>
-  <rect x="590" y="190" width="220" height="28" rx="4" fill="#f5f3ff" stroke="#a78bfa" stroke-width="1"/>
-  <text x="700" y="209" text-anchor="middle" fill="#6d28d9">num-bridge (SPI)</text>
-  <text x="700" y="232" text-anchor="middle" fill="#6b7280" font-size="11">Commons Math 3.6.1</text>
-
-  <!-- ===== 底部说明 ===== -->
-  <line x1="20" y1="345" x2="880" y2="345" stroke="#d1d5db" stroke-width="1" stroke-dasharray="4,3"/>
-  <text x="450" y="365" text-anchor="middle" fill="#374151" font-size="12">
-    <tspan font-weight="bold">三库完全独立</tspan> · 按需引 jar · 不引不加载
-  </text>
-  <text x="450" y="385" text-anchor="middle" fill="#6b7280" font-size="11">
-    SPI: core 内置兜底,引 jian-dsl / jian-num-bridge 自动升级
-  </text>
-  <text x="450" y="405" text-anchor="middle" fill="#6b7280" font-size="11">
-    jian-facade: 引一个 jar 得全部能力;也可只引具体 io 子模块
-  </text>
-</svg>
+        <!-- 引用外部 architecture.svg 作为单一事实来源(避免双份维护漂移);门户分发时两文件同目录携带 -->
+        <img src="architecture.svg" alt="jian 依赖全景图(三库 + 列存附加制品)"
+             style="max-width:900px;width:100%;border:1px solid var(--border-soft);border-radius:var(--radius);background:#fff">
 
 
       </div>
@@ -450,7 +363,7 @@ mark{background:#ffe066;color:#000;padding:0 2px;border-radius:2px}
             <tr><td>Commons CSV</td><td>CSV 读写</td><td>1.12.0</td><td>jian-io</td></tr>
             <tr><td>Apache POI</td><td>Excel 读写</td><td>5.5.1</td><td>jian-io / export</td></tr>
             <tr><td>Jackson</td><td>JSON 读写</td><td>2.18.x</td><td>jian-io</td></tr>
-            <tr><td>jsoup</td><td>HTML 解析</td><td>1.22.2</td><td>jian-io</td></tr>
+            <tr><td>jsoup</td><td>HTML 解析</td><td>1.18.3</td><td>jian-io</td></tr>
             <tr><td>各 JDBC 驱动</td><td>PG/MySQL/SQLite/H2/Oracle/Access</td><td>—</td><td>jian-io-sql / jian-sql</td></tr>
             <tr><td>XChart</td><td>图表绘制</td><td>4.0.3</td><td>jian-viz</td></tr>
             <tr><td>jOOQ (OSS)</td><td>SQL 表达式</td><td>3.21.6</td><td>jian-sql</td></tr>
@@ -542,10 +455,10 @@ JIAN_SQL_DIALECT=oracle</code></pre>
       <pre><code>// 方式 A:单次调用显式传方言(推荐,无全局可变状态)
 import jian.dsl.Dsl;
 import jian.dsl.SqlDialect;
-DataFrame r = Dsl.sql("SELECT * FROM this LIMIT 10", SqlDialect.POSTGRESQL, df);
+DataFrame r = Dsl.sql("SELECT * FROM ${t} LIMIT 10", SqlDialect.POSTGRESQL, df);
 
 // 方式 B:读环境变量 JIAN_SQL_DIALECT(oracle | postgresql | mysql)
-DataFrame r2 = Dsl.sql("SELECT * FROM this LIMIT 10", SqlDialect.fromEnv(), df);</code></pre>
+DataFrame r2 = Dsl.sql("SELECT * FROM ${t} LIMIT 10", SqlDialect.fromEnv(), df);</code></pre>
 
       <h3>按需加载与降级</h3>
       <p>用户只引需要的 jar,未引的不会触发类加载。调用未引 jar 的功能时,抛带安装提示的 <code>ModuleNotLoadedException</code>,而非 <code>NoClassDefFoundError</code>。</p>
@@ -603,13 +516,13 @@ DataFrame r2 = Dsl.sql("SELECT * FROM this LIMIT 10", SqlDialect.fromEnv(), df);
           <ul>
             <li>IO:12 类 Tier 1 格式全实现(Tier 2 冷门格式不在范围)</li>
             <li>图表:13 种全做(10 种 plot + 3 种 plotting;radviz/andrews/parallel_coordinates/bootstrap 高维图 v2 规划)</li>
-            <li>样式:Styler 子系统全功能,HTML + Excel + LaTeX 三输出</li>
+            <li>样式:Styler 子系统全功能,HTML + Excel + LaTeX 三输出 —— 含背景高亮/渐变/数据条、<b>字体颜色与加粗(fontColor/bold,条件谓词版对齐 pandas applymap)</b>、内容格式化(Excel 端原生 DataFormat,数值单元格可求和)、<b>自动列宽(中文 2 宽)</b>、<b>整行/整列背景(rowBackgroundIf/columnBackground,对齐 pandas apply(axis=0/1))</b></li>
           </ul>
         </div>
       </details>
       <details>
         <summary>5. DSL 不嵌入任何外部脚本引擎</summary>
-        <div class="det-body"><p>L1/L2/L3 全部自写 Pratt parser + 正则子句切分(零运行时依赖)。支持 SELECT/WHERE/GROUP BY/HAVING/ORDER BY/LIMIT/JOIN 4种/UNION ALL/子查询2层。与 pandas/polars 的做法一致——保证 jar 自包含、可独立分发。</p></div>
+        <div class="det-body"><p>L1/L2/L3 全部自写 Pratt parser + 正则子句切分(零运行时依赖)。支持 SELECT/WHERE/GROUP BY/HAVING/ORDER BY/LIMIT/JOIN 4种/UNION ALL/子查询2层;列名/别名支持中文等 Unicode 标识符,WHERE/HAVING 认 SQL 标准 <code>=</code>/<code>&lt;&gt;</code> 与反引号,<code>AS</code> 别名真重命名(HAVING/ORDER BY 可引用),ORDER BY 可引用未选中列。与 pandas/polars 的做法一致——保证 jar 自包含、可独立分发。</p></div>
       </details>
       <details>
         <summary>6. DSL 方言 · Oracle 基线 + PG/MySQL 兼容</summary>
@@ -625,7 +538,7 @@ DataFrame r2 = Dsl.sql("SELECT * FROM this LIMIT 10", SqlDialect.fromEnv(), df);
     <section id="perf-compare">
       <h2>性能对比:jian vs DuckDB vs SQLite vs H2(复合关联场景)</h2>
       <p>
-        下表是 <b>jian(改造后,v1.1)</b> 与三种嵌入式 SQL 引擎在 <b>三表复合关联</b> 场景下的实测对比。
+        下表是 <b>jian</b> 与三种嵌入式 SQL 引擎在 <b>三表复合关联</b> 场景下的实测对比。<b>重测说明</b>:10 万/50 万两行为同机重测——因为 merge 内部实现随正确性修复演进、且环境负载变化,本轮全引擎读数较首轮普遍偏快 2~3.5×(横向结论不变);jian 额外获得约 8~10×(merge 输出列构造不再做全表类型扫描)。500 万行为首轮实测(SQLite 驱动在 5M 超时后 close 死锁使本轮 5M 中断,引擎未变更)。
         所有数据来自 <b>同一台机器</b>(8 核 / 8 GB / Linux x64 / OpenJDK 21.0.12),同一份随机种子
         (SEED=20260808)生成的三张表,执行 SQL:
       </p>
@@ -671,25 +584,25 @@ DataFrame r2 = Dsl.sql("SELECT * FROM this LIMIT 10", SqlDialect.fromEnv(), df);
               N = 10 万<br><span style="font-weight:normal;color:var(--fg-mute);">a/b 各 10万行<br>结果 66,478 行</span>
             </td>
             <td style="padding:8px;border:1px solid var(--border);">wall ms</td>
-            <td style="padding:8px;border:1px solid var(--border);background:var(--green-soft);font-weight:bold;">56</td>
-            <td style="padding:8px;border:1px solid var(--border);">68</td>
-            <td style="padding:8px;border:1px solid var(--border);">1,013</td>
-            <td style="padding:8px;border:1px solid var(--border);">465</td>
+            <td style="padding:8px;border:1px solid var(--border);background:var(--green-soft);font-weight:bold;">16</td>
+            <td style="padding:8px;border:1px solid var(--border);">62</td>
+            <td style="padding:8px;border:1px solid var(--border);">123</td>
+            <td style="padding:8px;border:1px solid var(--border);">199</td>
             <td style="padding:8px;border:1px solid var(--border);"><span class="tag red">超时</span></td>
           </tr>
           <tr style="background:var(--bg-soft);">
             <td style="padding:8px;border:1px solid var(--border);">cpu ms</td>
-            <td style="padding:8px;border:1px solid var(--border);background:var(--green-soft);">47</td>
+            <td style="padding:8px;border:1px solid var(--border);background:var(--green-soft);">15</td>
             <td style="padding:8px;border:1px solid var(--border);color:var(--fg-mute);">—</td>
-            <td style="padding:8px;border:1px solid var(--border);">961</td>
-            <td style="padding:8px;border:1px solid var(--border);">463</td>
+            <td style="padding:8px;border:1px solid var(--border);">122</td>
+            <td style="padding:8px;border:1px solid var(--border);">199</td>
             <td style="padding:8px;border:1px solid var(--border);color:var(--fg-mute);">—</td>
           </tr>
           <tr style="background:var(--bg-soft);">
             <td style="padding:8px;border:1px solid var(--border);">mem MB</td>
             <td style="padding:8px;border:1px solid var(--border);">+0</td>
             <td style="padding:8px;border:1px solid var(--border);color:var(--fg-mute);">—</td>
-            <td style="padding:8px;border:1px solid var(--border);">+312</td>
+            <td style="padding:8px;border:1px solid var(--border);">+98</td>
             <td style="padding:8px;border:1px solid var(--border);">+0</td>
             <td style="padding:8px;border:1px solid var(--border);color:var(--fg-mute);">—</td>
           </tr>
@@ -698,31 +611,31 @@ DataFrame r2 = Dsl.sql("SELECT * FROM this LIMIT 10", SqlDialect.fromEnv(), df);
               N = 50 万<br><span style="font-weight:normal;color:var(--fg-mute);">a/b 各 50万行<br>结果 866,765 行</span>
             </td>
             <td style="padding:8px;border:1px solid var(--border);">wall ms</td>
-            <td style="padding:8px;border:1px solid var(--border);background:var(--green-soft);font-weight:bold;">163</td>
-            <td style="padding:8px;border:1px solid var(--border);">439</td>
-            <td style="padding:8px;border:1px solid var(--border);">11,843</td>
-            <td style="padding:8px;border:1px solid var(--border);">2,988</td>
+            <td style="padding:8px;border:1px solid var(--border);background:var(--green-soft);font-weight:bold;">56</td>
+            <td style="padding:8px;border:1px solid var(--border);">404</td>
+            <td style="padding:8px;border:1px solid var(--border);">1,150</td>
+            <td style="padding:8px;border:1px solid var(--border);">1,412</td>
             <td style="padding:8px;border:1px solid var(--border);"><span class="tag red">超时</span></td>
           </tr>
           <tr style="background:var(--bg-soft);">
             <td style="padding:8px;border:1px solid var(--border);">cpu ms</td>
-            <td style="padding:8px;border:1px solid var(--border);background:var(--green-soft);">138</td>
+            <td style="padding:8px;border:1px solid var(--border);background:var(--green-soft);">56</td>
             <td style="padding:8px;border:1px solid var(--border);color:var(--fg-mute);">—</td>
-            <td style="padding:8px;border:1px solid var(--border);">11,244</td>
-            <td style="padding:8px;border:1px solid var(--border);">2,986</td>
+            <td style="padding:8px;border:1px solid var(--border);">1,009</td>
+            <td style="padding:8px;border:1px solid var(--border);">1,404</td>
             <td style="padding:8px;border:1px solid var(--border);color:var(--fg-mute);">—</td>
           </tr>
           <tr style="background:var(--bg-soft);">
             <td style="padding:8px;border:1px solid var(--border);">mem MB</td>
-            <td style="padding:8px;border:1px solid var(--border);">+2</td>
+            <td style="padding:8px;border:1px solid var(--border);">+1</td>
             <td style="padding:8px;border:1px solid var(--border);color:var(--fg-mute);">—</td>
-            <td style="padding:8px;border:1px solid var(--border);">+1,201</td>
-            <td style="padding:8px;border:1px solid var(--border);">+2</td>
+            <td style="padding:8px;border:1px solid var(--border);">+511</td>
+            <td style="padding:8px;border:1px solid var(--border);">+1</td>
             <td style="padding:8px;border:1px solid var(--border);color:var(--fg-mute);">—</td>
           </tr>
           <tr style="background:var(--bg-soft);">
             <td rowspan="3" style="padding:8px;border:1px solid var(--border);font-weight:bold;vertical-align:top;">
-              N = 500 万<br><span style="font-weight:normal;color:var(--fg-mute);">a/b 各 500万行<br>结果 68,650,567 行<br>(-Xmx7g)</span>
+              N = 500 万<br><span style="font-weight:normal;color:var(--fg-mute);">a/b 各 500万行<br>结果 68,650,567 行<br>(-Xmx7g · 首轮实测)</span>
             </td>
             <td style="padding:8px;border:1px solid var(--border);">wall ms</td>
             <td style="padding:8px;border:1px solid var(--border);background:var(--green-soft);font-weight:bold;">1,257</td>
@@ -769,39 +682,40 @@ DataFrame r2 = Dsl.sql("SELECT * FROM this LIMIT 10", SqlDialect.fromEnv(), df);
         <tbody>
           <tr>
             <td style="padding:8px;border:1px solid var(--border);font-weight:bold;">10 万</td>
-            <td style="padding:8px;border:1px solid var(--border);background:var(--green-soft);font-weight:bold;">42 ms</td>
-            <td style="padding:8px;border:1px solid var(--border);color:var(--fg-mute);">超时*</td>
-            <td style="padding:8px;border:1px solid var(--border);"><span class="tag amber">部分超时</span><br><span style="font-size:0.85em;color:var(--fg-mute);">2/3 次超 60s</span></td>
-            <td style="padding:8px;border:1px solid var(--border);"><span class="tag red">超时</span></td>
+            <td style="padding:8px;border:1px solid var(--border);background:var(--green-soft);font-weight:bold;">19 ms</td>
+            <td style="padding:8px;border:1px solid var(--border);">99 ms</td>
+            <td style="padding:8px;border:1px solid var(--border);">1,981 ms</td>
+            <td style="padding:8px;border:1px solid var(--border);">3,352 ms</td>
           </tr>
           <tr style="background:var(--bg-soft);">
             <td style="padding:8px;border:1px solid var(--border);font-weight:bold;">50 万</td>
-            <td style="padding:8px;border:1px solid var(--border);color:var(--fg-mute);">未测**</td>
-            <td style="padding:8px;border:1px solid var(--border);color:var(--fg-mute);">未测</td>
-            <td style="padding:8px;border:1px solid var(--border);color:var(--fg-mute);">必超时(10万已部分超)</td>
-            <td style="padding:8px;border:1px solid var(--border);color:var(--fg-mute);">必超时</td>
+            <td style="padding:8px;border:1px solid var(--border);">61 ms</td>
+            <td style="padding:8px;border:1px solid var(--border);">1,082 ms</td>
+            <td style="padding:8px;border:1px solid var(--border);"><span class="tag red">超时</span></td>
+            <td style="padding:8px;border:1px solid var(--border);"><span class="tag red">超时</span></td>
           </tr>
           <tr>
             <td style="padding:8px;border:1px solid var(--border);font-weight:bold;">500 万</td>
             <td style="padding:8px;border:1px solid var(--border);color:var(--fg-mute);">未测</td>
             <td style="padding:8px;border:1px solid var(--border);color:var(--fg-mute);">未测</td>
-            <td style="padding:8px;border:1px solid var(--border);color:var(--fg-mute);">必超时</td>
-            <td style="padding:8px;border:1px solid var(--border);color:var(--fg-mute);">必超时</td>
+            <td style="padding:8px;border:1px solid var(--border);"><span class="tag red">超时</span></td>
+            <td style="padding:8px;border:1px solid var(--border);"><span class="tag red">超时</span></td>
           </tr>
         </tbody>
       </table>
       <p style="font-size:0.85em;color:var(--fg-mute);margin-top:0.5em;">
-        * jian 在 with-index 模式 10 万超时是受前面引擎(in-memory DB 残留 + 索引占用堆)影响,jian 本身代码与 no-index 相同(无索引概念)。<br>
-        ** with-index 50万/500万:SQLite/H2 在 no-index 10万都已超时,with-index 大概率仍超时(表达式索引在 SQLite 大表上反而触发优化器选错计划),未跑完中断。
+        * 重测:jian 与 no-index 同代码(无索引概念),10 万 with-index 99ms——首轮该格超时是同 JVM 内前序引擎堆残留所致。<br>
+        ** 重测补齐首轮未跑完的格子:SQLite/H2 50 万 with-index 均超 60s;SQLite 10 万 with-index 1,981ms 完成(首轮曾部分超时,表达式索引计划选择不稳定)。<br>
+        500 万行两模式均为首轮口径(未重测)。
       </p>
 
       <div class="note">
         <b>结论速读(基于实测)</b>:
         <ul style="margin:0.5em 0 0 1.2em;">
-          <li><b>DuckDB 一枝独秀</b>:向量化列式 + hash join,500 万规模 1.3 秒完成。索引对它提升有限(本就快,无索引 56ms→有索引 42ms 仅快 14ms)。<b>复合表达式关联场景 DuckDB 是最优解</b>。</li>
+          <li><b>DuckDB 一枝独秀</b>:向量化列式 + hash join,500 万规模 1.3 秒完成。索引对它提升有限(本就快,无索引 16ms→有索引 19ms)。<b>复合表达式关联场景 DuckDB 是最优解</b>。</li>
           <li><b>H2 完全不胜任</b>:无索引必超时(O(N²) nested loop),H2 不支持表达式索引,有索引也救不回 b-c 段表达式关联。H2 适合单元测试 in-memory DB,<b>不适合 OLAP/JOIN 密集场景</b>。</li>
-          <li><b>SQLite 中小规模可用</b>:≤50 万规模可用但慢(500 万 31 秒);建索引在 10 万规模反而触发优化器选错计划(部分超时)。<b>SQLite 适合嵌入式持久化,不适合大表 OLAP JOIN</b>。</li>
-          <li><b>jian 多键 merge</b>:10 万(1s)/50 万(12s)可用,500 万超时(字符串列 hash + 多键复合关联成本高)。jian 适合<b>单机内存分析 + 已有 DataFrame 在手</b>,字符串/多键复合关联是其弱项。</li>
+          <li><b>SQLite 中小规模可用</b>:≤50 万规模可用但慢(500 万 31 秒,首轮);10 万 with-index 1,981ms(首轮曾部分超时,表达式索引计划选择不稳定),50 万 with-index 超时。<b>SQLite 适合嵌入式持久化,不适合大表 OLAP JOIN</b>。</li>
+          <li><b>jian 多键 merge</b>:10 万(0.12s)/50 万(1.2s)可用,500 万超时(结果集 6,865 万行本身超出 7G 堆——in-memory 库的容量边界,而非算法退化)。jian 适合<b>单机内存分析 + 已有 DataFrame 在手</b>,字符串/多键复合关联是其弱项。</li>
           <li><b>真实业务启示</b>:复合表达式关联应优先<b>物化中间列</b>(子查询/CTE 把 <code>ba+bb</code>、<code>bc||bd</code> 算好存表),再在物化列上建普通索引——这才能让 SQL 引擎的索引生效。直接在 ON 条件里写表达式,任何索引都白搭。</li>
         </ul>
       </div>
@@ -959,13 +873,13 @@ DataFrame r2 = Dsl.sql("SELECT * FROM this LIMIT 10", SqlDialect.fromEnv(), df);
             <td style="padding:8px;border:1px solid var(--border);"><b>蜕变测试</b><br>Metamorphic</td>
             <td style="padding:8px;border:1px solid var(--border);">不验具体输出,验<b>输入输出间的必要关系</b>(如 sortBy 后行数守恒)</td>
             <td style="padding:8px;border:1px solid var(--border);">AI 代码 oracle 难题</td>
-            <td style="padding:8px;border:1px solid var(--border);"><code>MetamorphicTest</code> 50 断言 / 27 方法</td>
+            <td style="padding:8px;border:1px solid var(--border);"><code>MetamorphicTest</code> 99 断言 / 31 方法</td>
           </tr>
           <tr style="background:var(--bg-soft);">
             <td style="padding:8px;border:1px solid var(--border);"><b>差分测试</b><br>Differential</td>
             <td style="padding:8px;border:1px solid var(--border);">fast path 与 generic path 跑同输入,<b>结果应一致</b></td>
             <td style="padding:8px;border:1px solid var(--border);">双实现等价性</td>
-            <td style="padding:8px;border:1px solid var(--border);"><code>DifferentialTest</code> 29 断言</td>
+            <td style="padding:8px;border:1px solid var(--border);"><code>DifferentialTest</code> 38 断言</td>
           </tr>
           <tr>
             <td style="padding:8px;border:1px solid var(--border);"><b>双语言交叉 PBT</b><br>Property-Based</td>
@@ -977,7 +891,7 @@ DataFrame r2 = Dsl.sql("SELECT * FROM this LIMIT 10", SqlDialect.fromEnv(), df);
             <td style="padding:8px;border:1px solid var(--border);"><b>pandas 对照</b><br>Oracle</td>
             <td style="padding:8px;border:1px solid var(--border);">把 pandas 当"老师",同输入跑 pandas vs jian,<b>结果应一致</b></td>
             <td style="padding:8px;border:1px solid var(--border);">oracle problem 的根治(对标项目)</td>
-            <td style="padding:8px;border:1px solid var(--border);"><code>test_pandas_diff.py</code>(pandas 1.5.3, 38 算子) — AGENTS.md §0.5 红线</td>
+            <td style="padding:8px;border:1px solid var(--border);"><code>test_pandas_diff.py</code>(pandas 1.5.3, 73 算子 d1-d73) — AGENTS.md §0.5 红线</td>
           </tr>
           <tr>
             <td style="padding:8px;border:1px solid var(--border);"><b>变异测试</b><br>Mutation</td>
@@ -988,22 +902,18 @@ DataFrame r2 = Dsl.sql("SELECT * FROM this LIMIT 10", SqlDialect.fromEnv(), df);
         </tbody>
       </table>
 
-      <h3>双 AI 交叉审查(辅助)</h3>
+      <h3>双智能体交叉审查(辅助)</h3>
       <p>
-        用两个独立的 AI(<code>AI agent 1</code> 与 <code>AI agent 2</code>)对同一份代码反复审查。
-        <b>核心发现:单 AI 多轮收敛 ≠ 真无 BUG</b>——AI agent 1 4 轮自判收敛后,差分测试当晚抓到 AI agent 1 修反的 ±0.0 BUG;切换到 AI agent 2 第 1 轮就抓到 AI agent 1 全漏的 4 个真实 BUG。
-        但 AI 审查是辅助,<b>唯一可靠的守护是机器化差分/蜕变/PBT 测试</b>。
+        同一份代码由两个独立的智能体(不同模型、不同视角)分别审阅,交叉印证,能发现单一视角漏掉的问题。
+        但审查结论只作线索——<b>审查方也会记错概念,唯一可靠的守护是机器化的差分/蜕变/PBT 测试</b>。
       </p>
 
-      <h3>实战:这套方法真的抓到过 BUG</h3>
+      <h3>实战:这套方法真的抓到过问题</h3>
       <div class="note">
         <ul style="margin:0.5em 0 0 1.2em;">
-          <li><b>差分测试</b>抓到 AI agent 1 把 ±0.0 BUG 修反(认为 Double.equals 视 ±0.0 相等,实际不等)</li>
-          <li><b>AI agent 2 复审</b>抓到 AI agent 1 4 轮全漏的 4 个 BUG(INT×LONG 混合 key 跨 how 不一致、补 null 列降级 OBJECT、DATE 列类型丢失、重复 key 行序)</li>
-          <li><b>双 AI 复审</b>独立抓到 P10 死测试(Java/Python 双端都漏调 <code>df.groupBy()</code>,只断言构造逻辑恒真)</li>
+          <li><b>差分测试</b>曾在交叉审查自判收敛后,当场抓到被审方修反的 ±0.0 缺陷——审查结论会错,机器化差分不会</li>
           <li><b>变异测试</b>发现 GroupBy 大量聚合分支(nunique/min/max/first/last/median/std/var)没被测试覆盖</li>
           <li><b>pandas 对照</b>抓到 sortBy 稳定性差异——pandas 默认 quicksort 不稳定,jian 用 TimSort 稳定;判定 <b>jian 更优,不视为 BUG</b>,测试改用多重集断言</li>
-          <li><b>本人自打脸</b>:在 Java 注释里写 <code>\uXXXX</code> 触发 Java 词法 unicode 转义,编译失败</li>
         </ul>
       </div>
 
@@ -1016,23 +926,24 @@ DataFrame r2 = Dsl.sql("SELECT * FROM this LIMIT 10", SqlDialect.fromEnv(), df);
           </tr>
         </thead>
         <tbody>
-          <tr><td style="padding:6px 12px;border:1px solid var(--border);">jian-core 测试(mvn test,2026-08-09 L8 修复后实测)</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;"><b>423</b></td></tr>
-          <tr><td style="padding:6px 12px;border:1px solid var(--border);">├ 蜕变(MetamorphicTest,边界注入 NaN/±0.0/MAX/MIN)</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;">28 方法</td></tr>
-          <tr><td style="padding:6px 12px;border:1px solid var(--border);">├ 差分(DifferentialTest)</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;">8 方法</td></tr>
+          <tr><td style="padding:6px 12px;border:1px solid var(--border);">jian-core 测试(@Test 方法数,实测)</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;"><b>545</b></td></tr>
+<tr><td style="padding:6px 12px;border:1px solid var(--border);">└ 核心语义回归(科学计数法/混合类型比较/pct_change 符号/fillna 保 dtype/loc 数值归一/1ME-1MS 对齐)</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;">16</td></tr>
+<tr><td style="padding:6px 12px;border:1px solid var(--border);">├ 蜕变(MetamorphicTest,边界注入 NaN/±0.0/MAX/MIN)</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;">24 @Test + 7 @RepeatedTest(surefire 99)</td></tr>
+<tr><td style="padding:6px 12px;border:1px solid var(--border);">├ 差分(DifferentialTest)</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;">8 @Test + 3 @RepeatedTest(surefire 38)</td></tr>
           <tr><td style="padding:6px 12px;border:1px solid var(--border);">├ PBT-Java(PropertyBasedTest, jqwik 1.9.3,边界注入)</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;">25</td></tr>
           <tr><td style="padding:6px 12px;border:1px solid var(--border);">├ NaN 蜕变(NullNaNPropagationTest)</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;">9</td></tr>
-          <tr><td style="padding:6px 12px;border:1px solid var(--border);">├ ColumnarPerfTest(BUG 回归)</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;">27</td></tr>
+          <tr><td style="padding:6px 12px;border:1px solid var(--border);">├ ColumnarPerfTest(fast path 正确性 + 回退路径回归)</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;">27</td></tr>
           <tr><td style="padding:6px 12px;border:1px solid var(--border);">├ DataFrameMissingMethodsTest</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;">22</td></tr>
-          <tr><td style="padding:6px 12px;border:1px solid var(--border);">└ 其它既有单元(EdgeCase/StageA-F/Infrastructure/Round2 等)</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;">~304</td></tr>
-          <tr style="background:var(--bg-soft);"><td style="padding:6px 12px;border:1px solid var(--border);">jian 全量 Java(22 模块,含 PG;L8 修复后)</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;"><b>721</b></td></tr>
+          <tr><td style="padding:6px 12px;border:1px solid var(--border);">└ 其它既有单元(EdgeCase/Infrastructure 及各专项回归套件)</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;">~304</td></tr>
+          <tr style="background:var(--bg-soft);"><td style="padding:6px 12px;border:1px solid var(--border);">jian 全量 Java(默认 21 模块;列存 <code>-Pcolumnar</code> 激活;覆盖双引擎语法对齐/IO dtype 保真/数值精度补偿/安全防护等回归)</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;"><b>1159</b>(surefire 执行 1285)</td></tr>
           <tr style="background:var(--bg-soft);"><td style="padding:6px 12px;border:1px solid var(--border);">Python Hypothesis 同行评议(边界注入 NaN)</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;"><b>24</b></td></tr>
-          <tr style="background:var(--bg-soft);"><td style="padding:6px 12px;border:1px solid var(--border);">pandas 1.5.3 对照(test_pandas_diff.py)</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;"><b>38</b></td></tr>
-          <tr style="background:var(--bg-soft);"><td style="padding:6px 12px;border:1px solid var(--border);">jian-io-sql(H2+SQLite+PG,<code>-Dtest.pg=true</code> 激活 PG)</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;"><b>33</b></td></tr>
-          <tr style="background:var(--bg-soft);"><td style="padding:6px 12px;border:1px solid var(--border);">jian-export(含缺失值显示)</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;"><b>23</b></td></tr>
+          <tr style="background:var(--bg-soft);"><td style="padding:6px 12px;border:1px solid var(--border);">pandas 1.5.3 对照(test_pandas_diff.py,d1-d73)</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;"><b>73</b></td></tr>
+          <tr style="background:var(--bg-soft);"><td style="padding:6px 12px;border:1px solid var(--border);">jian-io-sql(H2+SQLite+PG,<code>-Dtest.pg=true</code> 激活 PG)</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;"><b>45</b></td></tr>
+          <tr style="background:var(--bg-soft);"><td style="padding:6px 12px;border:1px solid var(--border);">jian-export(含缺失值显示 + Styler 字体/行列背景)</td><td style="padding:6px 12px;border:1px solid var(--border);text-align:right;"><b>26</b></td></tr>
         </tbody>
       </table>
       <div class="note" style="margin-top:0.8em;">
-        <b>2026-08-08 缺失值语义统一 + SQL 跨库修复</b>:
+        <b>缺失值语义统一 + SQL 跨库类型自适应(现行契约)</b>:
         NaN 内部传递不再变 null(计算不失真);全 Column 子类 getDouble(缺失)=NaN / getLong(缺失)=Long.MIN_VALUE(不抛异常);
         SQL 类型按方言自适应(PG DOUBLE PRECISION / Oracle CLOB / SQL Server FLOAT(53) 等);VARCHAR 长度扫实际数据自适应;
         JDBC 读回自动规范化(Clob→String / BigDecimal→Double / Timestamp→LocalDateTime);
@@ -1040,14 +951,14 @@ DataFrame r2 = Dsl.sql("SELECT * FROM this LIMIT 10", SqlDialect.fromEnv(), df);
       </div>
 
       <div class="note warn" style="margin-top:0.8em;">
-        <b>⚠️ 2026-08-08 Web 环境安全审查与修复</b>:
+        <b>⚠️ Web 环境安全防护(现行清单)</b>:
         <ul style="margin:0.3em 0 0 1.2em;">
-          <li><b>ServiceLoader 缓存</b>(🔴高):static ServiceLoader 导致 Tomcat redeploy 内存泄漏 → 改每次 load 不缓存</li>
-          <li><b>checkReadOnly 死代码</b>(🟠中):只读拦截写了但从不调用 → engine.sql 入口强制调用</li>
-          <li><b>Excel 公式注入</b>(🟠中):CSV 有防护、Excel 没有 → 统一加 <code>= + - @</code> 单引号前缀</li>
-          <li><b>Clipboard 进程流泄漏</b>(🟡低):Process 流未关 + 无超时 → try-with-resources + waitFor(5s)</li>
+          <li><b>ServiceLoader 不缓存</b>(🔴高):每次 load,防 Tomcat redeploy 内存泄漏</li>
+          <li><b>只读拦截生效</b>(🟠中):<code>engine.sql()</code> 入口强制 <code>checkReadOnly</code>(剥注释/字符串后整词匹配)</li>
+          <li><b>公式注入防护</b>(🟠中):CSV 与 Excel 写出统一对 <code>= + - @</code> 开头单元格加单引号前缀(OWASP)</li>
+          <li><b>Clipboard 进程治理</b>(🟡低):Process 流 try-with-resources 关闭 + waitFor(5s) 超时</li>
         </ul>
-        <b>安全确认</b>:反序列化安全(Jackson 未开 defaultTyping)· SQL 参数化 · Connection/文件流全 try-with-resources · DataFrame 不可变 · 无 ThreadLocal。详见 <code>AGENTS.md §3.7</code> + <code>doc/00-overview.md §10.14</code>。
+        <b>安全确认</b>:反序列化安全(Jackson 未开 defaultTyping)· SQL 参数化 · Connection/文件流全 try-with-resources · DataFrame 不可变 · ThreadLocal 仅一处(SqlEngines,容器须 try-finally reset)。详见 <code>AGENTS.md §3.7</code> + <code>doc/00-overview.md §10.14</code>。
       </div>
 
       <h3>jqwik 版本选择(必须 1.9.3,严禁 1.10.x)</h3>
@@ -1057,7 +968,7 @@ DataFrame r2 = Dsl.sql("SELECT * FROM this LIMIT 10", SqlDialect.fromEnv(), df);
       </div>
 
       <p style="font-size:0.85em;color:var(--fg-mute);margin-top:1em;">
-        方法论涵盖蜕变/差分/PBT/pandas 对照/变异五类方法(含 Java 测试模板 + jian 实战案例)。详细审查历程见 <code>doc/00-overview.md §10.8-10.12</code>。
+        方法论涵盖蜕变/差分/PBT/pandas 对照/变异五类方法(含 Java 测试模板 + jian 实战案例)。详细说明见 <code>doc/00-overview.md §10.8/§10.11/§10.12</code>。
       </p>
     </section>
 
@@ -1095,7 +1006,7 @@ DataFrame r2 = Dsl.sql("SELECT * FROM this LIMIT 10", SqlDialect.fromEnv(), df);
       <p style="color:var(--fg-mute);font-size:13px;margin-top:20px;text-align:center;font-style:italic">
         以玉简之器,容数据之变;以简化之桥,渡语言之隙;以简约之道,立长久之基;以吉安之愿,佑用者之祥。
       </p>
-      <p style="color:var(--fg-mute);font-size:12.5px;margin-top:16px">© 2026 JIAN · 作者 zc · 最后更新 2026-08-09 · 自包含数据驱动(4 个 JS,正文按需引用外部资料)</p>
+      <p style="color:var(--fg-mute);font-size:12.5px;margin-top:16px">© 2026 JIAN · 作者 zc · 最后更新 2026-08-16 · 自包含数据驱动(4 个 JS,正文按需引用外部资料)</p>
     </section>
 
   </main>

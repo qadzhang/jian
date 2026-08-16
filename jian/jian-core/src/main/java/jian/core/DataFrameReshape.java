@@ -35,33 +35,46 @@ public final class DataFrameReshape {
      */
     public static DataFrame pivotTable(DataFrame df, String index, String columns,
                                        String values, String aggFn) {
-        // 1. 收集 columns 列的不同值(保序)
+        // 因为 index/columns 键列含缺失的行按 pandas pivot_table 默认 dropna=True 丢弃
+        //(把 null 塞进桶键会 NPE),所以这里跳过键缺失的行。
+        // 判缺失一律用 getColumn(x).isNull(r)(§3.5.2:不得用 get()==null,
+        // DoubleColumn.get(NaN) 返回 Double.NaN 不是 null)。
+        // 伪代码:
+        //   1. 扫描全表,跳过 index 或 columns 键缺失的行(与 pandas 分组前丢行一致)
+        //   2. 其余行收集 columns/index 的不同值(保序)并按 (indexVal, colVal) 分桶
+        //   3. 聚合 + 散开成宽表(桶内聚合后按 columns 取值散到各列)
+        Column indexCol = df.getColumn(index);
+        Column columnsCol = df.getColumn(columns);
+        // 1. 收集 columns 列的不同值(保序;键缺失的行跳过)
         List<Object> colValues = new ArrayList<>();
         java.util.Set<Object> colSeen = new java.util.HashSet<>();
         for (int r = 0; r < df.rowCount(); r++) {
+            if (indexCol.isNull(r) || columnsCol.isNull(r)) continue;  // dropna:跳过键缺失行
             Object v = df.get(r, columns);
             if (colSeen.add(v)) colValues.add(v);
         }
-        // 2. 收集 index 列的不同值(保序)
+        // 2. 收集 index 列的不同值(保序;键缺失的行跳过)
         List<Object> indexValues = new ArrayList<>();
         java.util.Set<Object> indexSeen = new java.util.HashSet<>();
         for (int r = 0; r < df.rowCount(); r++) {
+            if (indexCol.isNull(r) || columnsCol.isNull(r)) continue;  // dropna:跳过键缺失行
             Object v = df.get(r, index);
             if (indexSeen.add(v)) indexValues.add(v);
         }
         // 3. 用 groupBy (index, columns) 聚合 values,缓存结果
         // map: (indexVal, colVal) → agg 值
-        Map<String, Object> cellMap = new LinkedHashMap<>();
-        // 先按 (index, columns) 分组
-        Map<String, List<Integer>> buckets = new LinkedHashMap<>();
+        Map<List<Object>, Object> cellMap = new LinkedHashMap<>();
+        // 先按 (index, columns) 分组(键缺失的行跳过)
+        Map<List<Object>, List<Integer>> buckets = new LinkedHashMap<>();
         for (int r = 0; r < df.rowCount(); r++) {
+            if (indexCol.isNull(r) || columnsCol.isNull(r)) continue;  // dropna:跳过键缺失行
             Object iv = df.get(r, index);
             Object cv = df.get(r, columns);
-            String key = keyOf(iv, cv);
+            List<Object> key = keyOf(iv, cv);
             buckets.computeIfAbsent(key, k -> new ArrayList<>()).add(r);
         }
         Column valCol = df.getColumn(values);
-        for (Map.Entry<String, List<Integer>> e : buckets.entrySet()) {
+        for (Map.Entry<List<Object>, List<Integer>> e : buckets.entrySet()) {
             int[] idx = e.getValue().stream().mapToInt(Integer::intValue).toArray();
             cellMap.put(e.getKey(), aggregate(valCol, idx, aggFn));
         }
@@ -84,8 +97,12 @@ public final class DataFrameReshape {
         return DataFrame.of(Schema.of(nameType), rows);
     }
 
-    private static String keyOf(Object i, Object c) {
-        return String.valueOf(i) + "\0" + String.valueOf(c);
+    private static List<Object> keyOf(Object i, Object c) {
+        // 因为 "\0" 字符串拼接在值本身含 \0 时会被误拼成同一键
+        // (不同 (i,c) 组合被识别为同一键导致行错乱),所以用 List 作键。
+        // List.of 不接受 null 元素,改 Arrays.asList(允许 null,防御;
+        // 正常路径已在上游按 dropna 跳过键缺失的行,null 不会到达此处)
+        return java.util.Arrays.asList(i, c);
     }
 
     /**
@@ -170,13 +187,13 @@ public final class DataFrameReshape {
     public static DataFrame dropDuplicates(DataFrame df, String[] subset, String keep) {
         int n = df.rowCount();
         boolean[] keepMask = new boolean[n];
-        java.util.Set<String> seen = new java.util.HashSet<>();
+        java.util.Set<List<Object>> seen = new java.util.HashSet<>();
         // keep=first 从前往后;keep=last 从后往前;false 只保留全唯一行
         if ("false".equalsIgnoreCase(keep)) {
             // 全唯一:统计每个 key 出现次数,只保留出现 1 次的
-            Map<String, Integer> counts = new LinkedHashMap<>();
+            Map<List<Object>, Integer> counts = new LinkedHashMap<>();
             for (int r = 0; r < n; r++) {
-                String k = keyOf(df, r, subset);
+                List<Object> k = keyOf(df, r, subset);
                 counts.merge(k, 1, Integer::sum);
             }
             for (int r = 0; r < n; r++) {
@@ -187,12 +204,12 @@ public final class DataFrameReshape {
             for (int pass = 0; pass < 1; pass++) {
                 if (first) {
                     for (int r = 0; r < n; r++) {
-                        String k = keyOf(df, r, subset);
+                        List<Object> k = keyOf(df, r, subset);
                         keepMask[r] = seen.add(k);
                     }
                 } else {
                     for (int r = n - 1; r >= 0; r--) {
-                        String k = keyOf(df, r, subset);
+                        List<Object> k = keyOf(df, r, subset);
                         keepMask[r] = seen.add(k);
                     }
                 }
@@ -204,7 +221,7 @@ public final class DataFrameReshape {
     // ┌─ What : duplicated —— 重复行掩码(对齐 pandas DataFrame.duplicated)
     // │  Why  : 与 dropDuplicates 同算法不同产出(掩码 vs 去重后的表),按 §3.1.1.1 内聚到此
     // │  Who  : 由 DataFrame.duplicated 单行委托
-    // │  When : 2026-08-09 阶段 A
+    // │  When : duplicated/dropDuplicates 判重入口调用时
     // │  How  : ① keep="none":出现 ≥2 次的行全标 true
     //         ② keep="first"(默认):首次出现 false,后续 true
     //         ③ keep="last":末次出现 false,之前的重复 true
@@ -226,11 +243,17 @@ public final class DataFrameReshape {
         if (n == 0) return new boolean[0];
         String[] cols = (subset == null || subset.length == 0)
             ? df.columnNames().toArray(new String[0]) : subset;
+        // subset 列存在性校验(传不存在的列名直接报错,不静默返回全 false)
+        for (String c : cols) {
+            if (df.columnIndex(c) < 0) {
+                throw new IllegalArgumentException("duplicated subset 列不存在:" + c);
+            }
+        }
         String keepMode = keep == null ? "first" : keep;
 
         // keep="none":出现 ≥ 2 次的签名 → 所有该签名的行都判重
         if ("none".equals(keepMode) || "false".equalsIgnoreCase(keepMode)) {
-            Map<String, Integer> cnt = new HashMap<>();
+            Map<List<Object>, Integer> cnt = new HashMap<>();
             for (int i = 0; i < n; i++) cnt.merge(keyOf(df, i, cols), 1, Integer::sum);
             boolean[] out = new boolean[n];
             for (int i = 0; i < n; i++) out[i] = cnt.get(keyOf(df, i, cols)) >= 2;
@@ -239,7 +262,7 @@ public final class DataFrameReshape {
 
         // keep="first" / "last":要保留的下标集合(签名 → 唯一保留下标)
         boolean[] out = new boolean[n];
-        java.util.Set<String> seen = new java.util.HashSet<>();
+        java.util.Set<List<Object>> seen = new java.util.HashSet<>();
         if ("first".equals(keepMode)) {
             for (int i = 0; i < n; i++) out[i] = !seen.add(keyOf(df, i, cols));
         } else if ("last".equals(keepMode)) {
@@ -250,10 +273,11 @@ public final class DataFrameReshape {
         return out;
     }
 
-    private static String keyOf(DataFrame df, int r, String[] subset) {
-        StringBuilder sb = new StringBuilder();
-        for (String c : subset) sb.append(df.get(r, c)).append('\0');
-        return sb.toString();
+    private static List<Object> keyOf(DataFrame df, int r, String[] subset) {
+        // List 作键防 "\0" 拼接冲突
+        List<Object> key = new ArrayList<>(subset.length);
+        for (String c : subset) key.add(df.get(r, c));
+        return key;
     }
 
     // 复用 GroupBy 的聚合逻辑(轻量复制避免跨类依赖)
@@ -261,6 +285,11 @@ public final class DataFrameReshape {
         switch (fn) {
             case "count":
                 int cnt = 0; for (int i : idx) if (!c.isNull(i)) cnt++; return (long) cnt;
+            case "nunique":
+                java.util.Set<Object> seen = new java.util.HashSet<>();
+                // ±0.0 数值等价归一(同 GroupBy)
+                for (int i : idx) if (!c.isNull(i)) seen.add(DataFrameStats.normUniqueKey(c.get(i)));
+                return (long) seen.size();
             case "sum": { double s = 0; for (int i : idx) if (!c.isNull(i)) s += c.getDouble(i); return s; }
             case "mean": { double s = 0; int n = 0; for (int i : idx) if (!c.isNull(i)) { s += c.getDouble(i); n++; } return n == 0 ? Double.NaN : s / n; }
             case "min": { double m = Double.POSITIVE_INFINITY; boolean any = false;
@@ -269,13 +298,19 @@ public final class DataFrameReshape {
             case "max": { double m = Double.NEGATIVE_INFINITY; boolean any = false;
                 for (int i : idx) if (!c.isNull(i)) { any = true; if (c.getDouble(i) > m) m = c.getDouble(i); }
                 return any ? m : Double.NaN; }
-            case "first": return c.get(idx[0]);
-            case "last": return c.get(idx[idx.length - 1]);
+            // first/last 对齐 pandas 默认 skipna=True:跳过组内缺失,
+            // 取第一个/最后一个非空值;组内全空 → null(DoubleColumn 为 NaN,与 pandas 一致)
+            case "first":
+                for (int i : idx) if (!c.isNull(i)) return c.get(i);
+                return idx.length == 0 ? null : c.get(idx[0]);
+            case "last":
+                for (int i = idx.length - 1; i >= 0; i--) if (!c.isNull(idx[i])) return c.get(idx[i]);
+                return idx.length == 0 ? null : c.get(idx[idx.length - 1]);
             default: throw new IllegalArgumentException("pivotTable/dropDuplicates 不支持的聚合:" + fn);
         }
     }
 
-    // ======================== 阶段 C 重塑扩展(2026-08-09;按 §3.1.1.1 内聚到此类)========================
+    // ======================== 重塑扩展(按 §3.1.1.1 内聚到此类)========================
 
     // ┌─ What : pivot —— 简单透视(无聚合,严格 1:1 映射,重复键抛异常)
     // │  Why  : 与 pivotTable 同源但语义不同(pivotTable 含聚合,pivot 假设唯一)
@@ -415,7 +450,7 @@ public final class DataFrameReshape {
         return DataFrame.of(Schema.of(schParts), rows);
     }
 
-    // stack / unstack:L5 修复(2026-08-09)—— 返回新 DataFrame,不破坏不可变
+    // stack / unstack:返回新 DataFrame,不破坏不可变
     // stack:列名→行(宽→长,类似 melt 但保留所有非索引列)
     // unstack:行值→列名(长→宽,类似 pivot)
 
@@ -436,12 +471,16 @@ public final class DataFrameReshape {
 
     /**
      * 展开:行→列(对齐 pandas DataFrame.unstack;长→宽)。
+     * @param df DataFrame 目标表;非 null
+     * @param idCol 参数;非 null
+     * @param keyCol 参数;非 null
+     * @param valCol 参数;非 null
      */
     public static DataFrame unstack(DataFrame df, String idCol, String keyCol, String valCol) {
         return pivot(df, idCol, keyCol, valCol);
     }
 
-    // ======================== 补全:reindex/reindex_like/squeeze/rename_axis/set_axis(2026-08-09)========================
+    // ======================== 补全:reindex/reindex_like/squeeze/rename_axis/set_axis ========================
 
     /**
      * 重索引(对齐 pandas df.reindex);按 labels 重排行,缺失补 null。
@@ -486,7 +525,11 @@ public final class DataFrameReshape {
         return result.withIndex(Index.of(labels));
     }
 
-    /** reindex_like(对齐 pandas df.reindex_like);用 other 的 Index 重索引 self。 */
+    /**
+     * reindex_like(对齐 pandas df.reindex_like);用 other 的 Index 重索引 self。
+     * @param self 参数;非 null
+     * @param other Object 替换值
+     */
     public static DataFrame reindexLike(DataFrame self, DataFrame other) {
         Object[] labels = other.index().labels();
         if (labels == null) {
@@ -500,6 +543,7 @@ public final class DataFrameReshape {
     /**
      * 降维(对齐 pandas df.squeeze);单行/单列 → 标量或 Series。
      * <p>单行单列 → Object(标量);单列 → 本列 Column;单行 → Object[](行数据);其它 → 原 df 不变。
+     * @param df DataFrame 目标表;非 null
      */
     public static Object squeeze(DataFrame df) {
         if (df.rowCount() == 1 && df.columnCount() == 1) {
@@ -517,6 +561,8 @@ public final class DataFrameReshape {
     /**
      * 重命名 Index 名(对齐 pandas df.rename_axis);jian Index 无 name 字段,简化为返回原 df(无操作)。
      * <p>真正实现需要 Index 加 name 字段(留 v2);当前为 API 兼容占位。
+     * @param df DataFrame 目标表;非 null
+     * @param name String 名称;非 null
      */
     public static DataFrame renameAxis(DataFrame df, String name) {
         // jian v1 Index 无 name 字段;此方法为 API 兼容占位,返回原 df

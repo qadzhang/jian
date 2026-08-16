@@ -32,6 +32,9 @@ public final class DataFrameArith {
     /**
      * 列间减(参数语义同 {@link #add})。
      * @return DoubleColumn leftCol - rightCol
+     * @param df DataFrame 目标表;非 null
+     * @param leftCol 参数;非 null
+     * @param rightCol 参数;非 null
      */
     public static DoubleColumn sub(DataFrame df, String leftCol, String rightCol) {
         return applyOp(df, leftCol, rightCol, '-');
@@ -67,15 +70,30 @@ public final class DataFrameArith {
     public static DoubleColumn addScalar(DataFrame df, String col, double s) {
         return applyScalar(df, col, s, '+');
     }
-    /** 列 - 标量(参数语义同 {@link #addScalar})。 */
+    /**
+     * 列 - 标量(参数语义同 {@link #addScalar})。
+     * @param df DataFrame 目标表;非 null
+     * @param col String 列名;非 null
+     * @param s String 字符串
+     */
     public static DoubleColumn subScalar(DataFrame df, String col, double s) {
         return applyScalar(df, col, s, '-');
     }
-    /** 列 * 标量(参数语义同 {@link #addScalar})。 */
+    /**
+     * 列 * 标量(参数语义同 {@link #addScalar})。
+     * @param df DataFrame 目标表;非 null
+     * @param col String 列名;非 null
+     * @param s String 字符串
+     */
     public static DoubleColumn mulScalar(DataFrame df, String col, double s) {
         return applyScalar(df, col, s, '*');
     }
-    /** 列 / 标量(参数语义同 {@link #addScalar})。 */
+    /**
+     * 列 / 标量(参数语义同 {@link #addScalar})。
+     * @param df DataFrame 目标表;非 null
+     * @param col String 列名;非 null
+     * @param s String 字符串
+     */
     public static DoubleColumn divScalar(DataFrame df, String col, double s) {
         return applyScalar(df, col, s, '/');
     }
@@ -104,7 +122,8 @@ public final class DataFrameArith {
             if (a.isNull(i) || b.isNull(i)) { r[i] = Double.NaN; continue; }
             r[i] = apply(op, a.getDouble(i), b.getDouble(i));
         }
-        return new DoubleColumn(null, r);
+        // 算术结果列不用 null 名(null 名下游 toString NPE),给 "a+b" 形式(pandas 语义近似)
+        return new DoubleColumn(leftCol + op + rightCol, r);
     }
 
     /**
@@ -123,7 +142,13 @@ public final class DataFrameArith {
         for (int i = 0; i < n; i++) {
             r[i] = a.isNull(i) ? Double.NaN : apply(op, a.getDouble(i), s);
         }
-        return new DoubleColumn(null, r);
+        // 标量算术结果列名 "a*2" 形式(null 名下游 toString NPE)
+        return new DoubleColumn(col + op + formatScalar(s), r);
+    }
+
+    /** 标量列名格式化:整数值显示为整数(2.0 → 2),避免列名 "a*2.0" 的浮点尾。 */
+    private static String formatScalar(double s) {
+        return s == Math.rint(s) && !Double.isInfinite(s) ? String.valueOf((long) s) : String.valueOf(s);
     }
 
     /**
@@ -156,7 +181,7 @@ public final class DataFrameArith {
         }
     }
 
-    // ======================== 阶段 C 二元运算扩展(2026-08-09;按 §3.1.1.1 内聚到此类)========================
+    // ======================== 二元运算扩展(按 §3.1.1.1 内聚到此类)========================
 
     // ┌─ What : 整 DataFrame 元素级二元运算(对齐 pandas DataFrame.add/sub/mul/div/pow/mod)
     // │  Why  : 既有 add/sub/... 都是 colA 与 colB 列级运算;新增是整 df 与标量的逐列运算
@@ -171,15 +196,27 @@ public final class DataFrameArith {
     public static DataFrame addScalarAllColumns(DataFrame df, double scalar) {
         return applyArithToAllColumns(df, "add", scalar);
     }
-    /** DataFrame 与标量的逐列减法。 */
+    /**
+     * DataFrame 与标量的逐列减法。
+     * @param df DataFrame 目标表;非 null
+     * @param scalar double 标量
+     */
     public static DataFrame subScalarAllColumns(DataFrame df, double scalar) {
         return applyArithToAllColumns(df, "sub", scalar);
     }
-    /** DataFrame 与标量的逐列乘法。 */
+    /**
+     * DataFrame 与标量的逐列乘法。
+     * @param df DataFrame 目标表;非 null
+     * @param scalar double 标量
+     */
     public static DataFrame mulScalarAllColumns(DataFrame df, double scalar) {
         return applyArithToAllColumns(df, "mul", scalar);
     }
-    /** DataFrame 与标量的逐列除法。 */
+    /**
+     * DataFrame 与标量的逐列除法。
+     * @param df DataFrame 目标表;非 null
+     * @param scalar double 标量
+     */
     public static DataFrame divScalarAllColumns(DataFrame df, double scalar) {
         return applyArithToAllColumns(df, "div", scalar);
     }
@@ -213,7 +250,7 @@ public final class DataFrameArith {
         return DataFrame.ofColumnsDirect(newCols);
     }
 
-    // ======================== 补全:dot/combine/combine_first/mode/abs/value_counts/nunique(2026-08-09)========================
+    // ======================== 补全:dot/combine/combine_first/mode/abs/value_counts/nunique ========================
 
     /**
      * 矩阵乘法(对齐 pandas df.dot;需要 jian-num Matrix)。
@@ -240,6 +277,8 @@ public final class DataFrameArith {
 
     /**
      * 逐列取绝对值(对齐 pandas df.abs);返回新 DataFrame,数值列取 abs,非数值列原样。
+     * 结果列保留原列名(pandas df.abs() 是同名替换;加 "_abs" 后缀会让下游按列名取值失败)。
+     * @param df DataFrame 目标表;非 null
      */
     public static DataFrame abs(DataFrame df) {
         java.util.List<Column> newCols = new java.util.ArrayList<>();
@@ -251,7 +290,7 @@ public final class DataFrameArith {
                     arr[i] = (col.isNull(i) || Double.isNaN(col.getDouble(i)))
                         ? Double.NaN : Math.abs(col.getDouble(i));
                 }
-                newCols.add(new DoubleColumn(c + "_abs", arr));
+                newCols.add(new DoubleColumn(c, arr));
             } else {
                 newCols.add(col);
             }
@@ -260,7 +299,11 @@ public final class DataFrameArith {
     }
 
     /**
-     * combine(对齐 pandas df.combine):用 other 的非空值替换 self 对应位置的空值。
+     * combine_first(对齐 pandas df.combine_first):用 other 的非空值替换 self 对应位置的空值。
+     * 同 dtype 列保留原 dtype(全降 OBJECT 会让后续聚合/astype 失败);
+     * 类型不同时按 DType.promote 提升,无法提升才用 OBJECT。
+     * @param self 参数;非 null
+     * @param other Object 替换值(缺失行用)
      */
     public static DataFrame combineFirst(DataFrame self, DataFrame other) {
         java.util.List<Column> newCols = new java.util.ArrayList<>();
@@ -273,9 +316,55 @@ public final class DataFrameArith {
                 boolean selfMissing = sc.isNull(i);
                 arr[i] = selfMissing ? oc.get(i) : sc.get(i);
             }
-            newCols.add(new ObjectColumn(c, arr));  // 简化:用 OBJECT(类型可能不一致)
+            DType dt;
+            try { dt = DType.promote(sc.dtype(), oc.dtype()); }
+            catch (IllegalArgumentException e) { dt = DType.OBJECT; }
+            newCols.add(toTypedColumn(c, arr, dt));
         }
         return DataFrame.ofColumnsDirect(newCols);
+    }
+
+    /** Object[] → 指定 dtype 的 Column(combineFirst 用;不支持时回退 OBJECT)。 */
+    private static Column toTypedColumn(String name, Object[] arr, DType dt) {
+        int n = arr.length;
+        switch (dt) {
+            case DOUBLE: {
+                double[] d = new double[n];
+                for (int i = 0; i < n; i++) d[i] = arr[i] == null ? Double.NaN : ((Number) arr[i]).doubleValue();
+                return new DoubleColumn(name, d);
+            }
+            case LONG: {
+                long[] d = new long[n]; boolean[] m = new boolean[n];
+                for (int i = 0; i < n; i++) { if (arr[i] == null) m[i] = true; else d[i] = ((Number) arr[i]).longValue(); }
+                return new LongColumn(name, d, m);
+            }
+            case INT: {
+                int[] d = new int[n]; boolean[] m = new boolean[n];
+                for (int i = 0; i < n; i++) { if (arr[i] == null) m[i] = true; else d[i] = ((Number) arr[i]).intValue(); }
+                return new IntColumn(name, d, m);
+            }
+            case STRING: {
+                String[] d = new String[n];
+                for (int i = 0; i < n; i++) d[i] = arr[i] == null ? null : arr[i].toString();
+                return new StringColumn(name, d);
+            }
+            case BOOL: {
+                boolean[] d = new boolean[n]; boolean[] m = new boolean[n];
+                for (int i = 0; i < n; i++) { if (arr[i] == null) m[i] = true; else d[i] = (Boolean) arr[i]; }
+                return new BoolColumn(name, d, m);
+            }
+            case DATETIME: {
+                java.time.LocalDateTime[] d = new java.time.LocalDateTime[n];
+                for (int i = 0; i < n; i++) d[i] = (java.time.LocalDateTime) arr[i];
+                return new DateTimeColumn(name, d);
+            }
+            case DATE: {
+                java.time.LocalDate[] d = new java.time.LocalDate[n];
+                for (int i = 0; i < n; i++) d[i] = (java.time.LocalDate) arr[i];
+                return new DateColumn(name, d);
+            }
+            default: return new ObjectColumn(name, arr);
+        }
     }
 
     /** 找第一个数值列名;无返回 null。 */
@@ -288,13 +377,19 @@ public final class DataFrameArith {
     }
 
     /**
-     * 众数(对齐 pandas Series.mode);返回某列出现频次最高的值(可能有多个,取第一个)。
+     * 众数(对齐 pandas Series.mode);返回某列出现频次最高的值(可能有多个,取最先出现)。
+     * <p>计数容器用 LinkedHashMap(保首次出现序)—— 因为 HashMap 迭代序由 hash 桶决定,
+     * 并列众数的赢家不确定,违背"取第一个"的语义;所以并列时取首次出现的值
+     * (严格大于才换,与 valueCounts 的 LinkedHashMap 口径一致)。
+     * @param c Column 列;非 null
      */
     public static Object mode(Column c) {
-        java.util.Map<Object, Integer> cnt = new java.util.HashMap<>();
+        // 伪代码:LinkedHashMap 按首次出现序计数 → 一次遍历取最大计数(并列保先现)
+        java.util.Map<Object, Integer> cnt = new java.util.LinkedHashMap<>();
         for (int i = 0; i < c.size(); i++) {
             if (c.isNull(i)) continue;
-            cnt.merge(c.get(i), 1, Integer::sum);
+            // ±0.0 合并计数(pandas value_counts 单键 {0.0:2})
+            cnt.merge(DataFrameStats.normUniqueKey(c.get(i)), 1, Integer::sum);
         }
         Object best = null; int bestCnt = 0;
         for (var e : cnt.entrySet()) {
@@ -305,12 +400,14 @@ public final class DataFrameArith {
 
     /**
      * 值计数(对齐 pandas Series.value_counts);返回某列各值 → 出现次数(降序)。
+     * @param c Column 列;非 null
      */
     public static java.util.Map<Object, Integer> valueCounts(Column c) {
         java.util.Map<Object, Integer> cnt = new java.util.LinkedHashMap<>();
         for (int i = 0; i < c.size(); i++) {
             if (c.isNull(i)) continue;
-            cnt.merge(c.get(i), 1, Integer::sum);
+            // ±0.0 合并计数(pandas value_counts 单键 {0.0:2})
+            cnt.merge(DataFrameStats.normUniqueKey(c.get(i)), 1, Integer::sum);
         }
         // 按频次降序排
         java.util.List<java.util.Map.Entry<Object, Integer>> sorted = new java.util.ArrayList<>(cnt.entrySet());
@@ -322,11 +419,13 @@ public final class DataFrameArith {
 
     /**
      * 唯一值数(对齐 pandas Series.nunique);skip null/NaN。
+     * @param c Column 列;非 null
      */
     public static int nunique(Column c) {
         java.util.Set<Object> seen = new java.util.HashSet<>();
         for (int i = 0; i < c.size(); i++) {
-            if (!c.isNull(i)) seen.add(c.get(i));
+            // ±0.0 数值等价归一(同 DataFrameStats.normUniqueKey)
+            if (!c.isNull(i)) seen.add(DataFrameStats.normUniqueKey(c.get(i)));
         }
         return seen.size();
     }

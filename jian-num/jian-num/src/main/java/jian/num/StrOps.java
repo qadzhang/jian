@@ -9,7 +9,8 @@ package jian.num;
 // │  How  : 数据走向:OBJECT Ndarray → 逐元素 String 变换 → 新 Ndarray(同 dtype,通常 OBJECT 或 BOOL/INT64)。
 // │         关键变量变化:
 // │           - null 元素始终透传为 null(对齐 pandas .str 的行为);
-// │           - 变换类型决定返回 dtype:upper/lower/strip/slice → OBJECT;length → INT64;
+// │           - 变换类型决定返回 dtype:upper/lower/strip/slice → OBJECT;
+// │             length → FLOAT64(null → NaN,pandas .str.len() 对 NaN 也是 NaN);
 // │             contains/startsWith/equals → BOOL。
 // │         逻辑路线:
 // │           路径 A(逐元素变换)upper/lower/trim/strip/slice/replace/repeat → 新 OBJECT;
@@ -24,7 +25,7 @@ package jian.num;
  * <p>覆盖字符串高频操作:
  * <ul>
  *   <li>变换(返回 OBJECT Ndarray):{@link #upper}/{@link #lower}/{@link #trim}/{@link #strip}/{@link #slice}/{@link #replace}/{@link #repeat}/{@link #padLeft}/{@link #padRight};</li>
- *   <li>聚合(返回 INT64 Ndarray):{@link #length};</li>
+ *   <li>聚合(返回 FLOAT64 Ndarray):{@link #length}(null → NaN);</li>
  *   <li>谓词(返回 BOOL Ndarray):{@link #contains}/{@link #startsWith}/{@link #endsWith}/{@link #equalsIgnoreCase};</li>
  *   <li>拼接:{@link #cat}(返回单个 String)。</li>
  * </ul>
@@ -146,13 +147,20 @@ public final class StrOps {
         return Ndarray.of(r);
     }
 
-    // ======================== 聚合 → INT64 ========================
+    // ======================== 聚合 → FLOAT64 ========================
 
-    /** 每个元素字符串长度(对齐 .str.len)。null 计为缺失(用 Long.MIN_VALUE 标记,上层视需处理)。 */
+    /**
+     * 每个元素字符串长度(对齐 .str.len)。
+     * <p>因为 INT64 无缺失语义(isMissingAt 恒 false,若塞哨兵则 isna() 全 false、sum() 会把
+     * 哨兵当真值),所以返回 FLOAT64、null → NaN;
+     * pandas {@code .str.len()} 对 NaN 输出 NaN(缺失仍是缺失)。
+     *
+     * @return Ndarray FLOAT64 dtype,每个元素为字符串长度;null 元素为 NaN(缺失)
+     */
     public Ndarray length() {
-        long[] r = new long[len];
+        double[] r = new double[len];
         for (int i = 0; i < len; i++) {
-            r[i] = data[i] == null ? Long.MIN_VALUE : ((String) data[i]).length();
+            r[i] = data[i] == null ? Double.NaN : ((String) data[i]).length();
         }
         return Ndarray.of(r);
     }
@@ -224,16 +232,19 @@ public final class StrOps {
 
     /**
      * 全部元素拼接(对齐 .str.cat(sep)),跳过 null。
+     * <p>因为 {@code sb.append(null)} 会把 4 字符 "null" 字面量追加进结果,
+     * 所以 sep 为 null 时按零串处理。
      *
-     * @param sep String 元素之间的分隔符,约束:可为 null(按 null 处理)或空串(无间隔拼接)
+     * @param sep String 元素之间的分隔符,约束:可为 null(按零串处理,即无间隔拼接)或空串(无间隔拼接)
      * @return String 所有非 null 元素按顺序拼接的结果;全 null 时返回空串
      */
     public String cat(String sep) {
+        String s = sep == null ? "" : sep;   // null 分隔符按零串,不追加 "null" 字面量
         StringBuilder sb = new StringBuilder();
         boolean first = true;
         for (int i = 0; i < len; i++) {
             if (data[i] == null) continue;
-            if (!first) sb.append(sep);
+            if (!first) sb.append(s);
             sb.append((String) data[i]);
             first = false;
         }

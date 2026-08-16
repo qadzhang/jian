@@ -47,6 +47,10 @@ public final class Styler {
     private boolean hideIndex = false;
     private final List<String> hiddenColumns = new ArrayList<>();
     private final List<String> tableStyles = new ArrayList<>();
+    private boolean autoWidth = true;   // toExcel 自动列宽默认开
+    // HTML 缺失值默认 "<NA>" —— 与 HtmlRenderer.naRep 默认
+    // 一致(§3.5.2 契约:HTML 默认 <NA>,不得输出裸 NaN/空串);输出前经 escape
+    private String naRep = "<NA>";
 
     Styler(DataFrame df) { this.df = df; }
 
@@ -174,8 +178,101 @@ public final class Styler {
      * @param css String[] CSS 文本,可变参数,每条独立一行;非 null
      * @return Styler 当前 Styler(支持链式调用)
      */
+    // ======================== 字体样式(字体颜色/加粗,对齐 pandas Styler.applymap)========================
+
+    /**
+     * 整列字体颜色(HTML 输出 color:;Excel 输出 POI Font.setColor)。
+     * @param col String 列名,必须存在;非 null
+     * @param color String 颜色(#rrggbb);非 null
+     * @return Styler 自身(链式)
+     */
+    public Styler fontColor(String col, String color) {
+        rules.add(new FontRule(col, color, false, null));
+        return this;
+    }
+
+    /**
+     * 条件字体颜色(谓词命中行的字面着色,对齐 pandas applymap(lambda v: 'color:red' if v&lt;0))。
+     * @param col String 列名,必须存在;非 null
+     * @param color String 颜色(#rrggbb);非 null
+     * @param cond java.util.function.Predicate&lt;Object&gt; 值谓词(缺失值不参与判定);非 null
+     * @return Styler 自身(链式)
+     */
+    public Styler fontColorIf(String col, String color, java.util.function.Predicate<Object> cond) {
+        rules.add(new FontRule(col, color, false, cond));
+        return this;
+    }
+
+    /**
+     * 整列加粗。
+     * @param col String 列名,必须存在;非 null
+     * @return Styler 自身(链式)
+     */
+    public Styler bold(String col) {
+        rules.add(new FontRule(col, null, true, null));
+        return this;
+    }
+
+    /**
+     * 条件加粗(谓词命中行加粗)。
+     * @param col String 列名,必须存在;非 null
+     * @param cond java.util.function.Predicate&lt;Object&gt; 值谓词;非 null
+     * @return Styler 自身(链式)
+     */
+    public Styler boldIf(String col, java.util.function.Predicate<Object> cond) {
+        rules.add(new FontRule(col, null, true, cond));
+        return this;
+    }
+
+    /**
+     * 自动列宽开关(toExcel;默认开)。宽度 = max(表头宽, 内容宽)×1.2(中文按 2 宽),上限 80。
+     * @param enable boolean true=写完自动设列宽
+     * @return Styler 自身(链式)
+     */
+    public Styler autoColumnWidth(boolean enable) {
+        this.autoWidth = enable;
+        return this;
+    }
+
+    /**
+     * 条件整行背景色(依据列的谓词命中 → 该行所有可见单元格染色;对齐 pandas Styler.apply(axis=1) 常用诉求,
+     * 如"金额为负整行标红")。
+     * @param col String 判定依据列名,必须存在;非 null
+     * @param color String 背景色(#rrggbb);非 null
+     * @param cond java.util.function.Predicate&lt;Object&gt; 值谓词(缺失值不参与判定);非 null
+     * @return Styler 自身(链式)
+     */
+    public Styler rowBackgroundIf(String col, String color, java.util.function.Predicate<Object> cond) {
+        rules.add(new RowBgRule(col, color, cond));
+        return this;
+    }
+
+    /**
+     * 整列背景色(固定色;对齐 pandas apply(axis=0))。
+     * @param col String 列名,必须存在;非 null
+     * @param color String 背景色(#rrggbb);非 null
+     * @return Styler 自身(链式)
+     */
+    public Styler columnBackground(String col, String color) {
+        rules.add(new ColumnBgRule(col, color));
+        return this;
+    }
+
     public Styler setTableStyles(String... css) {
         for (String s : css) tableStyles.add(s);
+        return this;
+    }
+
+    /**
+     * 设置 HTML 缺失值表示:默认 {@code "<NA>"}(对齐 HtmlRenderer.naRep
+     * 与 §3.5.2 契约);输出前经 HTML 转义,自定义值含 {@code <} 也安全。仅作用于 toHtml
+     * (Excel 里缺失值恒为空单元格,Excel 的"空就是空"语义不变)。
+     *
+     * @param v String 缺失值显示文本(如 "-"、"NA"、"&lt;NA&gt;"),非 null
+     * @return Styler 自身(链式)
+     */
+    public Styler naRep(String v) {
+        this.naRep = v;
         return this;
     }
 
@@ -216,8 +313,10 @@ public final class Styler {
                 String text = formatValue(c, r, v);
                 // 缺失行传 null 给样式计算(DoubleColumn.get(NaN) 返回 Double.NaN 不是 null)
                 String style = computeStyle(c, r, missing ? null : v);
+                // 缺失值输出 naRep(默认 <NA>,与 HtmlRenderer 口径一致;
+                // 满足 §3.5.2 "HTML 默认 <NA>";经 escape 防自定义值破坏结构)
                 sb.append("<td").append(style.isEmpty() ? "" : " style=\"" + style + "\"").append(">")
-                  .append(missing ? "" : escape(text)).append("</td>");
+                  .append(missing ? escape(naRep) : escape(text)).append("</td>");
             }
             sb.append("</tr>\n");
         }
@@ -228,6 +327,17 @@ public final class Styler {
     /** 求某单元格的累积 inline style(各规则拼接)。 */
     private String computeStyle(String col, int row, Object value) {
         StringBuilder sb = new StringBuilder();
+        // 整行背景优先传播(依据列谓词命中 → 所有可见列染色)
+        for (StyleRule r : rules) {
+            if (r instanceof RowBgRule rb) {
+                Column base = df.getColumn(rb.col);
+                Object judge = base.isNull(row) ? null : base.get(row);
+                if (judge != null && rb.cond.test(judge)) {
+                    if (sb.length() > 0) sb.append("; ");
+                    sb.append("background-color: ").append(rb.color);
+                }
+            }
+        }
         for (StyleRule r : rules) {
             String s = r.apply(col, row, value);
             if (s != null && !s.isEmpty()) {
@@ -251,7 +361,10 @@ public final class Styler {
 
     private static String escape(String s) {
         if (s == null) return "";
-        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+        // 补齐 " 与 ' 的转义(caption/属性值含引号会破坏 HTML 结构,
+        // 与 HtmlRenderer.escape 的 5 字符口径一致)
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace("\"", "&quot;").replace("'", "&#39;");
     }
 
     // ======================== 内置色图 ========================
@@ -259,13 +372,17 @@ public final class Styler {
     /** 简单 RGB 插值(从十六进制色码)。 */
     static int[] hexRgb(String hex) {
         String h = hex.replace("#", "");
+        // 支持 3 位简写 #abc → #aabbcc(不做扩展的话 substring 取 1 字符 parseInt 抛异常)
+        if (h.length() == 3) {
+            h = "" + h.charAt(0) + h.charAt(0) + h.charAt(1) + h.charAt(1) + h.charAt(2) + h.charAt(2);
+        }
         return new int[]{ Integer.parseInt(h.substring(0, 2), 16),
                 Integer.parseInt(h.substring(2, 4), 16),
                 Integer.parseInt(h.substring(4, 6), 16) };
     }
 
     static String rgbHex(int[] rgb) {
-        return String.format("#%02x%02x%02x", clamp(rgb[0]), clamp(rgb[1]), clamp(rgb[2]));
+        return String.format(java.util.Locale.ROOT, "#%02x%02x%02x", clamp(rgb[0]), clamp(rgb[1]), clamp(rgb[2]));
     }
 
     private static int clamp(int v) { return Math.max(0, Math.min(255, v)); }
@@ -295,7 +412,7 @@ public final class Styler {
 
     // ======================== 规则类型 ========================
 
-    enum Type { FORMAT, HIGHLIGHT_MAX, HIGHLIGHT_MIN, HIGHLIGHT_NULL, GRADIENT, BAR }
+    enum Type { FORMAT, HIGHLIGHT_MAX, HIGHLIGHT_MIN, HIGHLIGHT_NULL, GRADIENT, BAR, FONT, ROW_BG, COL_BG }
 
     static class StyleRule {
         final String col;
@@ -321,10 +438,10 @@ public final class Styler {
                 double d = ((Number) v).doubleValue();
                 // 简化:#,##0.00 → 用 %,.2f;0.00% → 用百分数;其它直接 printf
                 String p = pattern;
-                if (p.contains(",")) return String.format("%,.2f", d);
-                if (p.endsWith("%")) return String.format("%.2f%%", d * 100);
+                if (p.contains(",")) return String.format(java.util.Locale.ROOT, "%,.2f", d);
+                if (p.endsWith("%")) return String.format(java.util.Locale.ROOT, "%.2f%%", d * 100);
                 if (p.equals("0") || p.equals("#")) return String.valueOf((long) d);
-                try { return String.format(p, d); } catch (Exception e) { return String.valueOf(d); }
+                try { return String.format(java.util.Locale.ROOT, p, d); } catch (Exception e) { return String.valueOf(d); }
             }
             return String.valueOf(v);
         }
@@ -360,7 +477,9 @@ public final class Styler {
     static class HighlightNullRule extends StyleRule {
         HighlightNullRule(String color) { super(null, color, Type.HIGHLIGHT_NULL); }
         @Override String apply(String col, int row, Object value) {
-            return value == null ? "background-color: " + color : "";
+            // DOUBLE 列缺失是 NaN 不是 null,两者都高亮
+            boolean missing = value == null || (value instanceof Double && ((Double) value).isNaN());
+            return missing ? "background-color: " + color : "";
         }
     }
 
@@ -393,21 +512,74 @@ public final class Styler {
     static class BarRule extends StyleRule {
         double max;
         BarRule(String col, String color) { super(col, color, Type.BAR); }
+        double min = 0;
         @Override void prepare(DataFrame df) {
             Column c = df.getColumn(col);
-            max = Double.NEGATIVE_INFINITY;
+            max = Double.NEGATIVE_INFINITY; min = Double.POSITIVE_INFINITY;
             for (int i = 0; i < c.size(); i++) {
                 if (c.isNull(i)) continue;
                 double v = c.getDouble(i);
                 if (v > max) max = v;
+                if (v < min) min = v;
             }
+            if (min == Double.POSITIVE_INFINITY) min = 0;
         }
         @Override String apply(String col, int row, Object value) {
             if (!col.equals(this.col) || value == null || !(value instanceof Number)) return "";
             double v = ((Number) value).doubleValue();
-            int pct = max == 0 ? 0 : (int) (100 * v / max);
+            // 全负列按 (v-min)/(max-min) 映射:
+            // 因为 100*v/max 在 max 为负时百分比语义反转(条长与值大小相反)
+            int pct;
+            if (max > 0) pct = (int) (100 * v / max);
+            else pct = (max == min) ? 0 : (int) (100 * (v - min) / (max - min));
+            pct = Math.max(0, Math.min(100, pct));
             // 用线性渐变模拟条形
             return "background: linear-gradient(to right, " + color + " " + pct + "%, transparent " + pct + "%)";
+        }
+    }
+
+    /** 字体样式规则(颜色/加粗,可带值谓词;对齐 pandas applymap)。 */
+    static class FontRule extends StyleRule {
+        final boolean bold;
+        final java.util.function.Predicate<Object> cond;
+        FontRule(String col, String fontColor, boolean bold, java.util.function.Predicate<Object> cond) {
+            super(col, fontColor, Type.FONT);
+            this.bold = bold;
+            this.cond = cond;
+        }
+        @Override String apply(String col, int row, Object value) {
+            if (!col.equals(this.col) || value == null) return "";
+            if (cond != null && !cond.test(value)) return "";
+            StringBuilder sb = new StringBuilder();
+            if (color != null) sb.append("color: ").append(color);
+            if (bold) {
+                if (sb.length() > 0) sb.append("; ");
+                sb.append("font-weight: bold");
+            }
+            return sb.toString();
+        }
+    }
+
+    /** 条件整行背景(依据列谓词命中 → 整行所有列染色)。 */
+    static class RowBgRule extends StyleRule {
+        final java.util.function.Predicate<Object> cond;
+        RowBgRule(String col, String color, java.util.function.Predicate<Object> cond) {
+            super(col, color, Type.ROW_BG);
+            this.cond = cond;
+        }
+        @Override String apply(String col, int row, Object value) {
+            // value 是当前遍历列的值,判定依据是 rule.col 列的值 —— 见 computeStyle 的整行传播
+            return "";
+        }
+    }
+
+    /** 整列固定背景。 */
+    static class ColumnBgRule extends StyleRule {
+        ColumnBgRule(String col, String color) {
+            super(col, color, Type.COL_BG);
+        }
+        @Override String apply(String col, int row, Object value) {
+            return col.equals(this.col) ? "background-color: " + color : "";
         }
     }
 
@@ -449,7 +621,13 @@ public final class Styler {
             // 数据行 + 应用规则
             for (int r = 0; r < df.rowCount(); r++) {
                 org.apache.poi.ss.usermodel.Row row = sheet.createRow(r + 1);
-                if (!hideIndex) row.createCell(0).setCellValue(String.valueOf(df.index().get(r)));
+                // 整型索引按数值写入 Excel(字符串文本无法聚合)
+                if (!hideIndex) {
+                    Object lbl = df.index().get(r);
+                    org.apache.poi.ss.usermodel.Cell ic = row.createCell(0);
+                    if (lbl instanceof Number) ic.setCellValue(((Number) lbl).doubleValue());
+                    else ic.setCellValue(String.valueOf(lbl));
+                }
                 for (int c = 0; c < visibleCols.size(); c++) {
                     String colName = visibleCols.get(c);
                     boolean missing = df.getColumn(colName).isNull(r);
@@ -459,22 +637,54 @@ public final class Styler {
                     if (!missing) {
                         if (v instanceof Number) cell.setCellValue(((Number) v).doubleValue());
                         else if (v instanceof Boolean) cell.setCellValue((Boolean) v);
-                        else cell.setCellValue(String.valueOf(v));
+                        else {
+                            // Styler.toExcel 是独立的第二条 Excel 写出路径,必须有公式注入防护
+                            // ("=cmd|' /C calc'!A0" 这类值原样写入会违反 AGENTS §3.7.3)。
+                            // 防护与 jian-io-excel/jian-io-csv 对齐(6 字符跳过集 + ' 前缀);
+                            // 三处实现互指:Excel.startsWithFormulaAfterWhitespace /
+                            // Csv.startsWithFormulaAfterWhitespace / 本类 startsWithFormulaAfterWhitespace
+                            String sv = String.valueOf(v);
+                            cell.setCellValue(startsWithFormulaAfterWhitespace(sv) ? "'" + sv : sv);
+                        }
                     }
                     // 计算该单元格的样式(累积所有匹配规则)
                     // 缺失行:传 null 给样式计算(避免 NaN 值误触发数值高亮规则)
                     Object vForStyle = missing ? null : v;
                     String bg = computeExcelBg(colName, r, vForStyle);
                     String numFmt = excelNumFormat(colName);
-                    if (bg != null || numFmt != null) {
+                    FontRule fontRule = matchFontRule(colName, vForStyle);
+                    if (bg != null || numFmt != null || fontRule != null) {
                         org.apache.poi.ss.usermodel.CellStyle cs = wb.createCellStyle();
                         if (bg != null) {
                             cs.setFillForegroundColor(toIndexedColor(bg));
                             cs.setFillPattern(org.apache.poi.ss.usermodel.FillPatternType.SOLID_FOREGROUND);
                         }
                         if (numFmt != null) cs.setDataFormat(dataFormat.getFormat(numFmt));
+                        if (fontRule != null) {
+                            // 字体颜色/加粗(POI Font 挂在 CellStyle 上)
+                            org.apache.poi.ss.usermodel.Font f = wb.createFont();
+                            if (fontRule.color != null) f.setColor(toIndexedColor(fontRule.color));
+                            if (fontRule.bold) f.setBold(true);
+                            cs.setFont(f);
+                        }
                         cell.setCellStyle(cs);
                     }
+                }
+            }
+            // 自动列宽 —— 宽度 = max(表头, 内容)×1.2,中文按 2 宽,上限 80(Excel 宽度单位=1/256 字符)
+            if (autoWidth) {
+                int[] widths = new int[visibleCols.size() + colOff];
+                for (int c = 0; c < visibleCols.size(); c++) {
+                    int w = displayWidth(visibleCols.get(c));
+                    Column col = df.getColumn(visibleCols.get(c));
+                    for (int r = 0; r < df.rowCount() && r < 200; r++) {   // 前 200 行采样,防全表扫描
+                        w = Math.max(w, displayWidth(formatValue(visibleCols.get(c), r, col.get(r))));
+                    }
+                    widths[c + colOff] = Math.max(8, Math.min(80, (int) (w * 1.2)));   // 不小于默认 8:只放宽不缩窄
+                }
+                if (!hideIndex && df.rowCount() > 0) widths[0] = Math.min(80, (int) (displayWidth(String.valueOf(df.index().get(0))) * 1.2));
+                for (int c = 0; c < widths.length; c++) {
+                    if (widths[c] > 0) sheet.setColumnWidth(c, widths[c] * 256);
                 }
             }
             try (java.io.FileOutputStream fos = new java.io.FileOutputStream(file)) {
@@ -494,6 +704,16 @@ public final class Styler {
     /** 计算某单元格的 Excel 背景色(累积所有规则;取最后匹配的)。 */
     private String computeExcelBg(String col, int row, Object value) {
         String result = null;
+        // 整行背景(依据列谓词)与整列背景先行,单元格级规则后到优先
+        for (StyleRule r : rules) {
+            if (r instanceof RowBgRule rb) {
+                Column base = df.getColumn(rb.col);
+                Object judge = base.isNull(row) ? null : base.get(row);
+                if (judge != null && rb.cond.test(judge)) result = rb.color;
+            } else if (r instanceof ColumnBgRule cb && col.equals(cb.col)) {
+                result = cb.color;
+            }
+        }
         for (StyleRule r : rules) {
             if (r instanceof HighlightExtremeRule he && col.equals(he.col)) {
                 if (value instanceof Number && ((Number) value).doubleValue() == he.extreme) result = he.color;
@@ -517,17 +737,67 @@ public final class Styler {
         return result;
     }
 
-    /** 取某列的 Excel 数字格式(从 format 规则)。 */
+    /** 取某列的 Excel 数字格式(从 format 规则)。
+     *  增强:#,##0.00 / 0.00% / 0.00 等标准 Excel 格式串【原样透传】
+     *  (只认含 , 和结尾 % 两族会丢弃 0.00 这类);非标准串维持两族映射。 */
     private String excelNumFormat(String col) {
         for (StyleRule r : rules) {
             if (r instanceof FormatRule fr && col.equals(fr.col)) {
                 String p = fr.pattern;
+                if (p.matches("[#0][#0.,%]*")) return p;   // 标准 Excel 数字格式串:直接透传
                 if (p.contains(",")) return "#,##0.00";
                 if (p.endsWith("%")) return "0.00%";
                 return null;
             }
         }
         return null;
+    }
+
+    /**
+     * 命中该单元格的<b>全部</b>字体规则并合并(颜色/加粗;条件谓词不满足的单条跳过)。
+     *
+     * <p>返回命中的全部字体规则并合并(只返回首条命中会让 {@code .fontColor(...)} +
+     * {@code .boldIf(...)} 两条规则在 Excel 只剩颜色、丢加粗;HTML 的 computeStyle
+     * 是合并语义,两条路径必须一致)。合并语义对齐 computeStyle:
+     * bold 任一命中即真;color 取最后命中规则的非空色(后命中覆盖先命中)。
+     *
+     * @param col String 当前列名,非 null
+     * @param value Object 当前行该列的值(缺失为 null),可为 null
+     * @return FontRule 合并后的字体规则(无任何命中返回 null)
+     */
+    private FontRule matchFontRule(String col, Object value) {
+        // 伪代码:
+        //   1. 遍历全部 FontRule:列名相等 + 值非 null + 谓词(有则)通过 → 记一次命中
+        //   2. 命中规则合并:bold 取或;color 取最后命中的非空色(后覆盖先)
+        //   3. 零命中 → null
+        String color = null;
+        boolean bold = false;
+        boolean hit = false;
+        for (StyleRule r : rules) {
+            if (r instanceof FontRule fr && col.equals(fr.col)) {
+                if (value == null) continue;
+                if (fr.cond == null || fr.cond.test(value)) {
+                    hit = true;
+                    if (fr.color != null) color = fr.color;
+                    bold |= fr.bold;
+                }
+            }
+        }
+        return hit ? new FontRule(col, color, bold, null) : null;
+    }
+
+    /** 显示宽度(CJK/全角按 2,其余 1;与控制台对齐口径一致)。 */
+    private static int displayWidth(String s) {
+        if (s == null) return 0;
+        int w = 0;
+        for (char ch : s.toCharArray()) {
+            Character.UnicodeScript us = Character.UnicodeScript.of(ch);
+            boolean wide = us == Character.UnicodeScript.HAN || us == Character.UnicodeScript.HANGUL
+                    || us == Character.UnicodeScript.KATAKANA || us == Character.UnicodeScript.HIRAGANA
+                    || (ch >= 0xFF01 && ch <= 0xFF60);   // 全角 ASCII/标点区段
+            w += wide ? 2 : 1;
+        }
+        return w;
     }
 
     /** 转 POI IndexedColors(常见色码映射;未知用 YELLOW 兜底)。 */
@@ -550,4 +820,25 @@ public final class Styler {
         String s = name.replaceAll("[\\\\/?*\\[\\]:]", "_");
         return s.length() > 31 ? s.substring(0, 31) : s;
     }
+    /**
+     * 公式注入检测(OWASP):跳过前导空白类字符 + NUL/BOM(空格、Tab、CR、LF、\u0000、\uFEFF)
+     * 后,首字符为 {@code = + - @} 即视为公式载荷。
+     * <p>三处同款实现互指:jian-io-csv Csv#startsWithFormulaAfterWhitespace、
+     * jian-io-excel Excel#startsWithFormulaAfterWhitespace、本方法(Styler.toExcel 路径)。
+     * @param s String 待检测单元格文本,非 null
+     * @return boolean true 表示需加单引号前缀防护
+     */
+    private static boolean startsWithFormulaAfterWhitespace(String s) {
+        if (s.isEmpty()) return false;
+        int i = 0;
+        while (i < s.length() && (s.charAt(i) == ' ' || s.charAt(i) == '\t'
+                || s.charAt(i) == '\r' || s.charAt(i) == '\n'
+                || s.charAt(i) == '\u0000' || s.charAt(i) == '\uFEFF')) {
+            i++;
+        }
+        if (i >= s.length()) return false;
+        char ch = s.charAt(i);
+        return ch == '=' || ch == '+' || ch == '-' || ch == '@';
+    }
+
 }

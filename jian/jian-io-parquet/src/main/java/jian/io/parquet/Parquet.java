@@ -74,7 +74,11 @@ public final class Parquet {
                 GenericRecord rec;
                 while ((rec = reader.read()) != null) records.add(rec);
                 if (records.isEmpty()) {
-                    return DataFrame.of(new Schema(List.of(), List.of()), new Object[0][]);
+                    // 因为 0 行文件若直接返回零列 DataFrame 会丢列(写 [a,b] 两列 0 行
+                    // parquet 读回 []),且空数据经 Schema.infer 会全列退化 STRING,
+                    // 所以与 Json/Xml/Pickle 的 "0 行保列元数据"口径对齐:
+                    // 从文件 footer 的 Parquet schema 取列名+物理类型重建 Schema。
+                    return emptyFromFooter(input);
                 }
                 // 从 schema 取列名
                 org.apache.avro.Schema avroSchema = records.get(0).getSchema();
@@ -87,6 +91,50 @@ public final class Parquet {
                 }
                 return DataFrame.of(Schema.infer(names, rows), rows);
             }
+        }
+    }
+
+    // ┌─ What : emptyFromFooter —— 0 行 parquet 文件按 footer 元数据重建列
+    // │  Why  : 空文件读不到任何 record,列名/类型只能从文件 footer 的 Parquet schema 拿;
+    // │         写侧 buildAvroSchema 的 [null, X] union 落到 parquet 是 OPTIONAL 的物理类型 X
+    // │  Who  : ParquetReader.go()(records 为空分支)
+    // │  When : 读 0 行 parquet 文件时
+    // │  Where: jian-io-parquet/Parquet.java
+    // │  How  : 伪代码:
+    // │           1. ParquetFileReader.open(input) 读 footer → getFileMetaData().getSchema()
+    // │           2. 逐字段取名字 + PrimitiveTypeName → DType(INT32→INT/INT64→LONG/
+    //              DOUBLE→DOUBLE/BOOLEAN→BOOL/其余 BINARY 等→STRING)
+    // │           3. DataFrame.of(Schema, 0 行) —— 列数 = schema 字段数
+    // │         关键变量变化:names/dtypes 从空 → 按 footer 字段逐一填充;
+    // │           ParquetFileReader 自身 try-with-resources(footer 读毕即关,不占句柄)。
+    // │         逻辑路线(两条路径):
+    // │           路径 A(footer 可读)→ 返回 N 列 0 行 DataFrame(N = 字段数);
+    // │           路径 B(footer 读取失败)→ 不吞异常,原样上抛 IOException(文件损坏必须暴露)。
+    // │         数据走向:parquet footer → MessageType → (列名, DType) 列表 → Schema → DataFrame。
+    private static DataFrame emptyFromFooter(LocalInputFile input) throws IOException {
+        try (org.apache.parquet.hadoop.ParquetFileReader fr = org.apache.parquet.hadoop.ParquetFileReader.open(input)) {
+            org.apache.parquet.schema.MessageType mt = fr.getFileMetaData().getSchema();
+            List<String> names = new ArrayList<>();
+            List<DType> dtypes = new ArrayList<>();
+            for (org.apache.parquet.schema.Type field : mt.getFields()) {
+                names.add(field.getName());
+                dtypes.add(parquetTypeToDType(field));
+            }
+            return DataFrame.of(new Schema(names, dtypes), new Object[0][]);
+        }
+    }
+
+    /** Parquet 物理类型 → jian DType(与写侧 buildAvroSchema 的映射对称;复合/未知类型兜底 STRING)。 */
+    private static DType parquetTypeToDType(org.apache.parquet.schema.Type field) {
+        if (!field.isPrimitive()) return DType.STRING;
+        org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName ptn =
+                ((org.apache.parquet.schema.PrimitiveType) field).getPrimitiveTypeName();
+        switch (ptn) {
+            case INT32: return DType.INT;
+            case INT64: return DType.LONG;
+            case DOUBLE: case FLOAT: return DType.DOUBLE;
+            case BOOLEAN: return DType.BOOL;
+            default: return DType.STRING;   // BINARY(avro string)/FIXED_LEN_BYTE_ARRAY/INT96 → STRING
         }
     }
 

@@ -89,7 +89,10 @@ public final class LongColumn implements Column {
     @Override public DType dtype() { return DType.LONG; }
     /** @return String 列名 */
     @Override public String name() { return name; }
-    /** @return Column 改名后的新实例(noCopy,共享引用) */
+    /**
+     * @return Column 改名后的新实例(noCopy,共享引用)
+     * @param newName String 新列名;非 null
+     */
     @Override public Column rename(String newName) { return new LongColumn(newName, data, nullMask, true); }
     /** @return int 行数 == data.length */
     @Override public int size() { return data.length; }

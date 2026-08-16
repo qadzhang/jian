@@ -4,6 +4,7 @@
 - **library**: jian-sql
 - **entryClass**: jian.sql.expr.SqlBuilder
 - **deps**: jOOQ 3.21.6(OSS Edition,运行时模式 / DSL);JDBC DataSource
+- **tests**: 9
 
 ## 摘要
 类型安全 SQL 表达式构建,对齐规范 §2.2;基于 jOOQ 运行时 DSL,暴露 DSLContext 让用户用 jOOQ 原生链式构建参数化 SQL,防注入。
@@ -15,6 +16,7 @@
 - `qb.fetch(sql, params...)`:原生参数化 SQL(? 占位,PreparedStatement 绑定,防注入)
 - `withConnection(conn)`:复用外部 Connection(不自行关闭)
 - AutoCloseable:用完关自取的 Connection
+- fetch/execute 自动归还连接(链式用法不泄漏)
 
 ## 限制
 - 运行时模式(动态 schema / 无代码生成),不享受 jOOQ 代码生成的强类型表/列对象

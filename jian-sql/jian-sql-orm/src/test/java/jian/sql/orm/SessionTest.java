@@ -10,6 +10,7 @@ import java.sql.Statement;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Table("users")
 class User {
@@ -100,5 +101,23 @@ class SessionTest {
         } catch (IllegalArgumentException e) {
             assertThat(e.getMessage()).contains("@Table");
         }
+    }
+
+    @Test
+    void 恶意Table注解值抛IAE挡住SQL注入() {
+        // @Table/@Column 注解值直接拼入 SQL(标识符无参数化形式),必须过白名单
+        @Table("x; DROP TABLE users; --")
+        class EvilTable {}
+        assertThatThrownBy(() -> new Session<>(null, (Class<EvilTable>) EvilTable.class))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("非法表名");
+
+        @Table("ok_tbl")
+        class EvilCol {
+            @Id @Column("id); DROP TABLE users; --") public Long id;
+        }
+        assertThatThrownBy(() -> new Session<>(null, (Class<EvilCol>) EvilCol.class))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("非法列名");
     }
 }

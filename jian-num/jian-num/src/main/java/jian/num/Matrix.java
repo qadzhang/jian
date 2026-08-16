@@ -34,13 +34,32 @@ public final class Matrix {
 
     /**
      * 从二维数组构造(拷贝入参)。
+     * <p>因为参差行会落进 Commons Math 抛 DimensionMismatchException、0 行数组裸抛
+     * ArrayIndexOutOfBoundsException(均无教学信息),所以统一改抛教学型 IllegalArgumentException;
+     * jian Matrix 对齐 numpy ndarray:矩形结构(各行长度必须一致)。
      *
-     * @param data double[][] 二维数组,data[i][j] 为第 i 行第 j 列元素;约束:不能为 null;行长度可不等(按实际)
+     * @param data double[][] 二维数组,data[i][j] 为第 i 行第 j 列元素;约束:不能为 null;
+     *             至少 1 行;各行长度必须一致(矩形)
      * @return Matrix 包装的矩阵对象
-     * @throws IllegalArgumentException 当 data 为 null 时抛出
+     * @throws IllegalArgumentException 当 data 为 null、长度为 0(无法确定列数)、
+     *                                  或存在参差行(某行长度与第 0 行不同)时抛出
      */
     public static Matrix of(double[][] data) {
+        // 伪代码:
+        //   1. null → IAE(原有)
+        //   2. 0 行 → IAE(无列数信息,矩阵形状未定义)
+        //   3. 逐行比对长度,与第 0 行不等 → IAE(带行号与两侧列数的消息)
+        //   4. 全矩形 → Array2DRowRealMatrix(copy=true)
         if (data == null) throw new IllegalArgumentException("data 不能为 null");
+        if (data.length == 0) throw new IllegalArgumentException(
+                "矩阵至少需要 1 行:0 行数组无法确定列数(矩阵行列必须一致,对齐 numpy ndarray 的矩形结构);"
+                        + "如需占位请用 Matrix.identity(0) 或补充行数据");
+        int cols = data[0].length;
+        for (int i = 1; i < data.length; i++) {
+                if (data[i].length != cols) throw new IllegalArgumentException(
+                        "矩阵行长度必须一致(矩形):第 0 行 " + cols + " 列,第 " + i + " 行 "
+                                + data[i].length + " 列;参差数据请先补齐(numpy ndarray 同样要求矩形)");
+        }
         return new Matrix(new Array2DRowRealMatrix(data, true));
     }
 
@@ -187,7 +206,7 @@ public final class Matrix {
         try {
             return new LUDecomposition(real).getSolver().solve(toRealVector(b)).toArray();
         } catch (SingularMatrixException e) {
-            throw new SingularMatrixExceptionWithHint(rows(), cols());
+            throw new SingularMatrixExceptionWithHint(rows(), cols(), e);
         }
     }
 
@@ -221,18 +240,22 @@ public final class Matrix {
         try {
             return new Matrix(new LUDecomposition(real).getSolver().getInverse());
         } catch (SingularMatrixException e) {
-            throw new SingularMatrixExceptionWithHint(rows(), cols());
+            throw new SingularMatrixExceptionWithHint(rows(), cols(), e);
         }
     }
 
     /**
-     * 最小二乘解(对齐 np.linalg.lstsq)。
+     * 最小二乘解(对齐 np.linalg.lstsq 的求解目标)。
      * <p>解超定方程 Ax ≈ b,返回使 ||Ax-b||² 最小的 x。
+     * <p><b>数值稳定性说明</b>:本方法用<b>正规方程</b>
+     * (AᵀA)x = Aᵀb 求解 —— 条件数被平方(cond(AᵀA) ≈ cond(A)²),<b>病态矩阵(近共线列)
+     * 精度显著受限</b>;numpy lstsq 用 SVD,病态输入下更稳。数值稳定性敏感的场景请先做
+     * rank 检查(共线列去冗余)或改用 SVD 实现;良态中小规模问题两者差异可忽略。
      *
      * @param b double[] 右端向量,约束:b.length 须等于 rows()
      * @return double[] 最小二乘解 x(长度 = cols())
-     * @throws IllegalArgumentException                当 b 长度不等于 rows() 时抛出
-     * @throws SingularMatrixExceptionWithHint        正规方程 AᵀA 奇异(通常因列共线性)时抛出
+     * @throws IllegalArgumentException         当 b 长度不等于 rows() 时抛出
+     * @throws SingularMatrixExceptionWithHint 正规方程 AᵀA 奇异(通常因列共线性)时抛出
      */
     public double[] leastSquares(double[] b) {
         if (b.length != rows()) {
@@ -246,7 +269,7 @@ public final class Matrix {
         try {
             return new LUDecomposition(ata).getSolver().solve(atb).toArray();
         } catch (SingularMatrixException e) {
-            throw new SingularMatrixExceptionWithHint(rows(), cols());
+            throw new SingularMatrixExceptionWithHint(rows(), cols(), e);
         }
     }
 
@@ -274,6 +297,12 @@ public final class Matrix {
         public SingularMatrixExceptionWithHint(int rows, int cols) {
             super("矩阵奇异(r=" + rows + ", c=" + cols + "),无法求逆/解;"
                     + "若为超定方程请用 leastSquares;若为数据共线性,请去冗余列");
+        }
+
+        /** 带原始 cause(保留 Commons Math 异常链,不丢 stack trace)。 */
+        public SingularMatrixExceptionWithHint(int rows, int cols, Throwable cause) {
+            super("矩阵奇异(r=" + rows + ", c=" + cols + "),无法求逆/解;"
+                    + "若为超定方程请用 leastSquares;若为数据共线性,请去冗余列", cause);
         }
     }
 }

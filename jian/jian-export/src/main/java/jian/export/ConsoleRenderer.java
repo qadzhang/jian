@@ -47,7 +47,21 @@ public final class ConsoleRenderer {
      * @param maxColWidth int 每列最大宽度(字符,超则截断加 ...)
      * @return String 控制台对齐表格文本(含 CJK 宽度对齐 + 行列数摘要)
      */
+    /** 渲染为控制台文本(缺失显示空字符串,对齐 AGENTS §3.5.2)。 */
     public static String render(DataFrame df, int maxRows, int maxColWidth) {
+        return render(df, maxRows, maxColWidth, "");
+    }
+
+    /**
+     * 渲染为控制台文本(可配置缺失占位)。
+     * <p>默认空串对齐 AGENTS §3.5.2;需要 &lt;NA&gt; 展示的用户显式传参。
+     * @param df DataFrame 目标表,非 null
+     * @param maxRows int 最多渲染行数
+     * @param maxColWidth int 单列最大显示宽度
+     * @param naRep String 缺失占位文本;null 按 "" 处理
+     * @return String 对齐的控制台文本
+     */
+    public static String render(DataFrame df, int maxRows, int maxColWidth, String naRep) {
         if (df.rowCount() == 0) {
             return "Empty DataFrame\n列:" + df.columnNames();
         }
@@ -91,22 +105,24 @@ public final class ConsoleRenderer {
         }
         sb.append('\n');
 
-        for (int r = 0; r < headN; r++) appendRow(sb, df, r, widths, cols);
+        for (int r = 0; r < headN; r++) appendRow(sb, df, r, widths, cols, naRep);
         if (truncate) {
             sb.append(pad("...", widths[0])).append(' ');
             for (int c = 0; c < cols.size(); c++) sb.append(pad("...", widths[c + 1])).append(' ');
             sb.append('\n');
-            for (int r = n - tailN; r < n; r++) appendRow(sb, df, r, widths, cols);
+            for (int r = n - tailN; r < n; r++) appendRow(sb, df, r, widths, cols, naRep);
         }
         sb.append("\n[").append(n).append(" 行 × ").append(cols.size()).append(" 列]");
         return sb.toString();
     }
 
-    private static void appendRow(StringBuilder sb, DataFrame df, int r, int[] widths, List<String> cols) {
+    private static void appendRow(StringBuilder sb, DataFrame df, int r, int[] widths, List<String> cols, String naRep) {
         sb.append(pad(String.valueOf(df.index().get(r)), widths[0])).append(' ');
         for (int c = 0; c < cols.size(); c++) {
+            // 用 isNull 判断缺失(DOUBLE 列 NaN 不是 null);缺失默认空字符串,对齐 AGENTS §3.5.2
+            boolean missing = df.getColumn(cols.get(c)).isNull(r);
             Object v = df.getColumn(cols.get(c)).get(r);
-            String s = v == null ? "<NA>" : String.valueOf(v);
+            String s = missing ? naRep : String.valueOf(v);
             sb.append(pad(s, widths[c + 1])).append(' ');
         }
         sb.append('\n');

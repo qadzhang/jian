@@ -84,19 +84,26 @@ public enum DType {
      * 数值类型向上提升(对齐 numpy promotion):
      * INT+INT→INT, INT+LONG→LONG, 任意数值+DOUBLE→DOUBLE;同类型→自身;
      * 非数值混合或类型不兼容 → 抛 IllegalArgumentException。
+     * BOOL 参与数值提升(对齐 numpy/pandas —— bool 视作 0/1,
+     * BOOL+INT→INT、BOOL+LONG→LONG、BOOL+DOUBLE→DOUBLE)。
      * @param a DType 第一个类型,非 null
      * @param b DType 第二个类型,非 null
      * @return DType 提升后的统一类型:同类型返回自身;数值混合按 INT→LONG→DOUBLE 提升;
-     *         一方为 OBJECT 返回 OBJECT(兜底)
+     *         BOOL 按 0/1 参与数值提升;一方为 OBJECT 返回 OBJECT(兜底)
      * @throws IllegalArgumentException 两方都非 OBJECT 且不可数值提升(如 BOOL+STRING)
      */
     public static DType promote(DType a, DType b) {
         if (a == b) return a;
         if (a == OBJECT || b == OBJECT) return OBJECT;  // OBJECT 兜底
-        if (a.isNumeric() && b.isNumeric()) {
+        if (a == STRING || b == STRING) {
+            throw new IllegalArgumentException(
+                    "无法提升类型 " + a + " 与 " + b + "(类型不兼容,如 BOOL/STRING/DATETIME 混合)");
+        }
+        // 数值(含 BOOL 按 0/1):提升到最宽类型
+        if (a.isNumeric() || b.isNumeric() || a == BOOL || b == BOOL) {
             if (a == DOUBLE || b == DOUBLE) return DOUBLE;
             if (a == LONG || b == LONG) return LONG;
-            return INT;
+            return INT;   // INT+INT(被 a==b 拦)/ BOOL+INT / BOOL+BOOL(被拦)
         }
         throw new IllegalArgumentException(
                 "无法提升类型 " + a + " 与 " + b + "(类型不兼容,如 BOOL/STRING/DATETIME 混合)");

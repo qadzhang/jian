@@ -120,14 +120,22 @@ class SeriesWindowTest {
 
     @Test
     void kahan精度() {
-        // 大小悬殊的数组:1e16 + 1 - 1e16 应该 = 1(朴素累加可能丢)
+        // 大小悬殊的数组:1e16 + 1 + 2 - 1e16 数学精确值 = 3.0
         DataFrame df = DataFrame.of(
                 Schema.of("v", DType.DOUBLE),
                 new Object[][]{{1e16}, {1.0}, {2.0}, {-1e16}});
         double sum = df.colSum("v");
-        // 朴素:1e16+1 = 1e16(丢1),+2=1e16(丢2),-1e16=0;Kahan:应得 3.0
-        // 注:Kahan 精度对这种极端场景也有限,但比朴素好
-        assertThat(sum).isCloseTo(3.0, within(1.0));  // 容忍 < 1 的误差
+        // 因为经典 Kahan(Babuška)对这组输入实测得 4.0(y=x-comp 预取整在 ulp=2 的
+        // 1e16 邻域连续两次 ties-to-even 上取),只有 Neumaier 改进补偿求和(误差项独立累加,
+        // 末步 sum+comp 修正)对本组输入得**精确 3.0**,所以断言钉死精确值,不用容差兜底。
+        assertThat(sum).isEqualTo(3.0);
+        // 对照锚点:朴素累加(无补偿)在同一数据上得 2.0 ——
+        // 1e16+1 在 ulp=2 邻域 ties-to-even **向下**取整回 1e16(吞掉 1),再 +2 精确得 1e16+2,
+        // 再 -1e16 余 2.0;经典 Kahan 得 4.0(两次上取)、Neumaier 得精确 3.0,三值互异,
+        // 证明补偿路径确实在起作用且用的是 Neumaier。
+        double naive = 0;
+        for (double x : new double[]{1e16, 1.0, 2.0, -1e16}) naive += x;
+        assertThat(naive).as("朴素累加得 2.0(1 被 1e16 吞掉)").isEqualTo(2.0);
     }
 
     private DataFrame sample() {

@@ -12,15 +12,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class EngineTest {
 
     // 测试用占位密码的 system property key。
-    // 历史 bug:之前硬编码 "secret123" 并 setProperty 后从未清理,污染 JVM 全局。
-    // 修复后:测试用自描述占位符 PLACEHOLDER_NOT_A_SECRET(不是凭据,静态扫描会识别),
-    //       真实凭据通过环境变量 DB_TEST_PW 注入;setProperty 后由 @AfterEach 清理。
+    // 因为硬编码真实凭据会污染源码且 setProperty 后不清理会污染 JVM 全局,
+    // 所以测试用自描述占位符 PLACEHOLDER_NOT_A_SECRET(不是凭据,静态扫描会识别),
+    // 真实凭据通过环境变量 DB_TEST_PW 注入;setProperty 后由 @AfterEach 清理。
     private static final String TEST_PW_KEY = "DB_TEST_PW";
     private static final String TEST_PW_PLACEHOLDER = "PLACEHOLDER_NOT_A_SECRET";
 
     @AfterEach
     void clearTestSystemProperty() {
-        // 修复 §5.1:setProperty 后必须 clearProperty,避免污染同 JVM 后续测试
+        // setProperty 后必须 clearProperty,避免污染同 JVM 后续测试
         System.clearProperty(TEST_PW_KEY);
     }
 
@@ -134,11 +134,11 @@ class EngineTest {
         assertThat(DbType.SQLITE.jdbcUrl("/path/x.db")).isEqualTo("jdbc:sqlite:/path/x.db");
     }
 
-    // ======================== 2026-08-02 审查修复回归 ========================
+    // ======================== URL 解析与只读拦截回归 ========================
 
     @Test
     void parseUrl无用户密码段不崩溃() {
-        // 安全回归:URL 不带 user:pass@ 时,原实现 substring(0, -1) 崩溃
+        // 安全回归:URL 不带 user:pass@ 时整段按 host/db 解析(不因 substring(0, -1) 崩溃)
         Engine.ParsedUrl p = Engine.parseUrl("postgresql://localhost:5432/mydb");
         assertThat(p.dbType()).isEqualTo(DbType.POSTGRESQL);
         assertThat(p.config().host).isEqualTo("localhost");
@@ -201,5 +201,29 @@ class EngineTest {
         assertThatThrownBy(() -> Engine.create(DbType.POSTGRESQL, cfg))
                 .isInstanceOf(ModuleNotLoadedException.class)
                 .hasMessageContaining("org.postgresql:postgresql");
+    }
+
+    @Test
+    void 只读模式多语句绕过拦截() {
+        // 多语句须全局扫描(不能只查第一条语句),"SELECT 1; DROP TABLE x" 必须拦截
+        EngineConfig cfg = EngineConfig.builder()
+                .path("mem:ro_multi").user("sa").password("").readOnly(true).build();
+        try (Engine engine = Engine.create(DbType.H2, cfg)) {
+            assertThatThrownBy(() -> engine.checkReadOnly("SELECT 1; DROP TABLE x"))
+                    .isInstanceOf(SecurityException.class);
+            assertThatThrownBy(() -> engine.checkReadOnly("SELECT 1; DELETE FROM x WHERE id=1"))
+                    .isInstanceOf(SecurityException.class);
+            // 注释后的写关键字也拦截(非前导注释)
+            assertThatThrownBy(() -> engine.checkReadOnly("SELECT 1; -- 注释\nTRUNCATE TABLE x"))
+                    .isInstanceOf(SecurityException.class);
+            assertThatThrownBy(() -> engine.checkReadOnly("/* a */ UPDATE t SET a=1"))
+                    .isInstanceOf(SecurityException.class);
+            // 字符串/注释里的写关键字不误报
+            engine.checkReadOnly("SELECT 'DROP TABLE x' AS s");
+            engine.checkReadOnly("SELECT 1 -- DROP TABLE x");
+            engine.checkReadOnly("SELECT name FROM t WHERE name = 'UPDATE me'");
+            // 词边界:DROP_COL 列名不误报
+            engine.checkReadOnly("SELECT DROP_COL FROM t");
+        }
     }
 }

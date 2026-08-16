@@ -32,10 +32,12 @@ public final class Correlation {
      * @param x double[] 第一变量观测序列,约束:不能为 null;可含 NaN(配对剔除);长度须与 y 一致
      * @param y double[] 第二变量观测序列,约束:不能为 null;可含 NaN(配对剔除);长度须与 x 一致
      * @return double 样本协方差;正值正相关,负值负相关
-     * @throws IllegalArgumentException 当 x/y 为 null、长度不一致、或有效配对样本数 &lt; 3 时抛出
+     * 有效配对 &lt; 2 时返回 NaN(无定义,对齐 pandas)
+     * @throws IllegalArgumentException 当 x/y 为 null 或长度不一致时抛出
      */
     public static double cov(double[] x, double[] y) {
         double[][] pair = pairFilterNaN(x, y);
+        if (pair == null) return Double.NaN;   // 有效配对 <2:无定义,对齐 pandas 返 NaN
         return new Covariance().covariance(pair[0], pair[1]);
     }
 
@@ -46,10 +48,12 @@ public final class Correlation {
      * @param x double[] 第一变量观测序列,约束:不能为 null;可含 NaN(配对剔除);长度须与 y 一致
      * @param y double[] 第二变量观测序列,约束:不能为 null;可含 NaN(配对剔除);长度须与 x 一致
      * @return double 皮尔逊相关系数,取值范围 [-1, 1]
-     * @throws IllegalArgumentException 当 x/y 为 null、长度不一致、或有效配对样本数 &lt; 3 时抛出
+     * 有效配对 &lt; 2 时返回 NaN(无定义,对齐 pandas)
+     * @throws IllegalArgumentException 当 x/y 为 null 或长度不一致时抛出
      */
     public static double pearson(double[] x, double[] y) {
         double[][] pair = pairFilterNaN(x, y);
+        if (pair == null) return Double.NaN;   // 有效配对 <2:无定义,对齐 pandas 返 NaN
         return new PearsonsCorrelation().correlation(pair[0], pair[1]);
     }
 
@@ -60,10 +64,12 @@ public final class Correlation {
      * @param x double[] 第一变量观测序列,约束:不能为 null;可含 NaN(配对剔除);长度须与 y 一致
      * @param y double[] 第二变量观测序列,约束:不能为 null;可含 NaN(配对剔除);长度须与 x 一致
      * @return double 斯皮尔曼秩相关系数,取值范围 [-1, 1]
-     * @throws IllegalArgumentException 当 x/y 为 null、长度不一致、或有效配对样本数 &lt; 3 时抛出
+     * 有效配对 &lt; 2 时返回 NaN(无定义,对齐 pandas)
+     * @throws IllegalArgumentException 当 x/y 为 null 或长度不一致时抛出
      */
     public static double spearman(double[] x, double[] y) {
         double[][] pair = pairFilterNaN(x, y);
+        if (pair == null) return Double.NaN;   // 有效配对 <2:无定义,对齐 pandas 返 NaN
         return new SpearmansCorrelation().correlation(pair[0], pair[1]);
     }
 
@@ -124,9 +130,10 @@ public final class Correlation {
         for (int i = 0; i < x.length; i++) {
             if (!Double.isNaN(x[i]) && !Double.isNaN(y[i])) valid++;
         }
-        if (valid < 3) {
-            throw new IllegalArgumentException(
-                    "有效配对数 " + valid + " < 3,相关/协方差至少需要 3 对非 NaN 样本");
+        // 因为有效配对 <2 时相关/协方差无定义,返回 null 信号位 → 公共方法转 NaN
+        // (对齐 pandas:N=1 corr 返回 NaN 不抛错;两点相关恒 ±1,pandas 支持计算)。
+        if (valid < 2) {
+            return null;
         }
         double[] xs = new double[valid];
         double[] ys = new double[valid];

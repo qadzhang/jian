@@ -29,7 +29,7 @@ jian-io 负责 **DataFrame 与外部数据源之间的双向转换**,**大面对
 | 11 | `to_latex` | LaTeX 表格 | 写 | — | 纯 JDK 自写 | jian-io-latex |
 | 12 | `to_markdown` | Markdown 表格 | 写 | ✅ | 纯 JDK 自写(已含于 export) | jian-io-latex |
 
-#### 7 种 SQL 数据库 DbType 定义(3 库真测,2026-08-09 核实)
+#### 7 种 SQL 数据库 DbType 定义(3 库真测)
 
 > **测试覆盖说明**:`DbType` 枚举定义了 7 库,但 `jian-io-sql` 集成测试**只覆盖 3 库**(H2/SQLite 默认跑,PostgreSQL `-Dtest.pg=true` 激活)。**MySQL/Doris/Oracle/Access 仅 DbType 定义,接口通用但未经 CI 验证**——用户引对应驱动 jar 后理论可用,需自验。
 
@@ -57,7 +57,7 @@ jian-io 当前支持上方 Tier 1 的 10 种格式。以下 pandas 也有的格�
 | `read_iceberg` / `to_iceberg` | Apache Iceberg 表格式,需 Spark/Flink 生态 |
 | `read_hdf` / `HDFStore` | 格式规范庞大;Java 端只有 jhdf 可用,依赖 native lib,违反「纯 Java」原则 |
 
-> **决策**(2026-08-09 与 AI agent2 共识):早期文档曾写"留接口 + stub 抛 `UnsupportedFormatException`",但代码侧从未实现 stub 类与异常类,**这是空头承诺,误导用户以为"支持但需装包"**。现明确改为"不支持",更诚实。pandas 自己对这些格式也是"直接不支持"(无 stub)。如用户有强需求,走 GitHub Issue 重新评估。
+> **决策**:明确"不支持"(不留接口、不留 stub)。因为代码侧并无 stub 类与异常类,声明"留接口"是空头承诺,会误导用户以为"支持但需装包";pandas 自己对这些格式也是"直接不支持"(无 stub)。如用户有强需求,走 GitHub Issue 重新评估。
 
 ### 1.3 职责边界
 
@@ -72,7 +72,7 @@ jian-io 当前支持上方 Tier 1 的 10 种格式。以下 pandas 也有的格�
 **不做**:
 - DataFrame 内存变换(core 的事)。
 - SQL 表达式构建(jian-sql 的事)。
-- Tier 2 冷门格式(留接口)。
+- Tier 2 冷门格式(见 §1.2)。
 - 复杂 ETL 编排。
 
 ### 1.4 依赖关系
@@ -96,7 +96,7 @@ commons poi jackson jsoup JDK 各jdbc parquet orc 自写 自写 JDK
 
 ## 2. 顶层 API 设计
 
-> **⚠️ API 风格说明(2026-08-09 与 AI agent2 共识)**:
+> **⚠️ API 风格说明**:
 > jian 的 **DataFrame 变换**(filter/sortBy/select/merge 等)是**链式实例方法**(返新 DataFrame,immutable-first);
 > 但 **IO 终端**(读/写文件、数据库、剪贴板)是**静态方法收口**(`Jian.readCsv(path)` / `Jian.toCsv(df, path)` / `Csv.write(df, path)`),**不是** `df.toCsv()` 实例方法。
 > 原因:IO 属于 jian-io-* 叶子模块,DataFrame 在 jian-core,core 不能反依赖叶子(模块单向依赖红线,见 AGENTS.md §4.1)。
@@ -128,7 +128,7 @@ DataFrame flat = Jian.jsonNormalize(jsonStr, "list_path");    // 嵌套展平
 
 // === HTML(从 HTML 文件提取所有 <table>)===
 List<DataFrame> all = Jian.readHtml("page.html");             // 门面:直接返回全部表
-// builder 形式(按正则筛表):Html.readAll(path) 后用 stream filter
+// builder 形式(按字面子串筛表):Html.readAll(path) 后用 stream filter
 
 // === XML ===
 DataFrame x = Jian.readXml("data.xml");                       // 默认 rootName="rows"/rowName="row"
@@ -178,11 +178,11 @@ Jian.toLatex(df, "out.tex");
 Jian.toMarkdown(df, "out.md");
 ```
 
-> **注**:`df.toCsv(...)` / `df.toSql(...).ifExists("replace").batchSize(1000)` 等链式写法**在早期文档出现过,但 jian 从未实现**。实际请用上方的 `Jian.toXxx(df, ...)` 静态调用或 `Csv.write(df, path).delimiter(...).go()` builder(终结 `.go()`)。Mode 是**位置参数** `Sql.Mode.CREATE_OR_REPLACE`,不是 `.mode(...)` 链式。
+> **注**:jian 未实现 `df.toCsv(...)` / `df.toSql(...).ifExists("replace").batchSize(1000)` 等链式实例方法。实际请用上方的 `Jian.toXxx(df, ...)` 静态调用或 `Csv.write(df, path).delimiter(...).go()` builder(终结 `.go()`)。Mode 是**位置参数** `Sql.Mode.CREATE_OR_REPLACE`,不是 `.mode(...)` 链式。
 
 ### 2.3 大表流式(防 OOM)—— v2 规划(未实现)
 
-> **状态**:`DataFrameIterator` / `chunkSize` / `iterate()` / `batchIndex()` 等 API **v2 规划,代码侧从未实现**(2026-08-09 核验)。
+> **状态**:`DataFrameIterator` / `chunkSize` / `iterate()` / `batchIndex()` 等 API **v2 规划,代码侧从未实现**。
 > 当前 jian 的 IO 都是**全量加载**(`Jian.readParquet(path)` 返回完整 DataFrame)。处理超大文件时,建议先用外部工具切分,或等 v2 流式 API 落地。
 > 下方伪代码仅作 v2 设计示意,**勿抄,抄了会编译失败**(类不存在)。
 
@@ -215,7 +215,7 @@ try (DataFrameIterator it = Jian.readParquet("big.parquet")   // ← 未实现
 
 - **依赖**:`org.apache.poi:poi-ooxml:5.5.1`(**非 uber**,按原生 artifact 引用,见 AGENTS.md §2.5)。POI 的传递依赖(`poi`、`xmlbeans`、`commons-compress`、`commons-collections4` 等)由 Maven 自动拉取,不手动整合。
 - 读:`WorkbookFactory.create()` 自动识别 xls/xlsx;多 sheet 通过 `ExcelFile` 枚举。
-- 写:**仅 `XSSFWorkbook`(.xlsx)**(2026-08-09 经源码核实);`.xls` 写(HSSF)与 `SXSSFWorkbook` 流式大文件写留 v2(XSSF 覆盖 95% 场景)。
+- 写:**仅 `XSSFWorkbook`(.xlsx)**(经源码核实);`.xls` 写(HSSF)与 `SXSSFWorkbook` 流式大文件写留 v2(XSSF 覆盖 95% 场景)。
 - `ExcelWriter`:封装 workbook 生命周期,支持多 DataFrame 写不同 sheet。
 - 类型映射:CellType → dtype(NUMERIC→Double、STRING→String、BOOLEAN→Bool、FORMULA→求值)。
 - **样式/条件格式/图表**:由 `jian-export` 模块的 Styler 子系统统一处理(见 04-export),Excel 是输出目标之一。
@@ -235,7 +235,7 @@ try (DataFrameIterator it = Jian.readParquet("big.parquet")   // ← 未实现
 ### 3.4 HTML(读 jsoup / 写自写)
 
 - **读依赖**:`org.jsoup:jsoup:1.18.3`(活跃)
-- 读:`jsoup` 解析 HTML,枚举所有 `<table>`,逐个转 DataFrame(支持 `<thead>`/`<tbody>`/`colspan`/`rowspan` 合并单元格的简单展开)。`match` 参数用正则筛表。
+- 读:`jsoup` 解析 HTML,枚举所有 `<table>`,逐个转 DataFrame(支持 `<thead>`/`<tbody>`/`colspan`/`rowspan` 合并单元格的简单展开)。`match` 参数用字面子串筛表(contains;IO-001 后不用正则,防 ReDoS)。
 - 写:纯 JDK 拼 `<table>`,样式与 `to_html` 共用 export 模块(见 04)。
 - 支持 URL 直接抓取(jsoup 自带 HTTP 取页)。
 
@@ -275,7 +275,7 @@ try (DataFrameIterator it = Jian.readParquet("big.parquet")   // ← 未实现
 | BLOB/BINARY | 默认 skip(warning) |
 | 其他 | ObjectColumn |
 
-> 各数据库特有类型(PG JSONB、Oracle NUMBER、SQLite 动态类型、Access 的 OLE)通过 dialect 表查 JDBC 通用类型再映射。具体方言差异(2026-08-09 修订,原指向不存在的 `references/sql-dialect.md` 已合并到本处):
+> 各数据库特有类型(PG JSONB、Oracle NUMBER、SQLite 动态类型、Access 的 OLE)通过 dialect 表查 JDBC 通用类型再映射。具体方言差异:
 > - **PostgreSQL**:JSONB/JSON → String;BIGSERIAL → LONG;TIMESTAMPTZ → LocalDateTime(时区信息丢失,UTC 化);NUMERIC(p,s) → DOUBLE(精度可能损失,大数值建议用 String)。
 > - **MySQL**:TINYINT(1) → BOOL(约定);DATETIME → LocalDateTime;JSON → String;ENUM/SET → String。
 > - **Oracle**:NUMBER → DOUBLE;VARCHAR2 → String(长度 ≤4000);CLOB → String;DATE 含时分秒 → LocalDateTime(Oracle DATE 与 SQL 标准 DATE 不同);TIMESTAMP WITH LOCAL TIME ZONE → LocalDateTime。
@@ -325,7 +325,7 @@ try (DataFrameIterator it = Jian.readParquet("big.parquet")   // ← 未实现
 
 > **关键决策**:不用 JDK 自带序列化(已被 JEP 标记废弃,不安全);不用 Kryo(活跃但有 CVE-2026-41862 反序列化漏洞)。
 > 自写一套 **基于魔数头 + JSON records 内核 + CRC32 校验** 的格式,可控、安全、可跨语言。
-> **注(2026-08-09 经源码核实)**:`Pickle.java` 实测 `MAGIC = 0x4A504B32`("JPK2"),前版二进制调试困难,v2 改为 JSON 内核;早前文档写 "JPK1"/"schema+列式二进制" 是 v1 残留,已修正。
+> **注**:`Pickle.java` 的 `MAGIC = 0x4A504B32`("JPK2"),内核为 JSON(前版二进制格式调试困难,v2 改为 JSON 内核)。
 
 - **格式定义**(自定义 `.jpk` 格式 v2):
   ```
@@ -429,9 +429,9 @@ try (DataFrameIterator it = Jian.readParquet("big.parquet")   // ← 未实现
 
 ---
 
-## 9. 实现说明(M3 + M4,2026-08-01;2026-08-02 安全审查更新)
+## 9. 实现说明
 
-> **12 格式 + 7 数据库全部已实现**(见 §9.4);下表 §9.1 为早期记录,以 §9.4 为准。
+> **12 格式 + 7 数据库全部已实现**(见 §9.4);§9.1 为初期记录,各模块当前测试数以 [api-counts.md](api-counts.md) 为准。
 
 ### 9.1 已实现子模块
 
@@ -484,18 +484,57 @@ CSV/JSON 读回的值统一为字符串,经 `Schema.infer` 推断:
 - XML XPath 选行、`attributeMode` 属性列模式:未实现(仅 rowName 递归查找)。
 - Parquet/ORC 压缩参数(compression codec)可配:未实现(默认 SNAPPY)。
 - HTML colspan/rowspan 合并单元格展开:未实现(纯取单元格文本)。
-- Tier 2 格式(Feather/Stata/SAS/SPSS/GBQ/Iceberg/HDF5):**不计划支持**(2026-08-09 决策,见 §1.2;原"留接口 + stub 抛 UnsupportedFormatException"是空头承诺,代码侧从未实现)。
+- Tier 2 格式(Feather/Stata/SAS/SPSS/GBQ/Iceberg/HDF5):**不计划支持**(见 §1.2)。
 
-### 9.6 安全与健壮性修复(2026-08-02 全项目审查)
+### 9.6 安全与健壮性(现行)
 
 - **CSV 公式注入防护(OWASP)**:`Csv.write(...).go()` 默认把 `= + - @` 开头的值前缀 `'` 防 Excel/WPS 当公式执行;可用 `.sanitizeFormulas(false)` 关闭。
 - **XML 写端名称清洗**:列名/root/row 名称里的非法字符(`& < > 空格` 等)替换为 `_`(转义在 XML 名称中无效),值文本转义 `& < >`,保证产物永远合法可解析。
 - **jian-io-sql 参数化**:读(查询)与写(INSERT)全部走 `PreparedStatement` + `?` 占位,无字符串拼接值注入;表名/列名由调用方提供(与 pandas to_sql 同约定)。
 - **Pickle 反序列化安全**:`.jpk` 为魔数 + JSON + CRC32 的自定义格式,不实例化任意类,无 RCE 风险。
-- **门面 .tsv 分支补齐**:修复 `Jian.read/write` 对 `.tsv` 无分支却提示"支持"的矛盾(现按制表符读写)。
+- **门面 .tsv 分支**:`Jian.read/write` 按 `.tsv` 扩展名走制表符读写。
 - **门面方法补齐**:`readOrc/readPickle/readSqlQuery/readTable/readFwf` + `toSql/toOrc/toPickle/toClipboard/toLatex/toMarkdown/toHtml` + `jsonNormalize`。
 
 ---
 
 *本分册独立,与 01/03-06 无耦合。覆盖 pandas 主流 IO 接口矩阵;冷门统计格式(Feather/Stata/SAS/SPSS/GBQ/Iceberg/HDF5)不计划支持(见 §1.2)。*
-*M3 + M4:全 12 格式(CSV/Excel/JSON/HTML/XML/SQL/Parquet/Pickle/Clipboard/LaTeX;ORC 完整实现(orc-core 1.9.5 + hadoop-client-runtime + protobuf))实现完成于 2026-08-01;2026-08-02 安全审查后 72 个 io 测试全过。*
+*M3 + M4:全 12 格式(CSV/Excel/JSON/HTML/XML/SQL/Parquet/Pickle/Clipboard/LaTeX;ORC 完整实现(orc-core 1.9.5 + hadoop-client-runtime + protobuf))实现完成;io 各模块测试数以 [api-counts.md](api-counts.md) 为准。*
+
+
+### 9.7 列存(Parquet/ORC)依赖与独立制品
+
+> **列存模块自带约 45MB Hadoop 生态依赖**,清单与治理记录:
+> - `jian-io-parquet`:parquet-avro + hadoop-common(4.4M)+ mapreduce-client-core(1.7M)+ shaded-guava(3.3M)+ protobuf/woodstox 等 ≈ **13M**
+> - `jian-io-orc`:orc-core + hive-storage-api + **hadoop-client-runtime(29M,仅为其中 shaded woodstox 类)** ≈ **31M**
+> - 合计 ≈ **45M**,约为瘦身后 jian-all(30M)的 1.5 倍。jian 源码本身与 Hadoop 零关系(全项目仅 Parquet/Orc 两个文件触碰 hadoop 类,官方实现 API 硬性要求,详见 doc/00 §10.15.6)。
+
+**决策:列存不进默认构建,也不进 jian-all 主 fat,独立为第 4 个 fat 制品:**
+
+| 场景 | 用法 |
+|---|---|
+| 默认源码构建 | `./mvnw install` —— **不含列存模块**(21 模块,快且轻) |
+| 构建列存模块 | `./mvnw -Pcolumnar install`(列存 2 模块 + 测试) |
+| fat 全家桶 | `./mvnw -Pfat package` —— 出 **4 个制品**:`jian-all`(30M,**无列存**)、`jian-num-all`、`jian-sql-all`、`jian-columnar-all`(68M,列存专用) |
+| 使用列存 | fat 用户叠加:`-cp jian-all.jar:jian-columnar-all.jar`;thin 用户引 `jian:jian-io-parquet` / `jian:jian-io-orc` |
+| 未加载时调列存 API | `Jian.readParquet/toOrc/toParquet/toOrc` 抛 `ModuleNotLoadedException`(带上述指引,经反射探测,§4.2 按需加载模式);facade 对列存**编译期解耦**(默认构建无需列存 jar) |
+
+> 为什么保留而不是砍掉:列存 = 10 倍压缩 + 按列扫描(10 万行实测 CSV 2.3M vs Parquet 231K),大数据量或与 Spark/Hive/DuckDB 交换文件时价值显著;单独制品让"不用的人零负担、用的人一个 jar 叠加"。
+
+### 9.8 IO 行为细节(现行)
+
+- **CSV**:空文件不再产出 U+FFFF 幽灵列(EOF 不回推);PushbackReader 纳入 try-with-resources;数据行多字段**保留截断 + 一次性 stderr 告警**(首次行号+累计行数,`warnExtraCols(false)` 可关);公式注入前缀跳过集补 NUL/\uFEFF;超大整数(>int64)经 Schema 归 STRING(对齐 pandas read_csv object);仅 UTF-8 BOM 自动剥离(显式 encoding 由 JDK 解码器处理,UTF-16 实测正常)。
+- **JSON**:UTF-8 BOM 读入剥离(与 Csv 统一);SPLIT 长行(>列数)对齐 pandas 抛 IAE(短行缺键填 null 不变);INDEX orient 数字串键按数值排序("0","1","2","10",文本键保持字典序);`normalize(json, null)` 不再 NPE;新增 `normalize(json, String... pathSegments)` 变参重载(key 可含 `.`);超大整数读入归 STRING;OBJECT 列 BigInteger 写出保精度(不再降 double)。
+- **Clipboard**:writeText 异常路径 destroyForcibly + stdout DISCARD(fd/进程回收);readText 失败退出码一次性提示;TSV 解析不再 trim(对齐 Csv,pandas read_clipboard 同);空表头字段兜底 `_0`/`_1`;`resetMemoryFallback()` 公开(命令恢复后可清降级缓存)。
+- **SQL**:write 异常路径 rollback(autoCommit=false 不再悬挂半程批次,H2 实测);tableExists 拆 `schema.table` 两参探测(APPEND 到 schema 表不再误判);readQuery 加 fetchSize=1000 hint(全内存模型边界不变);APPEND 失败附 CREATE_OR_REPLACE 重建指引;isTableMissing 补 MySQL 1146;中文列名报错指向 `df.renameColumns` 真实 API。
+
+
+---
+
+### 9.9 格式行为细节(现行)
+
+- **CSV/TSV**:重复表头自动加 `_1` 后缀(与 Excel dedupNames 统一;pandas 用 `name.1`,doc/00 §10.16 第 16 条);FWF 读支持 BOM。
+- **Excel**:数值列类型推断(整数→LONG / 小数→DOUBLE);空首行向下找真实表头;表头单元格公式注入防护。
+- **JSON/HTML/XML**:records 数组遇标量元素抛清晰异常;readUrl 兼容 Windows 路径;0 行表写出时 cols 属性转义(列名含引号/逗号往返安全)。
+- **SQL/Clipboard/LaTeX**:tableExists 精确匹配(表名含 `_` 不当通配符);Oracle VARCHAR2(n CHAR) 字符语义;TSV 写出公式注入防护(`= + - @` 前缀);数据含控制字符时 LaTeX 抛 IAE(防占位符冲突)。
+- **Parquet/ORC**:0 行往返保留列名与 dtype;ORC BOOL/INT 往返类型保真。
+- 测试:csv 46 / excel 32 / json 28 / html 9 / xml 12 / sql 45 / parquet 6 / orc 8 / pickle 6 / clipboard 8 / latex 6 @Test(口径见 [api-counts.md](api-counts.md))。

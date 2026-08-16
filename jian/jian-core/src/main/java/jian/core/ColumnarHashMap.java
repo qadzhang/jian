@@ -129,15 +129,15 @@ public final class ColumnarHashMap {
     }
 
     /**
-     * 从 double[] 列建表(double 用 doubleToLongBits 规范化)。
+     * 从 double[] 列建表(double 用 doubleToLongBits 规范化;±0.0 归一为同一键)。
      *
-     * <p><b>关键</b>:doubleToLongBits 与 {@link Double#equals} 一致(都是按位比较)——
-     * 即 +0.0 与 -0.0 视为<b>不等</b>(位模式不同),NaN 视为<b>相等</b>(塌缩为规范位)。
-     * 这与 jian generic 路径用的 {@code HashMap<Double>} 行为一致(HashMap 用 equals)。
-     *
-     * <p>(曾经的 BUG #2 修复反向了——错把 ±0.0 视为相等。差分测试 dt_merge_正零负零 抓到。
-     * 现已撤销该错误修复,与 generic 路径完全对齐。)
-     * @param keys double[] key 列,非 null;NaN 会被塌缩为规范位(视作相等)
+     * <p><b>关键</b>:入桶前把 -0.0 显式归一为 +0.0
+     * ({@code d == 0.0 ? 0.0 : d},位模式 0x80..00 → 0x00..00),再展平为 long。
+     * 因为 doubleToLongBits 本身按位比较会把 ±0.0 视为不等,而 jian generic 路径的
+     * {@code DataFrameMerge.normKey} 与 GroupBy 均已把 ±0.0 归一为同一键
+     * (§10.16 #6 声明"merge 中 0.0 与 -0.0 归入同一键"),所以本方法对齐该契约,
+     * 保证 fast/generic 两路径同输入结果一致。NaN 仍塌缩为规范位(视作相等)。
+     * @param keys double[] key 列,非 null;NaN 塌缩为规范位、±0.0 归一为同一键
      * @return ColumnarHashMap 已入桶的新实例
      */
     public static ColumnarHashMap buildFromDouble(double[] keys) {
@@ -145,7 +145,9 @@ public final class ColumnarHashMap {
         int cap = chooseCapacity(n);
         ColumnarHashMap m = new ColumnarHashMap(cap, n);
         for (int r = 0; r < n; r++) {
-            long k = Double.doubleToLongBits(keys[r]);   // 不再规范 ±0.0,与 Double.equals 一致
+            // -0.0 位模式归一为 +0.0(与 normKey 契约一致),再展平入桶
+            double d = keys[r];
+            long k = Double.doubleToLongBits(d == 0.0 ? 0.0 : d);
             int slot = slotOf(k, m.mask);
             while (m.bucketFirst[slot] != -1) {
                 if (m.bucketKey[slot] == k) break;
@@ -195,12 +197,13 @@ public final class ColumnarHashMap {
     public int findInt(int key) { return findLong(key); }
 
     /**
-     * 查 double key(用 doubleToLongBits,与 buildFromDouble 一致;±0.0 视为不等)。
-     * @param key double 待查 key;NaN 会塌缩为规范位,与 buildFromDouble 一致
+     * 查 double key(用 doubleToLongBits,与 buildFromDouble 一致;±0.0 归一为同一键)。
+     * @param key double 待查 key;NaN 塌缩为规范位、±0.0 归一为 +0.0(与 buildFromDouble 一致)
      * @return int 首行下标;未命中 -1
      */
     public int findDouble(double key) {
-        return findLong(Double.doubleToLongBits(key));
+        // 探测侧与建桶侧同口径归一 -0.0 → +0.0,否则 +0.0 探针查不到 -0.0 桶
+        return findLong(Double.doubleToLongBits(key == 0.0 ? 0.0 : key));
     }
 
     /**
@@ -224,8 +227,8 @@ public final class ColumnarHashMap {
      * 选容量:满足装载因子 ≤ 0.5(即 cap ≥ 2 * nRows)的最小 2^k。
      *
      * <p>伪代码:
-     *   1. 用 long 计算避免 int 溢出(AI agent1 审查发现的 BUG #1:
-     *      nRows=2^30 时 Integer.highestOneBit(nRows)<<2 = 2^32 溢出成 0,
+     *   1. 用 long 计算避免 int 溢出(nRows=2^30 时
+     *      Integer.highestOneBit(nRows)<<2 = 2^32 溢出成 0,
      *      最终选 cap=16 装 10 亿行 → 死循环);
      *   2. 上限 1 << 29(5 亿桶,够装 2.5 亿行,远超 jian 单机定位的"千万行级");
      *   3. 超过上限直接抛异常(jian 不追求超大数据集,见规范 §6.5)。

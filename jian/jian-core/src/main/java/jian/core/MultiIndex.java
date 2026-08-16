@@ -3,7 +3,7 @@ package jian.core;
 import java.util.Arrays;
 import java.util.Objects;
 
-// ┌─ What : MultiIndex —— N 级行标签(对齐 pandas.MultiIndex;2026-08-09 从 2 级扩到 N 级)
+// ┌─ What : MultiIndex —— N 级行标签(对齐 pandas.MultiIndex;支持从 2 级扩到 N 级)
 // │  Why  : 规范 01 §1.3 / §4.5;多级索引用于层次化数据(部门→员工→日期);stack/unstack 依赖
 // │  Who  : 由 DataFrame.setIndex(col1, col2, ...) 创建;用户链式 droplevel/swaplevel/reorder_levels
 // │  When : 层次化分组、stack/unstack、resample PARTITION BY
@@ -19,7 +19,7 @@ import java.util.Objects;
 /**
  * N 级 MultiIndex,对齐 pandas.MultiIndex。
  *
- * <p><b>2026-08-09 升级</b>:从 v1 的 2 级(level0/level1)扩展到 N 级(levels[level][row]);
+ * <p>从 v1 的 2 级(level0/level1)扩展到 N 级(levels[level][row]);
  * 旧的 {@code of(Object[], Object[])} 2 级构造保留为便捷别名。
  *
  * <p>用法:
@@ -74,11 +74,14 @@ public final class MultiIndex {
 
     /**
      * 2 级便捷构造(向后兼容 v1 的 of(Object[], Object[]) 入参形态)。
+     * level0/level1 为 null 时抛明确 IAE(不裸 NPE)。
      * @param level0 Object[] 第 0 级,非 null
      * @param level1 Object[] 第 1 级,非 null;长度必须 == level0.length
      */
     public MultiIndex(Object[] level0, Object[] level1) {
-        this(null, new Object[][]{level0, level1});
+        this(null, new Object[][]{
+            java.util.Objects.requireNonNull(level0, "MultiIndex level0 不能为 null"),
+            java.util.Objects.requireNonNull(level1, "MultiIndex level1 不能为 null")});
     }
 
     /**
@@ -183,22 +186,26 @@ public final class MultiIndex {
 
     /**
      * 删除若干级(对齐 pandas MultiIndex.droplevel)。
-     * @param levelIndices int[] 要删除的级下标(0-based);不能全删(至少留 1 级);可乱序
-     * @return MultiIndex 新实例,级数 = numLevels() - levelIndices.length
+     * 重复下标先去重 —— 因为 levelIndices=[0,0,0] 在 3 级索引上等价于删 1 个唯一级
+     * (按 length 判断会误报"不能删除所有级"),所以先去重再判断。
+     * @param levelIndices int[] 要删除的级下标(0-based);可乱序、可重复;不能删完(至少留 1 级)
+     * @return MultiIndex 新实例,级数 = numLevels() - 去重后下标数
      * @throws IllegalArgumentException 删完所有级 或 levelIndices 含越界下标
      */
     public MultiIndex droplevel(int... levelIndices) {
-        if (levelIndices.length >= levels.length) {
+        java.util.LinkedHashSet<Integer> unique = new java.util.LinkedHashSet<>();
+        for (int lv : levelIndices) unique.add(lv);
+        if (unique.size() >= levels.length) {
             throw new IllegalArgumentException("droplevel 不能删除所有级(至少留 1 级)");
         }
         boolean[] remove = new boolean[levels.length];
-        for (int lv : levelIndices) {
+        for (int lv : unique) {
             if (lv < 0 || lv >= levels.length) {
                 throw new IllegalArgumentException("droplevel 下标越界:" + lv);
             }
             remove[lv] = true;
         }
-        int newN = levels.length - levelIndices.length;
+        int newN = levels.length - unique.size();
         Object[][] newLevels = new Object[newN][];
         String[] newNames = new String[newN];
         int j = 0;

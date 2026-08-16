@@ -61,6 +61,15 @@ public final class Schema {
         List<String> names = new ArrayList<>();
         List<DType> dtypes = new ArrayList<>();
         for (int i = 0; i < nameAndDtype.length; i += 2) {
+            // 显式类型校验(直接强转只会抛裸 CCE,报错无上下文)
+            if (!(nameAndDtype[i] instanceof String)) {
+                throw new IllegalArgumentException("Schema.of 第 " + i + " 个参数应为列名 String,实际 "
+                    + nameAndDtype[i].getClass().getSimpleName() + "「" + nameAndDtype[i] + "」");
+            }
+            if (!(nameAndDtype[i + 1] instanceof DType)) {
+                throw new IllegalArgumentException("Schema.of 第 " + (i + 1) + " 个参数应为 DType,实际 "
+                    + nameAndDtype[i + 1].getClass().getSimpleName() + "「" + nameAndDtype[i + 1] + "」");
+            }
             names.add((String) nameAndDtype[i]);
             dtypes.add((DType) nameAndDtype[i + 1]);
         }
@@ -156,8 +165,8 @@ public final class Schema {
      * @return DType 推断结果(空列返回 STRING 兜底)
      */
     private static DType inferColumn(Object[][] data, int c) {
-        // 修复(assign 空表 IOOBE):当 data 是 [[],[],...] 形式(外层非空但每行空)时,
-        // row[c] 会 IOOBE。加守卫——所有行长度都 ≤ c 时,该列无数据,返回 STRING 兜底。
+        // 因为 data 可能是 [[],[],...] 形式(外层非空但每行空),直接取 row[c] 会越界,
+        // 所以先扫一遍确认该列有数据;所有行长度都 ≤ c 时,该列无数据,返回 STRING 兜底。
         boolean hasData = false;
         for (Object[] row : data) {
             if (row != null && row.length > c) { hasData = true; break; }
@@ -180,19 +189,37 @@ public final class Schema {
             else if (v instanceof java.time.LocalDateTime) hasDateTime = true;
             else if (v instanceof String) {
                 String s = (String) v;
-                // 尝试数值/日期推断
+                // 尝试数值/日期推断。固定按英文 ISO 格式,不随 JVM locale
+                // (Long.parseLong/Double.parseDouble 本就是 Locale 无关,"1,5" 这类本地化
+                // 分隔符不匹配正则 → 归 STRING,行为确定,不误判也不抛错)
                 if (s.matches("-?\\d+")) {
-                    long lv = Long.parseLong(s);
-                    if (lv >= Integer.MIN_VALUE && lv <= Integer.MAX_VALUE) hasInt = true;
-                    else hasLong = true;
+                    // 超 long 范围的整数串(如 30 位)Long.parseLong 会抛裸
+                    // NumberFormatException 让整个读入崩溃 —— 包 try-catch
+                    // 归 STRING(对齐 pandas read_csv 超 int64 归 object,数据不丢)。
+                    try {
+                        long lv = Long.parseLong(s);
+                        if (lv >= Integer.MIN_VALUE && lv <= Integer.MAX_VALUE) hasInt = true;
+                        else hasLong = true;
+                    } catch (NumberFormatException overflow) {
+                        hasString = true;
+                    }
                 } else if (s.matches("-?\\d+\\.\\d+([eE][+-]?\\d+)?") || s.matches("-?\\d+[eE][+-]?\\d+")) {
                     hasDouble = true;
                 } else if (s.equals("true") || s.equals("false")) {
                     hasBool = true;
                 } else if (s.matches("\\d{4}-\\d{2}-\\d{2}")) {
-                    hasDate = true;
-                } else if (s.matches("\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}:\\d{2}")) {
-                    hasDateTime = true;
+                    // 正则匹配后实际解析校验,2026-13-45 这类非法月日归 STRING
+                    // (直接标 DATE 会让下游 LocalDate.parse 抛异常)
+                    try { java.time.LocalDate.parse(s); hasDate = true; }
+                    catch (Exception e) { hasString = true; }
+                } else if (s.matches("\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?")) {
+                    // 支持小数秒 + 空格/T 两种分隔 —— 默认格式 YYYY-MM-DD HH:MM:SS(空格),
+                    // ISO 2026-01-01T12:00:00 兼容(空格分隔是导入探测的标准格式之一)。
+                    // 带时区后缀(Z/+08:00)的字符串保持 STRING —— jian 无时区类型(见 doc/00-overview §10.16)。
+                    // 同 DATE 的校验口径:正则匹配后实际 parse 校验,
+                    // 2026-01-01 25:99:99 这类非法时间归 STRING(直接标 DATETIME 会让下游 parse 抛异常)
+                    try { java.time.LocalDateTime.parse(s.replace(' ', 'T')); hasDateTime = true; }
+                    catch (Exception e) { hasString = true; }
                 } else {
                     hasString = true;
                 }
@@ -217,13 +244,15 @@ public final class Schema {
      * @param names List&lt;String&gt; 列名列表
      * @throws IllegalArgumentException 含重复列名(消息含重复名与位置)
      */
+    /** 列名唯一性校验;Map 一次扫描(O(N),双重循环为 O(N²))。 */
     private static void validateUniqueNames(List<String> names) {
+        java.util.Map<String, Integer> first = new java.util.HashMap<>();
         for (int i = 0; i < names.size(); i++) {
-            for (int j = i + 1; j < names.size(); j++) {
-                if (names.get(i).equals(names.get(j))) {
-                    throw new IllegalArgumentException(
-                            "列名重复:\"" + names.get(i) + "\"(位置 " + i + " 与 " + j + ")");
-                }
+            String name = names.get(i);
+            Integer prev = first.putIfAbsent(name, i);
+            if (prev != null) {
+                throw new IllegalArgumentException(
+                        "列名重复:\"" + name + "\"(位置 " + prev + " 与 " + i + ")");
             }
         }
     }

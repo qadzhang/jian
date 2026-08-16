@@ -157,7 +157,7 @@ DataFrame df = engine.dsl()
 
 - **凭据走 .env**:`EngineConfig.fromEnv()` 读环境变量,绝不硬编码。
 - **SQL 注入防护**:表达式层(jOOQ)用参数化查询,`sql()` 原生 SQL 接口强制 `?` 占位符,拒绝字符串拼接。
-- **危险操作过滤**:提供 `EngineConfig.readOnly(true)` 模式 + `engine.checkReadOnly(sql)` 校验(拦截 DROP/DELETE/TRUNCATE/ALTER/CREATE/GRANT/INSERT/UPDATE;自动剥前导注释防绕过,2026-08-02 修复);connect()/begin() 不自动调用,由 jian-sql-orm / 用户显式调用。
+- **危险操作过滤**:提供 `EngineConfig.readOnly(true)` 模式 + `engine.checkReadOnly(sql)` 校验(拦截 DROP/DELETE/TRUNCATE/ALTER/CREATE/GRANT/INSERT/UPDATE;自动剥前导注释防绕过);connect()/begin() 不自动调用,由 jian-sql-orm / 用户显式调用。
 
 ### 3.3 桥接 jian
 
@@ -180,9 +180,9 @@ DataFrame df = engine.dsl()
 
 ## 5. 工作量
 
-- **代码量**(2026-08-09 经源码核实):自写约 2,500 行(engine 600 + expr 适配 400 + orm 1200 + bridge 300),测试 ~1,500 行。
-- **测试规模**:**jian-sql 全 4 子模块共 27 测试全过**(engine 12 + expr 4 + orm 6 + bridge 5,2026-08-09 实测)。早前版本声称"22 测试"是滞后数字。
-- **真实库覆盖(2026-08-09 经 AI agent2 + AI agent1 第二轮审查核实)**:**jian-sql 自身的 27 测试全为 H2 内存库**(engine 12 + expr 4 + orm 6 + bridge 5),**无 SQLite/PG 集成测试**。
+- **代码量**(经源码核实):自写约 2,500 行(engine 600 + expr 适配 400 + orm 1200 + bridge 300),测试 ~1,500 行。
+- **测试规模**:jian-sql 全 4 子模块测试全过(当前 @Test 数见 [api-counts.md](api-counts.md))。
+- **真实库覆盖**:**jian-sql 自身的 27 测试全为 H2 内存库**(engine 12 + expr 4 + orm 6 + bridge 5),**无 SQLite/PG 集成测试**。
   - **多库真实测试属 jian-io-sql 模块**(见 doc/02 §5),不是 jian-sql:H2 10 + SQLite 9(默认跑)+ PG 14(`-Dtest.pg=true` 激活)。
   - **DbType 枚举定义 7 种库**(H2/PostgreSQL/MySQL/Doris/SQLite/Oracle/Access),但 jian-sql 自身只验 H2;MySQL/Doris/Oracle/Access 仅 DbType 定义,无 CI 验证。
   - **早前版本错误**:曾把 jian-io-sql 的 H2 10/SQLite 9/PG 14 写进 jian-sql 的"真实库覆盖",已修正归属。
@@ -200,31 +200,31 @@ DataFrame df = engine.dsl()
 
 ---
 
-## 7. 实现说明(M5,2026-08-01;2026-08-09 修订测试数与库覆盖口径)
+## 7. 实现说明
 
-> 已实现 jian-sql 全 4 子模块(engine/expr/orm/bridge),**27 测试全过**(H2 内存库默认验证 + PG 经 `-Dtest.pg=true` 激活)。
+> 已实现 jian-sql 全 4 子模块(engine/expr/orm/bridge),测试全过(H2 内存库默认验证 + PG 经 `-Dtest.pg=true` 激活;当前 @Test 数见 [api-counts.md](api-counts.md))。
 
 ### 7.1 已实现
 
 | 子模块 | 文件 | 测试数 | 状态 |
 |---|---|---|---|
-| `jian-sql-engine` | DbType(7 库枚举)+ EngineConfig + Engine(HikariCP) + dsl()/sql() 入口 + 只读拦截 | **12** | ✅ alpha |
-| `jian-sql-expr` | SqlBuilder(jOOQ 3.21.6 运行时模式 + 原生 SQL) | **4** | ✅ alpha |
-| `jian-sql-orm` | @Table/@Column/@Id + Session(findById/list/insert/update/delete) | **6** | ✅ alpha |
-| `jian-sql-bridge` | SqlBridge(ResultSet/jOOQ Result → DataFrame) | **5** | ✅ alpha |
-| **合计** | | **27** | |
+| `jian-sql-engine` | DbType(7 库枚举)+ EngineConfig + Engine(HikariCP) + dsl()/sql() 入口 + 只读拦截 | **26** | ✅ stable |
+| `jian-sql-expr` | SqlBuilder(jOOQ 3.21.6 运行时模式 + 原生 SQL) | **9** | ✅ stable |
+| `jian-sql-orm` | @Table/@Column/@Id + Session(findById/list/insert/update/delete) | **19** | ✅ stable |
+| `jian-sql-bridge` | SqlBridge(ResultSet/jOOQ Result → DataFrame) | **11** | ✅ stable |
+| **合计** | | **65** | |
 
 ### 7.2 与需求的偏差
 
 | 需求写法 | 实际实现 | 原因 |
 |---|---|---|
-| `engine.dsl().select(USERS.ID)` codegen 模式 | `engine.dsl().ctx().selectFrom("users")` 运行时模式(2026-08-02 已补 `engine.dsl()` 与 `engine.sql(sql, params)` 入口) | 规范 §2.2 已说"脚本场景默认运行时模式",无 codegen |
+| `engine.dsl().select(USERS.ID)` codegen 模式 | `engine.dsl().ctx().selectFrom("users")` 运行时模式(含 `engine.dsl()` 与 `engine.sql(sql, params)` 入口) | 规范 §2.2 已说"脚本场景默认运行时模式",无 codegen |
 | `engine.session(User.class)` | 用 `new Session<>(engine, User.class)`(engine 不依赖 orm,避免循环依赖) | 功能等价,入口形态不同 |
 | `session.query(User).filter(u -> u.age > 18).all()` lambda 链 | `session.list()` 全量(无 lambda 链) | M5 简化:lambda 链需表达式树支持,v2 补;v1 用 SqlBuilder 复杂条件 |
 | `engine.toDataFrame(sql)` 直接调 | `SqlBridge.fetchAsDataFrame(engine, sql)` | jian-sql 核心不依赖 jian;bridge jar 单独引 |
 | jOOQ Oracle 方言 | 用 SQLDialect.DEFAULT | jOOQ OSS Edition 不含 Oracle/DB2 商业方言 |
 
-### 7.3 已验证(2026-08-09 更新库覆盖口径)
+### 7.3 已验证
 
 - **真实库测试覆盖:3 种**(H2/SQLite/PostgreSQL),其余 4 种(MySQL/Doris/Oracle/Access)**仅 DbType 定义,无 CI 集成测试**。
 - H2 内存库:7 库接口通用的代理验证(其余 6 库接口同,用户引对应驱动)。
@@ -236,14 +236,24 @@ DataFrame df = engine.dsl()
 ---
 
 *本分册独立,与 01-04/06 无耦合。jian-sql 可完全脱离 jian 单独使用。*
-### 7.4 2026-08-02 全项目审查修复
+### 7.4 健壮性与安全(现行)
 
-- **`parseUrl` 健壮性**:URL 不带 `user:pass@` 段时,原实现 `substring(0, -1)` 崩溃,现正常解析(用户/密码为空)。
-- **只读拦截防绕过**:`checkReadOnly` 现在先剥前导空白/行注释/块注释,再整词匹配危险关键字——`/* x */ DROP TABLE` 不再能绕过。
-- **驱动缺失友好异常**:`Engine.create` 构造时反射探测驱动类,缺失抛 `ModuleNotLoadedException`(带 `groupId:artifactId` 安装提示,不再只打 stderr 警告)。
+- **`parseUrl` 健壮性**:URL 不带 `user:pass@` 段时正常解析(用户/密码为空)。
+- **只读拦截防绕过**:`checkReadOnly` 先剥前导空白/行注释/块注释,再整词匹配危险关键字(`/* x */ DROP TABLE` 无法绕过)。
+- **驱动缺失友好异常**:`Engine.create` 构造时反射探测驱动类,缺失抛 `ModuleNotLoadedException`(带 `groupId:artifactId` 安装提示)。
 - **`JianSqlException` 新增**:连接失败包装带 DbType + 脱敏 URL(`sanitize()` 把密码替换为 `***`),防异常信息泄漏凭据。
 - **`engine.dsl()` / `engine.sql(sql, params)` 入口落地**(规范 §2.2):`engine.sql("SELECT ... WHERE id > ?", 18).fetch()`;`SqlBuilder.Dialect` 补 DORIS 项(MySQL 协议)。
 
 ---
 
-*M5 实现(jian-sql-engine/expr/orm/bridge)完成于 2026-08-01;2026-08-02 全项目审查后 22 测试全过;2026-08-09 经 AI agent2 第二轮审查核实,实际为 27 测试(engine 12 + expr 4 + orm 6 + bridge 5),并修正"7 库"口径为"3 库真测(H2/SQLite/PG)+ 4 库仅 DbType 定义(MySQL/Doris/Oracle/Access)"。*
+*实现完成;当前测试数与"3 库真测 + 4 库仅 DbType 定义"口径以 §7.3 与 [api-counts.md](api-counts.md) 为准。*
+
+---
+
+### 7.5 行为细节(现行)
+
+- **engine**:checkReadOnly 拦截 DROP/DELETE/TRUNCATE/ALTER/CREATE/GRANT/INSERT/UPDATE/REPLACE/CALL/COPY/LOAD;sanitize 密码含 @ 不泄漏;scrub 支持 `#` 注释 / 反引号标识符 / `$$` 字符串。
+- **expr**:fetch/execute 自动归还连接(链式用法不泄漏)。
+- **orm**:insert/update/delete 全部过只读拦截(readOnly 抛 SecurityException);insert 自增主键回填;BigDecimal/Boolean/enum/LocalDate 字段映射。
+- **bridge**:按 ResultSetMetaData 映射 dtype(SMALLINT→INT 等);空结果集保留列。
+- 测试:engine 26 / expr 9 / orm 19 / bridge 11 @Test(口径见 [api-counts.md](api-counts.md))。

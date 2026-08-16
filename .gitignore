@@ -40,6 +40,9 @@ Thumbs.db
 scratch/
 demo-output/
 
+# === tests-pbt 跨语言 PBT 桥编译产物(javac 生成,不入库)===
+tests-pbt/classes/
+
 # === AI/Agent 工具运行时产物(本机环境产物,与项目本身无关,不入库)===
 # ZCode/Agent 会话镜像
 .omo/

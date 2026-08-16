@@ -66,7 +66,10 @@ public final class DateTimeColumn implements Column {
     @Override public DType dtype() { return DType.DATETIME; }
     /** @return String 列名 */
     @Override public String name() { return name; }
-    /** @return Column 改名后的新实例(noCopy) */
+    /**
+     * @return Column 改名后的新实例(noCopy)
+     * @param newName String 新列名;非 null
+     */
     @Override public Column rename(String newName) { return new DateTimeColumn(newName, data, true); }
     /** @return int 行数 == data.length */
     @Override public int size() { return data.length; }

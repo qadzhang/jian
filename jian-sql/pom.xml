@@ -6,7 +6,7 @@
   <parent>
     <groupId>jian</groupId>
     <artifactId>jian-parent</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <relativePath>../pom.xml</relativePath>
   </parent>
 
@@ -47,6 +47,10 @@
                 <filter>
                   <artifact>*:*</artifact>
                   <excludes>
+                    <!-- AI 文档:排除 thin 形态的 module.md(多模块同名,只留一份会误导);
+                         各模块文档走唯一路径 META-INF/ai/modules/<artifactId>/module.md,
+                         总索引见 META-INF/ai/aggregated.md(MANIFEST 的 Ai-Modules 指向) -->
+                    <exclude>META-INF/ai/module.md</exclude>
                     <exclude>META-INF/*.SF</exclude>
                     <exclude>META-INF/*.DSA</exclude>
                     <exclude>META-INF/*.RSA</exclude>

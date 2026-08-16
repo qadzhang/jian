@@ -35,6 +35,9 @@ public enum SqlDialect {
 
     /**
      * 标识符是否大小写敏感。
+     * 说明:本方法当前未被 L3 解析器接线 —— SqlEngine 的列名匹配
+     * 走 df.columnIndex 精确匹配(恒大小写敏感);MySQL 用户期望不区分大小写时,
+     * 请确保 SQL 列名与实际列名书写一致,v2 接线计划见 doc/07 分册。
      *
      * @return boolean true 大小写敏感(ORACLE/POSTGRESQL/DEFAULT),false 不敏感(MYSQL)
      */

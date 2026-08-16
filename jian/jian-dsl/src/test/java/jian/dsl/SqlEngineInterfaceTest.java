@@ -14,8 +14,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 // ┌─ What : SqlEngineInterface 通用接口测试 —— 验证可插拔引擎架构
 // │  Why  : 接口设计的回归守护(能力探测/线程安全/DQL-DML 分离/向后兼容 execute)
-// │  Who  : 阶段 E 接口框架测试
-// │  When : 2026-08-09 阶段 E
+// │  Who  : jian-dsl 模块测试套件
+// │  When : mvn test(jian-dsl 模块)
 // │  Where: jian-dsl/src/test/java/jian/dsl/SqlEngineInterfaceTest.java
 class SqlEngineInterfaceTest {
 

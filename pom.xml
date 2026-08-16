@@ -24,7 +24,7 @@
   <!-- ======================== 坐标 ======================== -->
   <groupId>jian</groupId>
   <artifactId>jian-parent</artifactId>
-  <version>1.0.0</version>
+  <version>1.0.1</version>
   <packaging>pom</packaging>
   <name>jian-parent</name>
   <description>jian / jian-sql / jian-num —— JVM 上对标 pandas / sqlalchemy / numpy 子集的轻量数据栈</description>
@@ -47,8 +47,9 @@
     <module>jian/jian-io-html</module>
     <module>jian/jian-io-xml</module>
     <module>jian/jian-io-sql</module>
-    <module>jian/jian-io-parquet</module>
-    <module>jian/jian-io-orc</module>
+    <!-- 列存两模块(jian-io-parquet / jian-io-orc)默认【不构建】:
+         自带 ~45MB Hadoop 生态依赖(hadoop-common/mapreduce/orc 系,见 doc/02 §2.8),
+         非特别需要不编译;显式激活:-Pcolumnar(全模块构建)或 -Pfat(fat jar 全量聚合时自动带上) -->
     <module>jian/jian-io-pickle</module>
     <module>jian/jian-io-clipboard</module>
     <module>jian/jian-io-latex</module>
@@ -137,6 +138,19 @@
         <module>jian</module>
         <module>jian-num</module>
         <module>jian-sql</module>
+        <!-- 列存附加制品(第 4 个 fat):jian-columnar-all 单独聚合 Parquet/ORC + Hadoop 生态;
+             jian-all 主 fat 不含列存(用户决策,按需叠加) -->
+        <module>jian-columnar</module>
+        <module>jian/jian-io-parquet</module>
+        <module>jian/jian-io-orc</module>
+      </modules>
+    </profile>
+    <profile>
+      <!-- 列存模块显式构建(Parquet/ORC;默认不含,见上方 modules 注释) -->
+      <id>columnar</id>
+      <modules>
+        <module>jian/jian-io-parquet</module>
+        <module>jian/jian-io-orc</module>
       </modules>
     </profile>
   </profiles>
@@ -492,7 +506,10 @@
           </executions>
         </plugin>
 
-        <!-- AI 友好:把 src/main/ai-doc/module.md 复制到 jar 的 META-INF/ai/module.md -->
+        <!-- AI 友好:把 src/main/ai-doc/module.md 复制两份:
+             ① META-INF/ai/module.md(thin jar 规范路径,§2.8.1)
+             ② META-INF/ai/modules/<artifactId>/module.md(fat jar 聚合时路径唯一,
+               不再被 shade 同名覆盖 —— AI 拿 fat jar 能看到全部模块的文档) -->
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-resources-plugin</artifactId>
@@ -504,6 +521,20 @@
               <goals><goal>copy-resources</goal></goals>
               <configuration>
                 <outputDirectory>${project.build.outputDirectory}/META-INF/ai</outputDirectory>
+                <resources>
+                  <resource>
+                    <directory>src/main/ai-doc</directory>
+                    <includes><include>module.md</include></includes>
+                  </resource>
+                </resources>
+              </configuration>
+            </execution>
+            <execution>
+              <id>copy-ai-doc-module-dir</id>
+              <phase>process-resources</phase>
+              <goals><goal>copy-resources</goal></goals>
+              <configuration>
+                <outputDirectory>${project.build.outputDirectory}/META-INF/ai/modules/${project.artifactId}</outputDirectory>
                 <resources>
                   <resource>
                     <directory>src/main/ai-doc</directory>

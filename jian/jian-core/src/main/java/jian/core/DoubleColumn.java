@@ -31,7 +31,9 @@ public final class DoubleColumn implements Column {
      * @param data double[] 主体,非 null;会被 clone;缺失值需用 Double.NaN 表示
      */
     public DoubleColumn(String name, double[] data) {
-        this.name = name;
+        // 列名不允许 null(null 名下游 toString/导出全 NPE);
+        // 派生新列的兜底命名见 DataFrameStats.deriveNewName
+        this.name = java.util.Objects.requireNonNull(name, "列名不能为 null");
         this.data = data.clone();
     }
 
@@ -68,7 +70,10 @@ public final class DoubleColumn implements Column {
     @Override public DType dtype() { return DType.DOUBLE; }
     /** @return String 列名 */
     @Override public String name() { return name; }
-    /** @return Column 改名后的新实例(noCopy) */
+    /**
+     * @return Column 改名后的新实例(noCopy)
+     * @param newName String 新列名;非 null
+     */
     @Override public Column rename(String newName) { return new DoubleColumn(newName, data, true); }
     /** @return int 行数 == data.length */
     @Override public int size() { return data.length; }
@@ -76,9 +81,9 @@ public final class DoubleColumn implements Column {
     /**
      * 取第 i 行的值。
      *
-     * <p><b>NaN 不再返回 null</b>(2026-08-08 修复):
-     * 之前 NaN 在 get() 中被转换为 null,导致下游传递丢失"这是 NaN(计算产生的非数)
-     * 而非缺失"的语义。现在 get() 对 NaN 返回 Double.NaN 对象,与 getDouble() 行为一致。
+     * <p><b>NaN 不返回 null</b>:
+     * 因为 NaN 在 get() 中被转换为 null 会让下游传递丢失"这是 NaN(计算产生的非数)
+     * 而非缺失"的语义,所以 get() 对 NaN 返回 Double.NaN 对象,与 getDouble() 行为一致。
      * <ul>
      *   <li><b>内部计算/传递</b>:NaN 透传为 Double.NaN,不失真</li>
      *   <li><b>IO 边界</b>:{@link #toObjectArray()} 把 NaN 转为 null(因为 JSON/CSV 不支持 NaN);

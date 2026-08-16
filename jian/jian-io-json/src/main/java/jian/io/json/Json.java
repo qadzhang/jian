@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -79,7 +80,25 @@ public final class Json {
 
         public DataFrame go() throws IOException {
             String content = Files.readString(path, StandardCharsets.UTF_8);
-            return parse(content, orient);
+            // 因为 Jackson 不吃 BOM(带头 U+FEFF 的文件直接 JsonParseException),
+            // 而 Csv 读路径已剥,所以统一口径先剥 UTF-8 BOM。
+            if (!content.isEmpty() && content.charAt(0) == '\uFEFF') {
+                content = content.substring(1);
+            }
+            // 默认 RECORDS 但顶层是 object 且值全为数组 → 自动按 COLUMNS 解析
+            // (配合写侧 0 行切 COLUMNS;也友好兼容用户手工传入的 columns 形态文件)
+            Orient eff = orient;
+            if (orient == Orient.RECORDS && !content.isEmpty() && content.charAt(0) == '{') {
+                try {
+                    com.fasterxml.jackson.databind.JsonNode n = MAPPER.readTree(content);
+                    boolean allArr = n.isObject() && !n.isEmpty();
+                    for (com.fasterxml.jackson.databind.JsonNode v : n) {
+                        if (!v.isArray()) { allArr = false; break; }
+                    }
+                    if (allArr) eff = Orient.COLUMNS;
+                } catch (IOException ignore) { /* 走默认路径报原有错误 */ }
+            }
+            return parse(content, eff);
         }
     }
 
@@ -107,10 +126,24 @@ public final class Json {
         if (!root.isArray()) throw new IllegalArgumentException("RECORDS orient 要求顶层数组");
         ArrayNode arr = (ArrayNode) root;
         if (arr.isEmpty()) return DataFrame.of(new Schema(List.of(), List.of()), new Object[0][]);
-        // 取列名(首元素的 keys,保序)
-        List<String> names = new ArrayList<>();
-        Iterator<String> keys = arr.get(0).fieldNames();
-        while (keys.hasNext()) names.add(keys.next());
+        // 因为数组元素非 object 时(如 "[1,2,3]")fieldNames() 返回空迭代器,
+        // 列集收集会静默跳过、rows 全 null,返回"空列名 DataFrame"且数据全部丢弃无报错
+        // (pandas read_json 对此抛清晰异常),所以这里 fail-fast 给出明确错误。
+        for (int r = 0; r < arr.size(); r++) {
+            JsonNode el = arr.get(r);
+            if (!el.isObject()) {
+                throw new IllegalArgumentException("仅支持对象元素的 records 数组:第 " + r
+                        + " 个元素是 " + el.getNodeType() + "(" + el + "),records orient 要求 [{列:值},...]");
+            }
+        }
+        // 因为只取首对象 keys 会把后续对象的额外键静默丢弃,
+        // 所以列集取全部对象的键并集(保序,对齐 pandas json_normalize)。
+        LinkedHashSet<String> nameSet = new LinkedHashSet<>();
+        for (JsonNode obj : arr) {
+            Iterator<String> it = obj.fieldNames();
+            while (it.hasNext()) nameSet.add(it.next());
+        }
+        List<String> names = new ArrayList<>(nameSet);
         Object[][] rows = new Object[arr.size()][names.size()];
         for (int r = 0; r < arr.size(); r++) {
             JsonNode obj = arr.get(r);
@@ -131,8 +164,15 @@ public final class Json {
             if (!arr.isArray()) throw new IllegalArgumentException("COLUMNS orient 每个值须数组");
             Object[] vals = new Object[arr.size()];
             for (int i = 0; i < arr.size(); i++) vals[i] = nodeToValue(arr.get(i));
-            cols.put(name, vals);
+            // 因为若只取首列长度、后续列长度不等时静默通过,下游 get(r,c) 会抛裸
+            // AIOOBE 且根因不可见,所以这里做列间长度校验,对齐 pandas
+            // "All arrays must be of the same length" 的清晰报错
             if (n < 0) n = vals.length;
+            else if (vals.length != n) {
+                throw new IllegalArgumentException("COLUMNS orient 列 '" + name + "' 长度 " + vals.length
+                        + " ≠ 首列长度 " + n + "(所有列必须等长)");
+            }
+            cols.put(name, vals);
         }
         return DataFrame.ofColumns(cols);
     }
@@ -148,6 +188,11 @@ public final class Json {
         Object[][] rows = new Object[arr.size()][cols];
         for (int r = 0; r < arr.size(); r++) {
             JsonNode row = arr.get(r);
+            // 因为行宽与首行不一致时静默截断会丢数据,所以抛 IAE 明确报错
+            if (row.size() != cols) {
+                throw new IllegalArgumentException("VALUES 第 " + r + " 行宽 " + row.size()
+                    + " ≠ 首行宽 " + cols + "(orient=values 要求等宽行)");
+            }
             for (int c = 0; c < cols; c++) rows[r][c] = nodeToValue(row.get(c));
         }
         return DataFrame.of(Schema.infer(names, rows), rows);
@@ -166,12 +211,33 @@ public final class Json {
             List<String> idxKeys = new ArrayList<>();
             Iterator<String> kit = obj.fieldNames();
             while (kit.hasNext()) idxKeys.add(kit.next());
-            idxKeys.sort(String::compareTo);
+            // 因为键全为数字串时若按字典序排序会得 "0","1","10","2" 的错位行序,
+            // 所以数字键按【数值】排序;文本键保持字典序(pandas 对文本键也字典序,实测一致)。
+            idxKeys.sort(indexKeyComparator(idxKeys));
             Object[] vals = new Object[idxKeys.size()];
             for (int i = 0; i < idxKeys.size(); i++) vals[i] = nodeToValue(obj.get(idxKeys.get(i)));
             cols.put(name, vals);
         }
         return DataFrame.ofColumns(cols);
+    }
+
+    /**
+     * INDEX 键排序器:全数字串键按数值排序("0","1","2","10"),
+     * 否则(含文本键)保持字典序。数据走向:keys 尝试全转 long → 成功返数值比较器,失败返字典序。
+     */
+    private static java.util.Comparator<String> indexKeyComparator(List<String> keys) {
+        boolean allNumeric = !keys.isEmpty();
+        for (String k : keys) {
+            if (!k.matches("-?\\d+")) { allNumeric = false; break; }
+        }
+        if (!allNumeric) return String::compareTo;
+        // 因为全数字串但超出 long 范围(如 9223372036854775808)时 parseLong 会抛
+        // 裸 NFE 中断整个 parse,所以先预检可解析性,超范围降级字典序(pandas 回退语义)
+        for (String k : keys) {
+            try { Long.parseLong(k); }
+            catch (NumberFormatException overflow) { return String::compareTo; }
+        }
+        return java.util.Comparator.comparingLong(Long::parseLong);
     }
 
     /** split:{"columns":[...],"index":[...],"data":[[...],...]}。 */
@@ -187,6 +253,12 @@ public final class Json {
         Object[][] rows = new Object[dataNode.size()][names.size()];
         for (int r = 0; r < dataNode.size(); r++) {
             JsonNode row = dataNode.get(r);
+            // 因为行宽 > 列数时静默截断会丢数据(pandas 对齐抛 ValueError),
+            // 所以多余数据抛错;短行缺键填 null 保持(pandas 同款)。
+            if (row.size() > names.size()) {
+                throw new IllegalArgumentException("SPLIT 第 " + r + " 行宽 " + row.size()
+                    + " > 列数 " + names.size() + "(pandas 对齐:多余数据抛错不静默截断)");
+            }
             for (int c = 0; c < names.size(); c++) rows[r][c] = nodeToValue(row.get(c));
         }
         return DataFrame.of(Schema.infer(names, rows), rows);
@@ -197,6 +269,12 @@ public final class Json {
         if (node == null || node.isNull()) return null;
         if (node.isInt()) return node.intValue();
         if (node.isLong()) return node.longValue();
+        // 因为超 long 范围的整数(BIGINT token)isInt/isLong 均为 false,
+        // 所以显式处理:能转 long 转 long;超范围归字符串(经 Schema.infer 归 STRING 列,
+        // 对齐 pandas read_csv 超 int64 → object)。
+        if (node.isIntegralNumber()) {
+            return node.canConvertToLong() ? node.longValue() : node.toString();
+        }
         if (node.isDouble()) return node.doubleValue();
         if (node.isBoolean()) return node.booleanValue();
         if (node.isTextual()) return node.textValue();
@@ -220,18 +298,49 @@ public final class Json {
      * @param recordPath 点号路径(逐层取对象字段,最后必须落到数组)
      */
     public static DataFrame normalize(String json, String recordPath) throws IOException {
-        JsonNode root = MAPPER.readTree(json);
+        JsonNode rootP = MAPPER.readTree(json);
+        return normalize(rootP, recordPath);
+    }
+
+    /**
+     * normalize 变参重载:逐段路径,
+     * 段本身可含 "."(pandas json_normalize(record_path=["a","b.c"]) 同款能力,
+     * 点号字符串入口无法表达含 "." 的 key)。
+     * <pre>{@code
+     * Json.normalize(json, "meta", "b.c")   // 逐层取 meta → "b.c"
+     * }</pre>
+     * @param json JSON 字符串,非 null
+     * @param pathSegments String... 路径段,逐层取对象字段;空数组 = 根(输入须为数组)
+     * @return DataFrame 拍平结果
+     */
+    public static DataFrame normalize(String json, String... pathSegments) throws IOException {
+        JsonNode arr = MAPPER.readTree(json);
+        // 变参:逐段 get,段本身不拆点(与字符串路径的关键差异 —— 段可含 ".")
+        for (String part : pathSegments) {
+            if (arr == null) break;
+            arr = arr.get(part);
+        }
+        return normalizeArray(arr, String.join(".", pathSegments));
+    }
+
+    private static DataFrame normalize(JsonNode root, String recordPath) {
         // 数据走向:root → 按点号路径逐层 get → 数组 arr → 逐元素拍平 → Map 列表 → Object[][] → DataFrame
-        // recordPath 为 "$" 或空时,输入本身就是数组(pandas normalize 默认语义)
-        JsonNode arr = (recordPath == null || recordPath.isBlank() || recordPath.equals("$")) ? root : root;
-        if (!recordPath.isBlank() && !recordPath.equals("$")) {
+        // recordPath 为 "$"、空或 null 时,输入本身就是数组(pandas normalize 默认语义)。
+        // 因为 recordPath.isBlank() 对 null 会直接 NPE,所以显式判 null 视为根。
+        JsonNode arr = root;
+        if (recordPath != null && !recordPath.isBlank() && !recordPath.equals("$")) {
             for (String part : recordPath.split("\\.")) {
                 if (arr == null) break;
                 arr = arr.get(part);
             }
         }
+        return normalizeArray(arr, recordPath);
+    }
+
+    /** 已定位到数组节点后的拍平主流程(字符串路径与变参路径共用,displayPath 仅用于报错展示)。 */
+    private static DataFrame normalizeArray(JsonNode arr, String displayPath) {
         if (arr == null || !arr.isArray()) {
-            throw new IllegalArgumentException("jsonNormalize:路径 '" + recordPath + "' 未找到数组");
+            throw new IllegalArgumentException("jsonNormalize:路径 '" + displayPath + "' 未找到数组");
         }
         // 第一遍:拍平所有元素,收集全量键集合(union,保证列一致)
         List<Map<String, Object>> flat = new ArrayList<>();
@@ -308,7 +417,11 @@ public final class Json {
         public JsonWriter orient(Orient o) { this.orient = o; return this; }
 
         public void go() throws IOException {
-            String json = toJsonString(df, orient);
+            // 因为 0 行 df 用 RECORDS 会写出 "[]" 丢失全部列(pandas records orient 同样丢,
+            // 但 pandas 默认 orient=columns 保留),所以 0 行时自动切 COLUMNS 形态
+            // {"a":[],"b":[]}(读侧自动检测),列元数据不丢;非 0 行不受影响。
+            Orient effective = (df.rowCount() == 0 && orient == Orient.RECORDS) ? Orient.COLUMNS : orient;
+            String json = toJsonString(df, effective);
             Files.writeString(path, json, StandardCharsets.UTF_8);
         }
     }
@@ -393,15 +506,18 @@ public final class Json {
         else if (v instanceof Integer) obj.put(key, (Integer) v);
         else if (v instanceof Long) obj.put(key, (Long) v);
         else if (v instanceof Double d) {
-            // 修复(AI agent1 / AI agent2 双 AI 复审):NaN/Infinity 在标准 JSON 不允许,
-            // Jackson 默认会抛异常或写成非数字 token 导致读回类型损坏(如 Infinity 变字符串)。
-            // 统一按"缺失"语义输出 null(与 jian-core 的 DataFrame 缺失处理一致)。
+            // 因为 NaN/Infinity 在标准 JSON 不允许,Jackson 默认会抛异常或写成非数字 token
+            // 导致读回类型损坏(如 Infinity 变字符串),所以统一按"缺失"语义输出 null
+            // (与 jian-core 的 DataFrame 缺失处理一致)。
             if (Double.isNaN(d) || Double.isInfinite(d)) obj.putNull(key);
             else obj.put(key, d);
         }
         else if (v instanceof Float f) {
             if (Float.isNaN(f) || Float.isInfinite(f)) obj.putNull(key);
             else obj.put(key, f);
+        }
+        else if (v instanceof java.math.BigInteger bi) {
+            obj.put(key, bi);   // BigInteger 精确写出,不降 double 丢精度
         }
         else if (v instanceof Number) {
             double d = ((Number) v).doubleValue();
@@ -424,6 +540,9 @@ public final class Json {
         else if (v instanceof Float f) {
             if (Float.isNaN(f) || Float.isInfinite(f)) arr.addNull();
             else arr.add(f);
+        }
+        else if (v instanceof java.math.BigInteger bi) {
+            arr.add(bi);   // BigInteger 精确写出,不降 double 丢精度
         }
         else if (v instanceof Number) {
             double d = ((Number) v).doubleValue();

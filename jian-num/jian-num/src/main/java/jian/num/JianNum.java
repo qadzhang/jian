@@ -156,7 +156,7 @@ public final class JianNum {
     public static double median(double[] data) { return Stats.median(data); }
 
     /**
-     * 百分位分位(对齐 np.percentile,q∈[0,100])。
+     * 百分位分位(API 形式对齐 np.percentile,q∈[0,100];插值口径见 {@link Stats#percentile}:Commons Math 默认 R-6)。
      *
      * @param data double[] 输入数据,约束:不能为 null;可含 NaN(按 NaNPolicy 处理)
      * @param q    double 百分位数,取值范围:[0, 100]

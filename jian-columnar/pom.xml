@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>jian</groupId>
+    <artifactId>jian-parent</artifactId>
+    <version>1.0.1</version>
+    <relativePath>../pom.xml</relativePath>
+  </parent>
+
+  <!-- ┌─ What : jian-columnar-all —— 列存附加 fat jar(Parquet/ORC + Hadoop 生态,~46MB)
+       │  Why  : 列存自带 ~45MB Hadoop 依赖,用户决策"按需加载":
+       │         jian-all 主 fat 不含列存(~45MB);需要列存的用户在 classpath 额外叠加本 jar。
+       │         Jian.readParquet/toOrc 等经反射探测,缺本 jar 时抛 ModuleNotLoadedException(带指引)
+       │  Who  : -Pfat 构建(第 4 个 fat 制品)
+       │  When : 构建列存制品时
+       │  How  : shade 四红线照 §2.5.3(ServicesResourceTransformer / 签名排除 / Ai 标记 /
+       │         AI 文档 modules/ 唯一路径 + aggregated.md 总索引) -->
+  <artifactId>jian-columnar-all</artifactId>
+  <name>jian-columnar-all (fat jar)</name>
+  <packaging>jar</packaging>
+
+  <dependencies>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-parquet</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>jian</groupId><artifactId>jian-io-orc</artifactId><version>${project.version}</version></dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>${maven-shade-plugin.version}</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals><goal>shade</goal></goals>
+            <configuration>
+              <shadedArtifactAttached>true</shadedArtifactAttached>
+              <shadedClassifierName>all</shadedClassifierName>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <manifestEntries>
+                    <Ai-Aggregated>true</Ai-Aggregated>
+                    <Ai-Library>jian-columnar</Ai-Library>
+                    <Ai-Modules>META-INF/ai/aggregated.md</Ai-Modules>
+                  </manifestEntries>
+                </transformer>
+              </transformers>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <!-- AI 文档:排除 thin 形态的 module.md(多模块同名,只留一份会误导);
+                         各模块文档走唯一路径 META-INF/ai/modules/<artifactId>/module.md,
+                         总索引见 META-INF/ai/aggregated.md(MANIFEST 的 Ai-Modules 指向) -->
+                    <exclude>META-INF/ai/module.md</exclude>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

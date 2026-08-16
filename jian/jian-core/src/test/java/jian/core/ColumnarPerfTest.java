@@ -262,11 +262,11 @@ public class ColumnarPerfTest {
             new Object[]{ c1.clone(), c2.clone() });
     }
 
-    // ======================== 回归测试:AI agent1 审查发现的 BUG ========================
+    // ======================== 回归测试:数组工厂 / 列存 / merge 边界 ========================
 
     @Test
     void ofColumnArrays_String数组应映射为STRING类型() {
-        // BUG #3 回归:String[] 不能误判为 OBJECT
+        // 因为 String[] 须直接映射 STRING 列,所以不能误判为 OBJECT
         String[] data = {"alice", "bob", "carol"};
         DataFrame df = DataFrame.ofColumnArrays(java.util.List.of("x"), new Object[]{data});
         assertThat(df.dtypes().get(0)).isEqualTo(DType.STRING);
@@ -276,7 +276,7 @@ public class ColumnarPerfTest {
 
     @Test
     void ofColumnArrays_int数组应保留INT类型() {
-        // BUG #4 回归:int[] 不应升位为 LONG(破坏 schema 一致性)
+        // 因为 int[] 保留 INT 才能维持 schema 一致性,所以不升位为 LONG
         int[] data = {1, 2, 3};
         DataFrame df = DataFrame.ofColumnArrays(java.util.List.of("x"), new Object[]{data});
         assertThat(df.dtypes().get(0)).isEqualTo(DType.INT);
@@ -285,7 +285,7 @@ public class ColumnarPerfTest {
 
     @Test
     void ofColumnArrays_列长度不一致应抛异常() {
-        // BUG #5 回归:列等长必须校验
+        // 因为列等长是 DataFrame 构造的前提,所以必须校验并明确报错
         assertThatThrownBy(() ->
             DataFrame.ofColumnArrays(
                 java.util.List.of("a", "b"),
@@ -296,7 +296,7 @@ public class ColumnarPerfTest {
 
     @Test
     void ofColumnArrays_null元素应抛异常() {
-        // BUG #5 扩展:null 数组元素应明确报错
+        // 扩展:null 数组元素应明确报错
         assertThatThrownBy(() ->
             DataFrame.ofColumnArrays(java.util.List.of("a"), new Object[]{null}))
             .isInstanceOf(NullPointerException.class);
@@ -304,7 +304,7 @@ public class ColumnarPerfTest {
 
     @Test
     void merge_key含null应落回通用路径不误匹配() {
-        // BUG #2 回归:左表含 null 时不能与 id=0 错误匹配
+        // 因为 null 键不与任何值匹配,所以左表含 null 时不能与 id=0 错误匹配
         DataFrame l = DataFrame.of(Schema.of("id", DType.LONG, "v", DType.DOUBLE),
             new Object[][]{{1L, 10.0}, {null, 20.0}, {0L, 30.0}});
         DataFrame r = DataFrame.of(Schema.of("id", DType.LONG, "w", DType.DOUBLE),
@@ -317,8 +317,8 @@ public class ColumnarPerfTest {
 
     @Test
     void columnarHashMap_大容量不溢出() {
-        // BUG #1 回归:即使 nRows 接近 Integer.MAX_VALUE,chooseCapacity 也不溢出成 0
-        // (这里只测合理规模,2^29 极限值由代码常量保护)
+        // 因为即使 nRows 接近 Integer.MAX_VALUE chooseCapacity 也不得溢出成 0,这里测合理规模
+        // (2^29 极限值由代码常量保护)
         long[] keys = new long[1000];
         for (int i = 0; i < 1000; i++) keys[i] = i;
         ColumnarHashMap map = ColumnarHashMap.buildFromLong(keys);
@@ -328,7 +328,7 @@ public class ColumnarPerfTest {
 
     @Test
     void intColumn_nullMask应返回拷贝不可影响内部() {
-        // BUG #6 回归:修改 nullMask() 返回值不应破坏原列
+        // 因为 nullMask() 返回的是拷贝,所以外部修改返回值不应破坏原列
         IntColumn col = new IntColumn("x", new int[]{1, 0, 2}, new boolean[]{false, true, false});
         boolean[] mask = col.nullMask();
         mask[1] = false;  // 修改返回的拷贝
@@ -338,7 +338,7 @@ public class ColumnarPerfTest {
 
     @Test
     void merge_列名不存在应给清晰异常() {
-        // BUG #9 回归:不存在的列应给清晰错误,不是 IOOBE
+        // 不存在的列应给清晰错误,不是 IOOBE
         DataFrame a = dfOfLong("id", "v", new long[]{1}, new double[]{1.0});
         DataFrame b = dfOfLong("id", "v", new long[]{1}, new double[]{1.0});
         assertThatThrownBy(() -> a.merge(b, "inner", "notExist"))
@@ -348,7 +348,7 @@ public class ColumnarPerfTest {
 
     @Test
     void merge_rightOn不存在也应给清晰异常() {
-        // 第 2 轮 AI agent1 审查补:rightOn 校验路径(leftOn 存在但 rightOn 不存在的场景)
+        // rightOn 校验路径(leftOn 存在但 rightOn 不存在的场景)
         DataFrame a = dfOfLong("id", "v", new long[]{1}, new double[]{1.0});
         DataFrame b = dfOfLong("id", "v", new long[]{1}, new double[]{1.0});
         assertThatThrownBy(() ->
@@ -359,7 +359,7 @@ public class ColumnarPerfTest {
 
     @Test
     void ofColumnArrays_不支持数组类型应清晰报错() {
-        // 第 2 轮 AI agent1 审查 BUG-3:short[] 等不支持数组应清晰报错(不抛 ClassCastException)
+        // short[] 等不支持的数组类型应清晰报错(不抛 ClassCastException)
         assertThatThrownBy(() ->
             DataFrame.ofColumnArrays(java.util.List.of("x"), new Object[]{new short[]{1, 2}}))
             .isInstanceOf(IllegalArgumentException.class)
@@ -372,7 +372,7 @@ public class ColumnarPerfTest {
 
     @Test
     void groupBy_longKey_fastPath产出的keyList应可变() {
-        // 第 2 轮 AI agent1 审查补:验证 BUG #8 修复(fast path 的 key list 应是可变 ArrayList)
+        // fast path 产出的 key list 应是可变 ArrayList(不可变 List.of 会让下游操作抛异常)
         DataFrame df = dfOfLong("id", "v", new long[]{1, 2, 1}, new double[]{10, 20, 11});
         Map<String, String> spec = new HashMap<>();
         spec.put("v", "count");
@@ -383,7 +383,7 @@ public class ColumnarPerfTest {
 
     @Test
     void ofColumnArrays_多维数组应清晰报错() {
-        // 第 3 轮 BUG #3 回归:long[][] / Object[][] 等多维数组不能强转,要清晰报错
+        // long[][] / Object[][] 等多维数组不能强转,要清晰报错
         assertThatThrownBy(() ->
             DataFrame.ofColumnArrays(java.util.List.of("x"), new Object[]{new long[][]{{1, 2}}}))
             .isInstanceOf(IllegalArgumentException.class)
@@ -391,21 +391,23 @@ public class ColumnarPerfTest {
     }
 
     @Test
-    void merge_doubleKey_正零与负零应与DoubleEquals一致() {
-        // 修正(差分测试发现): Double.equals(+0.0, -0.0) == false(按位比较,位模式不同)
-        // jian fast path 与 generic(HashMap<Double>)路径都视 ±0.0 不等,行为一致
+    void merge_doubleKey_正零与负零应与normKey契约一致() {
+        // 因为 generic 路径 normKey 契约(§10.16 #6)规定"±0.0 归一同一键",
+        // 所以 fast(inner) 与 right/outer(generic) 同输入结果一致:±0.0 同键匹配
         DataFrame a = DataFrame.of(Schema.of("id", DType.DOUBLE, "v", DType.DOUBLE),
             new Object[][]{{+0.0, 10.0}, {1.5, 20.0}});
         DataFrame b = DataFrame.of(Schema.of("id", DType.DOUBLE, "w", DType.DOUBLE),
             new Object[][]{{-0.0, 100.0}});
         DataFrame out = a.merge(b, "inner", "id");
-        // ±0.0 不匹配(与 Double.equals 一致),只剩无匹配 → 0 行
-        assertThat(out.rowCount()).isEqualTo(0);
+        // +0.0 与 -0.0 是同一键 → 1 行;1.5 无匹配
+        assertThat(out.rowCount()).isEqualTo(1);
+        assertThat(out.getDoubleColumn("v").data()).containsExactly(10.0);
+        assertThat(out.getDoubleColumn("w").data()).containsExactly(100.0);
     }
 
     @Test
     void merge_int列输出应保留INT不误判OBJECT() {
-        // 第 3 轮 BUG #1 回归:toPrimitiveArray 按源 dtype 决定类型,INT 列输出应仍是 INT
+        // 因为 toPrimitiveArray 按源 dtype 决定类型,所以 INT 列输出应仍是 INT
         // 构造 INT 列(注意 jian INT 列内部是 int[]+nullMask)
         DataFrame a = DataFrame.of(
             Schema.of("id", DType.LONG, "n", DType.INT),

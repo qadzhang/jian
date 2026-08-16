@@ -1,0 +1,8 @@
+# tests-pbt Python 测试环境依赖
+# Why:对照套件以 pandas 1.5.3 为 oracle(AGENTS.md §0.5;d49 依赖的 Series.mad 在
+#     pandas 2.0 已移除、sortBy/merge 等行为口径也随大版本变化),必须锁版本防环境漂移。
+# 装法:pip install -r tests-pbt/requirements.txt
+jpype1>=1.4
+pandas==1.5.3
+hypothesis>=6.100
+numpy<2          # pandas 1.5.3 与 numpy 2.x 不兼容(ABI 断裂)

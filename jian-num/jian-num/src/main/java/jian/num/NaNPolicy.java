@@ -23,5 +23,7 @@ public enum NaNPolicy {
     PROPAGATE;
 
     /** 默认策略:pandas/numpy 统计场景最常用 */
-    public static NaNPolicy DEFAULT = SKIP;
+    // 因为非 final 的 DEFAULT 可被外部重赋值,会破坏全局默认策略的单例契约,
+    // 所以声明为 final
+    public static final NaNPolicy DEFAULT = SKIP;
 }

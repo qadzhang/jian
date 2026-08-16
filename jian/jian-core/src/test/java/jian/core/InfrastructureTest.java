@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 // ┌─ What : 阶段 0 基础设施测试 —— MultiIndex N 级 + DatetimeIndex + Frequency
 // │  Why  : 这三个类是后续阶段 C(stack/unstack)和阶段 D(resample/asfreq/shift)的依赖
 // │  Who  : 阶段 C/D 算子通过它们实现
-// │  When : 2026-08-09 阶段 0 落地
+// │  When : jian-core 测试套件常规执行
 // │  Where: jian-core/src/test/java/jian/core/InfrastructureTest.java
 class InfrastructureTest {
 
@@ -289,9 +289,34 @@ class InfrastructureTest {
 
     @Test
     void Frequency_parse月级() {
-        Frequency f = Frequency.parse("3ME");
+        Frequency f = Frequency.parse("3ME");  // 月末对齐(pandas MonthEnd)
         assertThat(f.amount()).isEqualTo(3);
-        assertThat(f.unit()).isEqualTo(Frequency.Unit.MONTHS);
+        assertThat(f.unit()).isEqualTo(Frequency.Unit.MONTH_END);
+    }
+
+    @Test
+    void Frequency_parse月初月末区分() {
+        // 因为 M/MS/ME 是三个不同的锚点语义单位,所以解析须各自映射(MS=月初、ME=月末)
+        assertThat(Frequency.parse("1M").unit()).isEqualTo(Frequency.Unit.MONTHS);
+        assertThat(Frequency.parse("1MS").unit()).isEqualTo(Frequency.Unit.MONTH_START);
+        assertThat(Frequency.parse("1ME").unit()).isEqualTo(Frequency.Unit.MONTH_END);
+    }
+
+    @Test
+    void Frequency_月初月末锚点() {
+        // MONTH_START:1/15 → 当月 1 日;MONTH_END:1/15 → 上月末(floor 语义)
+        LocalDateTime t = LocalDateTime.of(2026, 1, 15, 10, 30);
+        assertThat(Frequency.parse("1MS").alignStart(t)).isEqualTo(LocalDateTime.of(2026, 1, 1, 0, 0));
+        assertThat(Frequency.parse("1ME").alignStart(t)).isEqualTo(LocalDateTime.of(2025, 12, 31, 0, 0));
+        assertThat(Frequency.parse("1ME").alignStart(LocalDateTime.of(2026, 1, 31, 8, 0)))
+                .isEqualTo(LocalDateTime.of(2026, 1, 31, 0, 0));
+        // 月末加法防漂移:1/31 + 1ME = 2/28(不是 3/3)
+        assertThat(Frequency.parse("1ME").plus(LocalDateTime.of(2026, 1, 31, 0, 0)))
+                .isEqualTo(LocalDateTime.of(2026, 2, 28, 0, 0));
+        assertThat(Frequency.parse("1MS").plus(LocalDateTime.of(2026, 1, 1, 0, 0)))
+                .isEqualTo(LocalDateTime.of(2026, 2, 1, 0, 0));
+        // 非月单位 alignStart 原样返回
+        assertThat(Frequency.parse("1D").alignStart(t)).isEqualTo(t);
     }
 
     @Test

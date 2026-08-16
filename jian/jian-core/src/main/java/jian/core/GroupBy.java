@@ -14,7 +14,8 @@ import java.util.Map;
 // │         agg 时每桶每列算统计 → 拼 DataFrame。
 // │         关键变量变化:
 // │           - groups:LinkedHashMap<组键 List<Object>, List<Integer> 行下标>;LinkedHashMap 保出现顺序;
-// │           - groupKey 含 null 时归 "<NA>" 组(规范 01 §9)。
+// │           - groupKey 含 null 时归 NA_KEY 哨兵组(私有对象而非 "<NA>" 字符串,
+// │             防与键列里真实的 "<NA>" 字面量合并;对外展示层把哨兵还原为 null)。
 // │         逻辑路线:
 // │           路径 A(agg)→ 每组每列算统计量 → 行=组,列=byCols+aggCol_统计名;
 // │           路径 B(transform)→ 每组算统计后广播回原行序 → 长度 = 原行数;
@@ -29,6 +30,14 @@ import java.util.Map;
  * }</pre>
  */
 public final class GroupBy {
+
+    /**
+     * null 组键的<b>私有哨兵对象</b>(外界拿不到)。
+     * 因为用字符串 "<NA>" 作 null 组键时,分组键列里恰有字面量 "<NA>" 会与 null 键
+     * 合并成同一组(pandas 中两者是不同的键),所以用私有哨兵对象。仅作内层 map 键;
+     * agg/size/iterGroups 等展示层把哨兵还原为 null 输出。
+     */
+    private static final Object NA_KEY = new Object();
 
     private final DataFrame parent;
     private final String[] byCols;
@@ -47,12 +56,13 @@ public final class GroupBy {
      * 实测 500 万行分组可从 ~3 秒降到 ~300ms(约 10 倍)。其它场景(多列 key、字符串 key、
      * 含 null)走通用 LinkedHashMap<List<Object>> 路径兜底,正确性优先。
      *
-     * <p><b>NaN/缺失值分组语义(2026-08-09 经测试固定,与 pandas 对齐)</b>:
+     * <p><b>NaN/缺失值分组语义(经测试固定,与 pandas 对齐)</b>:
      * <ul>
      *   <li>fast path 仅在 <code>nullCount==0</code> 时启用(见下方判定)。含 NaN/缺失值时
      *       一律 fall back 到 generic 路径,避免 NaN 的 Long.MIN_VALUE 哨兵与正常值冲突。</li>
      *   <li>generic 路径用 <code>df.get(r, col)</code> 取值:对 LONG/INT/STRING 列,缺失值返回 null
-     *       → 归一为字符串 "<NA>"(见下文 key.add);对 DOUBLE 列,缺失值返回 Double.NaN 对象。
+     *       → 归一为私有哨兵 {@code NA_KEY}("<NA>" 字符串会与键列真实字面量撞车,
+     *       展示层还原为 null);对 DOUBLE 列,缺失值返回 Double.NaN 对象。
      *       由于 List.equals / hashCode 对 Double 元素调用 Double.equals(比较 bit pattern),
      *       Double.NaN 与 Double.NaN 的 equals 恒为 true → <b>所有 NaN 行归入同一组</b>(与
      *       pandas groupBy(dropna=True 默认行为一致)。</li>
@@ -68,38 +78,73 @@ public final class GroupBy {
             Column col = df.getColumn(byCols[0]);
             DType dt = col.dtype();
             if (dt == DType.LONG || dt == DType.INT) {
-                if (col.nullCount() == 0) return buildGroupsLong(df, byCols[0], toLongArr(col));
+                if (col.nullCount() == 0) return buildGroupsLong(df, byCols[0], DataFrameTypes.columnToLongArray(col));
             } else if (dt == DType.DOUBLE) {
                 if (col.nullCount() == 0) return buildGroupsDouble(df, byCols[0], ((DoubleColumn) col).dataInPlace());
             }
         }
-        // 通用路径
-        Map<List<Object>, List<Integer>> tmp = new LinkedHashMap<>();
+        // 通用路径(性能优化):
+        // 因为每行 new ArrayList 作键 + computeIfAbsent 全元素 hash + Integer 装箱,
+        // 1M 行多键分组会 18× 超线性(实测 1864ms vs pandas 454ms),所以三处改造:
+        //  ①键改 Object[] 包装(HashCode 用 Arrays.hashCode),命中时**零分配**(复用 scratch 探针,
+        //    仅新组才 clone 入 map);②行号收进紧凑 IntBuf(int[] 自增长,无 Integer 装箱);
+        //  ③±0.0 归一与 null→哨兵组语义保持不变(哨兵为私有对象而非 "<NA>" 字符串)。
         int n = df.rowCount();
+        Map<GroupKey, IntBuf> tmp = new LinkedHashMap<>();
+        Object[] scratch = new Object[byCols.length];
+        // 循环外取 Column[] 引用,消除每行每列 df.get(r, name) 的 columnIndex 字符串查找
+        // (concat 行循环同类的热点;高基数 card≥1000 时收益最大,高低基数全受益)
+        Column[] keyCols = new Column[byCols.length];
+        for (int c = 0; c < byCols.length; c++) keyCols[c] = df.getColumn(byCols[c]);
         for (int r = 0; r < n; r++) {
-            List<Object> key = new ArrayList<>(byCols.length);
-            for (String col : byCols) {
-                Object v = df.get(r, col);
-                key.add(v == null ? "<NA>" : v);  // 规范 §9:null 归 <NA> 组
+            for (int c = 0; c < byCols.length; c++) {
+                Object v = keyCols[c].get(r);
+                // ±0.0 归一到 +0.0(numpy/pandas 中 0.0 == -0.0 同组)
+                if (v instanceof Double d && d == 0.0) v = 0.0;
+                // null 归私有哨兵组("<NA>" 字符串会与真实 "<NA>" 字面量撞车)
+                scratch[c] = v == null ? NA_KEY : v;
             }
-            tmp.computeIfAbsent(key, k -> new ArrayList<>()).add(r);
+            GroupKey probe = new GroupKey(scratch);          // 探针键(不 clone,零拷贝)
+            IntBuf buf = tmp.get(probe);
+            if (buf == null) {
+                tmp.put(new GroupKey(scratch.clone()), buf = new IntBuf());  // 新组才复制键
+            }
+            buf.add(r);
         }
         Map<List<Object>, int[]> out = new LinkedHashMap<>();
-        for (Map.Entry<List<Object>, List<Integer>> e : tmp.entrySet()) {
-            List<Integer> idx = e.getValue();
-            int[] arr = new int[idx.size()];
-            for (int i = 0; i < arr.length; i++) arr[i] = idx.get(i);
-            out.put(e.getKey(), arr);
+        for (Map.Entry<GroupKey, IntBuf> e : tmp.entrySet()) {
+            out.put(java.util.Arrays.asList(e.getKey().vals), e.getValue().toArray());
         }
         return out;
+    }
+
+    /** 多键分组键(Object[] 值语义,Arrays.hashCode/equals;探针复用 scratch,入 map 才 clone)。 */
+    private static final class GroupKey {
+        final Object[] vals;
+        GroupKey(Object[] vals) { this.vals = vals; }
+        @Override public int hashCode() { return java.util.Arrays.hashCode(vals); }
+        @Override public boolean equals(Object o) {
+            return o instanceof GroupKey k && java.util.Arrays.equals(vals, k.vals);
+        }
+    }
+
+    /** 行号紧凑缓冲(避免 List&lt;Integer&gt; 装箱)。 */
+    private static final class IntBuf {
+        private int[] a = new int[8];
+        private int len;
+        void add(int v) {
+            if (len == a.length) a = java.util.Arrays.copyOf(a, len << 1);
+            a[len++] = v;
+        }
+        int[] toArray() { return java.util.Arrays.copyOf(a, len); }
     }
 
     /**
      * long/int key 的 fast path:用 LinkedHashMap<Long, int[]>(裸 long key,不装箱不 new ArrayList)。
      * 瓶颈对比:原路径每行 new ArrayList<>(1) + 装箱 Long + List.hashCode;fast path 直接 putIfAbsent(long)。
      * 注:此处不需要 ColumnarHashMap(join 才需要双向查找,group 只需"按 key 累积下标")。
-     * BUG #8 修复:外包 key 用 ArrayList<Object>(与 generic 路径 new ArrayList 一致,避免
-     *   下游如有人对 key list 做 add/remove 时 ImmutableCollections 抛 UnsupportedOperationException)。
+     * 因为 List.of 不可变(下游若对 key list 做 add/remove 会抛 UnsupportedOperationException),
+     * 所以外包 key 用 ArrayList&lt;Object&gt;(与 generic 路径一致)。
      */
     private static Map<List<Object>, int[]> buildGroupsLong(DataFrame df, String byCol, long[] keys) {
         int n = keys.length;
@@ -125,7 +170,10 @@ public final class GroupBy {
         int n = keys.length;
         LinkedHashMap<Double, java.util.List<Integer>> tmp = new LinkedHashMap<>();
         for (int r = 0; r < n; r++) {
-            tmp.computeIfAbsent(keys[r], kk -> new ArrayList<>()).add(r);
+            // ±0.0 归一到 +0.0(numpy/pandas 同组)
+            double k = keys[r];
+            if (k == 0.0) k = 0.0;
+            tmp.computeIfAbsent(k, kk -> new ArrayList<>()).add(r);
         }
         Map<List<Object>, int[]> out = new LinkedHashMap<>();
         for (java.util.Map.Entry<Double, java.util.List<Integer>> e : tmp.entrySet()) {
@@ -140,16 +188,6 @@ public final class GroupBy {
     }
 
     /** Column → long[](int 升位)。仅 LONG/INT 调用。 */
-    private static long[] toLongArr(Column col) {
-        if (col instanceof LongColumn lc) return lc.dataInPlace();
-        if (col instanceof IntColumn ic) {
-            int[] src = ic.dataInPlace();
-            long[] out = new long[src.length];
-            for (int i = 0; i < src.length; i++) out[i] = src[i];
-            return out;
-        }
-        throw new IllegalStateException("toLongArr 仅支持 LONG/INT,实际 " + col.dtype());
-    }
 
     /**
      * 组数。
@@ -159,12 +197,18 @@ public final class GroupBy {
 
     /**
      * 遍历每组(对齐 pandas for name, sub_df in gb)。
+     * <p>内层 map 键用 NA_KEY 哨兵表示缺失组,此处(展示层)把哨兵还原为 null。
      * @return Iterable&lt;GroupEntry&gt; 各组迭代器;每组含 key + 行下标数组
      */
     public Iterable<GroupEntry> iterGroups() {
         List<GroupEntry> out = new ArrayList<>(groups.size());
         for (Map.Entry<List<Object>, int[]> e : groups.entrySet()) {
-            out.add(new GroupEntry(e.getKey(), e.getValue()));
+            // 展示层:NA_KEY 哨兵 → null(缺失组标签对用户呈现为 null,§3.5 语义)
+            List<Object> displayKey = new ArrayList<>(e.getKey());
+            for (int i = 0; i < displayKey.size(); i++) {
+                if (displayKey.get(i) == NA_KEY) displayKey.set(i, null);
+            }
+            out.add(new GroupEntry(displayKey, e.getValue()));
         }
         return out;
     }
@@ -195,10 +239,10 @@ public final class GroupBy {
         for (Map.Entry<List<Object>, int[]> g : groups.entrySet()) {
             List<Object> key = g.getKey();
             int[] idx = g.getValue();
-            // 写 byCols
+            // 写 byCols(NA_KEY 哨兵在展示层还原为 null)
             for (int c = 0; c < byCols.length; c++) {
                 Object v = key.get(c);
-                rows[rowIdx][c] = "<NA>".equals(v) ? null : v;
+                rows[rowIdx][c] = v == NA_KEY ? null : v;
             }
             // 写每列 agg
             int colCursor = byCols.length;
@@ -217,9 +261,29 @@ public final class GroupBy {
                 // byCols 用原 dtype
                 nameType[i * 2 + 1] = parent.getColumn(byCols[i]).dtype();
             } else {
-                // agg 列:count/nunique → LONG,其余 → DOUBLE
+                // agg 列:count/nunique → LONG;sum 对 STRING 列(拼接语义)与
+                // first/last(返回原值)按源列 dtype;其余 → DOUBLE
                 String aggFn = outCols.get(i).substring(outCols.get(i).lastIndexOf('_') + 1);
-                nameType[i * 2 + 1] = (aggFn.equals("count") || aggFn.equals("nunique")) ? DType.LONG : DType.DOUBLE;
+                String srcCol = outCols.get(i).substring(0, outCols.get(i).length() - aggFn.length() - 1);
+                DType srcDt = parent.getColumn(srcCol).dtype();
+                if (aggFn.equals("count") || aggFn.equals("nunique")) {
+                    nameType[i * 2 + 1] = DType.LONG;
+                } else if (aggFn.equals("first") || aggFn.equals("last")) {
+                    // 因为 first/last 返回原值,对齐 pandas 保留 bool/datetime64
+                    // (不把 BOOL/DATE/DATETIME 的 first/last toString 化成 "true"/"2026-01-01"),
+                    // 所以一律保留源 dtype
+                    nameType[i * 2 + 1] = srcDt;
+                } else if (aggFn.equals("sum")) {
+                    if (srcDt == DType.BOOL) {
+                        nameType[i * 2 + 1] = DType.LONG;          // BOOL sum = true 计数
+                    } else if (!srcDt.isNumeric()) {
+                        nameType[i * 2 + 1] = DType.STRING;        // 字符串 sum=拼接
+                    } else {
+                        nameType[i * 2 + 1] = DType.DOUBLE;
+                    }
+                } else {
+                    nameType[i * 2 + 1] = DType.DOUBLE;
+                }
             }
         }
         return DataFrame.of(Schema.of(nameType), rows);
@@ -248,18 +312,43 @@ public final class GroupBy {
                 int cnt = 0; for (int i : idx) if (!c.isNull(i)) cnt++; return (long) cnt;
             case "nunique":
                 java.util.Set<Object> seen = new java.util.HashSet<>();
-                for (int i : idx) { if (!c.isNull(i)) seen.add(c.get(i)); }
+                // ±0.0 数值等价归一(pandas nunique([0,-0,1])=2)
+                for (int i : idx) { if (!c.isNull(i)) seen.add(DataFrameStats.normUniqueKey(c.get(i))); }
                 return (long) seen.size();
-            case "sum": { double s = 0; for (int i : idx) if (!c.isNull(i)) s += c.getDouble(i); return s; }
-            case "mean": { double s = 0; int n = 0; for (int i : idx) if (!c.isNull(i)) { s += c.getDouble(i); n++; } return n == 0 ? Double.NaN : s / n; }
+            // 因为对齐 pandas groupby.sum 对 str 的行为(拼接,实测 'xy'),所以字符串列 sum = 拼接;
+            // 数值列照旧 double 求和。null/NaN 跳过(pandas skipna 默认)。
+            // 因为 isNumeric() 不含 BOOL(落进字符串拼接分支会产出 "truefalsetrue",
+            // 而 pandas 返回 True 计数),所以 BOOL 列 sum = true 计数(LONG)。
+            case "sum": {
+                if (c.dtype() == DType.BOOL) {
+                    long trueCnt = 0;
+                    for (int i : idx) if (!c.isNull(i) && (Boolean) c.get(i)) trueCnt++;
+                    return trueCnt;
+                }
+                if (!c.dtype().isNumeric()) {
+                    StringBuilder sb = new StringBuilder();
+                    for (int i : idx) if (!c.isNull(i)) sb.append(c.get(i));
+                    return sb.toString();
+                }
+                double s = 0; for (int i : idx) if (!c.isNull(i)) s += c.getDouble(i); return s;
+            }
+            case "mean":
+            // avg 是 SQL 标准聚合(与 mean 语义等价,pandas/SQL 一致),作为 mean 别名一并支持
+            case "avg": { double s = 0; int n = 0; for (int i : idx) if (!c.isNull(i)) { s += c.getDouble(i); n++; } return n == 0 ? Double.NaN : s / n; }
             case "min": { double m = Double.POSITIVE_INFINITY; boolean any = false;
                 for (int i : idx) if (!c.isNull(i)) { any = true; if (c.getDouble(i) < m) m = c.getDouble(i); }
                 return any ? m : Double.NaN; }
             case "max": { double m = Double.NEGATIVE_INFINITY; boolean any = false;
                 for (int i : idx) if (!c.isNull(i)) { any = true; if (c.getDouble(i) > m) m = c.getDouble(i); }
                 return any ? m : Double.NaN; }
-            case "first": return c.get(idx[0]);
-            case "last": return c.get(idx[idx.length - 1]);
+            // first/last 对齐 pandas 默认 skipna=True:跳过组内缺失,
+            // 取第一个/最后一个非空值;组内全空 → null(DoubleColumn 为 NaN,与 pandas 一致)
+            case "first":
+                for (int i : idx) if (!c.isNull(i)) return c.get(i);
+                return idx.length == 0 ? null : c.get(idx[0]);
+            case "last":
+                for (int i = idx.length - 1; i >= 0; i--) if (!c.isNull(idx[i])) return c.get(idx[i]);
+                return idx.length == 0 ? null : c.get(idx[idx.length - 1]);
             case "median": case "std": case "var": {
                 // 提取组内值
                 List<Double> vals = new ArrayList<>();
@@ -277,7 +366,7 @@ public final class GroupBy {
             }
             default:
                 throw new IllegalArgumentException("未知聚合函数:" + fn
-                        + "(支持:count/nunique/sum/mean/min/max/first/last/median/std/var)");
+                        + "(支持:count/nunique/sum/avg/mean/min/max/first/last/median/std/var)");
         }
     }
 
@@ -303,17 +392,39 @@ public final class GroupBy {
 
     /**
      * 组大小(快捷,对齐 pandas gb.size)。
-     * @return DataFrame 两列:key(组键,单列 key 取原值,多列 key 取 toString)+ size(每组行数,LONG)
+     * 单列 key 保留元素原始值与 dtype(调用方无需再按键类型分支处理);
+     * 多列 key 无法保 dtype,统一 toString(STRING 列,文档声明)。
+     * @return DataFrame 两列:key(组键)+ size(每组行数,LONG)
      */
     public DataFrame size() {
         Object[][] rows = new Object[groups.size()][2];
         int i = 0;
+        boolean singleCol = true;
+        boolean hasNullKey = false;
         for (Map.Entry<List<Object>, int[]> g : groups.entrySet()) {
-            rows[i][0] = g.getKey().size() == 1 ? g.getKey().get(0) : g.getKey().toString();
+            if (g.getKey().size() != 1) singleCol = false;
+            Object k = g.getKey().size() == 1 ? g.getKey().get(0) : g.getKey().toString();
+            // 因为 key 列混合(数值 key 与缺失组并存)时,缺失键若走字符串化会在
+            // DataFrame.of 落 toNumber 时抛裸 NFE,所以存在缺失组时整体走 OBJECT +
+            // 缺失组→null(对齐 pandas dropna=False 的 <NA> 组,缺失组在输出中表达为 null 行标签)。
+            // null 键的内层标记为 NA_KEY 哨兵(字符串哨兵会与真实 "<NA>" 字面量撞车)
+            if (k == NA_KEY) { hasNullKey = true; k = null; }
+            rows[i][0] = k;
             rows[i][1] = (long) g.getValue().length;
             i++;
         }
-        return DataFrame.of(Schema.of("key", DType.STRING, "size", DType.LONG), rows);
+        // 单列 key:按首个元素类型定 key 列 dtype(数值 key 不再 String 化);
+        // 含缺失组(数值与 null 混合)时强制 OBJECT(承载数值+null 混合)
+        DType keyDtype = DType.STRING;
+        if (hasNullKey) keyDtype = DType.OBJECT;
+        else if (singleCol && !groups.isEmpty()) {
+            Object first = groups.keySet().iterator().next().get(0);
+            if (first instanceof Integer) keyDtype = DType.INT;
+            else if (first instanceof Long) keyDtype = DType.LONG;
+            else if (first instanceof Double || first instanceof Float) keyDtype = DType.DOUBLE;
+            else if (first instanceof Boolean) keyDtype = DType.BOOL;
+        }
+        return DataFrame.of(Schema.of("key", keyDtype, "size", DType.LONG), rows);
     }
 
     /**

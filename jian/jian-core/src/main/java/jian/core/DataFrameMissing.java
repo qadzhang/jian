@@ -1,6 +1,9 @@
 package jian.core;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Map;
 import java.util.List;
 
 // ┌─ What : DataFrameMissing —— DataFrame 缺失值处理(对齐 pandas §3.8:isna/dropna/fillna/ffill/bfill)
@@ -59,6 +62,12 @@ public final class DataFrameMissing {
                 targetCols.add(idx);
             }
         }
+        // how 大小写不敏感("Any"/"ANY" 都按 any),非法值抛明确 IAE
+        //(大小写敏感会把 "Any" 静默当成 all)
+        boolean anyMode;
+        if ("any".equalsIgnoreCase(how)) anyMode = true;
+        else if ("all".equalsIgnoreCase(how)) anyMode = false;
+        else throw new IllegalArgumentException("dropna how 取值 any/all,实际:" + how);
         boolean[] keep = new boolean[n];
         for (int r = 0; r < n; r++) {
             boolean anyMissing = false;
@@ -68,15 +77,18 @@ public final class DataFrameMissing {
                 if (missing) anyMissing = true;
                 else allMissing = false;
             }
-            keep[r] = how.equals("any") ? !anyMissing : !allMissing;
+            keep[r] = anyMode ? !anyMissing : !allMissing;
         }
         return df.filter(keep);
     }
 
     /**
      * 填充缺失(对齐 pandas df.fillna,统一填同一值)。
+     * value 与列 dtype 不匹配时抛明确 IAE(数值列不静默填 0);
+     * DATETIME/DATE 列保留原 dtype(不降级为 OBJECT 丢类型)。
      * @param df    DataFrame 目标表,非 null
-     * @param value Object 填充值:数值列期望 Number;字符串列期望 String/任意(toString);非 null
+     * @param value Object 填充值:数值列期望 Number;DATETIME 列期望 LocalDateTime(或 LocalDate/String 可转);
+     *              字符串列期望 String/任意(toString);非 null
      * @return DataFrame 同结构,所有缺失单元格替换为 value;类型转换按列 dtype 自动适配
      */
     public static DataFrame fillna(DataFrame df, Object value) {
@@ -87,19 +99,52 @@ public final class DataFrameMissing {
         return df.rebuild(out, df.index());
     }
 
+    /**
+     * 按列填充缺失(对齐 pandas df.fillna(dict))。
+     * <p>数据走向:Map&lt;列名, 填充值&gt; → 逐列查 Map:命中的列用对应值填充(委托
+     * {@link #fillColumn},类型校验同单值版);未命中的列原样保留。
+     * <p>逻辑路线:路径 A(Map 含不存在的列名)→ 抛 IAE 列出全部非法名(防拼写错静默无效);
+     * 路径 B(正常)→ 返回重建后的 DataFrame(未涉及列与原列同一实例,零拷贝)。
+     * @param df    DataFrame 目标表,非 null
+     * @param byCol Map&lt;String,Object&gt; 列名 → 填充值(值类型须匹配该列 dtype,规则同单值版);非 null,可空
+     * @return DataFrame 仅 Map 命中列的缺失被填充;其余列不动
+     * @throws IllegalArgumentException Map 中含 df 不存在的列名,或值类型与列 dtype 不匹配
+     */
+    public static DataFrame fillnaByColumn(DataFrame df, Map<String, Object> byCol) {
+        List<String> unknown = new ArrayList<>();
+        for (String k : byCol.keySet()) if (!df.columnNames().contains(k)) unknown.add(k);
+        if (!unknown.isEmpty()) {
+            throw new IllegalArgumentException("fillna(dict) 含不存在的列:" + unknown + ",现有列:" + df.columnNames());
+        }
+        List<Column> out = new ArrayList<>();
+        for (Column c : df.columnsInternal()) {
+            Object v = byCol.get(c.name());
+            out.add(v == null ? c : fillColumn(c, v));
+        }
+        return df.rebuild(out, df.index());
+    }
+
     private static Column fillColumn(Column c, Object value) {
         int n = c.size();
         switch (c.dtype()) {
             case DOUBLE: {
+                if (!(value instanceof Number)) {
+                    throw new IllegalArgumentException("fillna 值类型与 DOUBLE 列不匹配,期望 Number,实际 "
+                        + value.getClass().getSimpleName() + "「" + value + "」");
+                }
                 double[] d = new double[n];
-                double fv = value instanceof Number ? ((Number) value).doubleValue() : 0.0;
+                double fv = ((Number) value).doubleValue();
                 for (int i = 0; i < n; i++) d[i] = c.isNull(i) ? fv : c.getDouble(i);
                 return new DoubleColumn(c.name(), d);
             }
             case LONG: {
+                if (!(value instanceof Number)) {
+                    throw new IllegalArgumentException("fillna 值类型与 LONG 列不匹配,期望 Number,实际 "
+                        + value.getClass().getSimpleName() + "「" + value + "」");
+                }
                 long[] d = new long[n];
                 boolean[] mask = new boolean[n];
-                long fv = value instanceof Number ? ((Number) value).longValue() : 0L;
+                long fv = ((Number) value).longValue();
                 for (int i = 0; i < n; i++) {
                     if (c.isNull(i)) { d[i] = fv; }
                     else { d[i] = c.getLong(i); }
@@ -107,9 +152,13 @@ public final class DataFrameMissing {
                 return new LongColumn(c.name(), d, mask);
             }
             case INT: {
+                if (!(value instanceof Number)) {
+                    throw new IllegalArgumentException("fillna 值类型与 INT 列不匹配,期望 Number,实际 "
+                        + value.getClass().getSimpleName() + "「" + value + "」");
+                }
                 int[] d = new int[n];
                 boolean[] mask = new boolean[n];
-                int fv = value instanceof Number ? ((Number) value).intValue() : 0;
+                int fv = ((Number) value).intValue();
                 for (int i = 0; i < n; i++) {
                     if (c.isNull(i)) { d[i] = fv; }
                     else { d[i] = (int) c.getLong(i); }
@@ -123,17 +172,33 @@ public final class DataFrameMissing {
                 return new StringColumn(c.name(), d);
             }
             case BOOL: {
+                if (!(value instanceof Boolean)) {
+                    throw new IllegalArgumentException("fillna 值类型与 BOOL 列不匹配,期望 Boolean,实际 "
+                        + value.getClass().getSimpleName() + "「" + value + "」");
+                }
                 boolean[] d = new boolean[n];
                 boolean[] mask = new boolean[n];
-                boolean fv = value instanceof Boolean ? (Boolean) value : false;
+                boolean fv = (Boolean) value;
                 for (int i = 0; i < n; i++) {
                     if (c.isNull(i)) { d[i] = fv; }
                     else d[i] = ((BoolColumn) c).getBool(i);
                 }
                 return new BoolColumn(c.name(), d, mask);
             }
-            case DATETIME:
-            case DATE:
+            case DATETIME: {
+                // 保留 DateTimeColumn,不降级 OBJECT
+                LocalDateTime fv = toFillDateTime(value);
+                LocalDateTime[] d = new LocalDateTime[n];
+                for (int i = 0; i < n; i++) d[i] = c.isNull(i) ? fv : (LocalDateTime) c.get(i);
+                return new DateTimeColumn(c.name(), d);
+            }
+            case DATE: {
+                // 保留 DateColumn,不降级 OBJECT
+                LocalDate fv = toFillDate(value);
+                LocalDate[] d = new LocalDate[n];
+                for (int i = 0; i < n; i++) d[i] = c.isNull(i) ? fv : (LocalDate) c.get(i);
+                return new DateColumn(c.name(), d);
+            }
             case OBJECT:
             default: {
                 Object[] d = new Object[n];
@@ -141,6 +206,30 @@ public final class DataFrameMissing {
                 return new ObjectColumn(c.name(), d);
             }
         }
+    }
+
+    /** DATETIME 列的 fillna 值归一:LocalDateTime 直用,LocalDate 转当日 00:00,String 尝试解析,其它抛 IAE。 */
+    private static LocalDateTime toFillDateTime(Object value) {
+        if (value instanceof LocalDateTime lt) return lt;
+        if (value instanceof LocalDate ld) return ld.atStartOfDay();
+        if (value instanceof String s) {
+            try { return LocalDateTime.parse(s.replace(' ', 'T')); }
+            catch (Exception e) { /* 落到下方统一报错 */ }
+        }
+        throw new IllegalArgumentException("fillna 值类型与 DATETIME 列不匹配,期望 LocalDateTime/LocalDate/ISO 字符串,实际 "
+            + (value == null ? "null" : value.getClass().getSimpleName() + "「" + value + "」"));
+    }
+
+    /** DATE 列的 fillna 值归一:LocalDate 直用,String 尝试解析,其它抛 IAE。 */
+    private static LocalDate toFillDate(Object value) {
+        if (value instanceof LocalDate ld) return ld;
+        if (value instanceof LocalDateTime lt) return lt.toLocalDate();
+        if (value instanceof String s) {
+            try { return LocalDate.parse(s); }
+            catch (Exception e) { /* 落到下方统一报错 */ }
+        }
+        throw new IllegalArgumentException("fillna 值类型与 DATE 列不匹配,期望 LocalDate/LocalDateTime/ISO 字符串,实际 "
+            + (value == null ? "null" : value.getClass().getSimpleName() + "「" + value + "」"));
     }
 
     /**
@@ -167,8 +256,8 @@ public final class DataFrameMissing {
 
     /**
      * 列级 ffill:基于 Object[] 中转。
-     * 修复:用 isNull(i) 替代 get()==null 判断缺失——
-     * DoubleColumn.get(NaN) 现在返回 Double.NaN(不是 null),get()==null 不再识别缺失。
+     * 因为 DoubleColumn.get(NaN) 返回 Double.NaN(不是 null),get()==null 无法识别缺失,
+     * 所以缺失判断一律用 isNull(i)。
      */
     private static Column ffillColumn(Column c) {
         int n = c.size();
@@ -205,30 +294,23 @@ public final class DataFrameMissing {
         return rebuildFromObjects(c, d);
     }
 
-    /** 从 Object[] 按原列 dtype 重建(数值还原为数值列)。 */
+    /**
+     * 从 Object[] 按原列 dtype 重建列。
+     * <p>因为只设 DOUBLE/STRING/OBJECT 三分支会让 LONG/INT/BOOL/DATE/DATETIME/CATEGORY
+     * 落 default 降级 OBJECT(ffill/bfill 后 getLongColumn 直接抛异常,而 pandas 保留原 dtype),
+     * 所以委托 {@link #toColumnByDtype}(ffill 与 where/mask 同模式,按 §3.1.1.1 内聚到单一
+     * switch,避免两份分支矩阵各自缺分支的漂移)。
+     */
     private static Column rebuildFromObjects(Column c, Object[] d) {
-        switch (c.dtype()) {
-            case DOUBLE: {
-                double[] a = new double[d.length];
-                for (int i = 0; i < d.length; i++) a[i] = d[i] == null ? Double.NaN : ((Number) d[i]).doubleValue();
-                return new DoubleColumn(c.name(), a);
-            }
-            case STRING: {
-                String[] a = new String[d.length];
-                for (int i = 0; i < d.length; i++) a[i] = (String) d[i];
-                return new StringColumn(c.name(), a);
-            }
-            case OBJECT: default:
-                return new ObjectColumn(c.name(), d);
-        }
+        return toColumnByDtype(c.name(), d, c.dtype());
     }
 
-    // ======================== 阶段 A 掩码与值替换(2026-08-09,与 isna/fillna 同源)========================
+    // ======================== 掩码与值替换(与 isna/fillna 同源)========================
 
     // ┌─ What : isin / colIsin / where / mask —— 条件掩码生成与反向填充
     // │  Why  : 与 isna(掩码)/fillna(值替换)同源语义,按 AGENTS.md §3.1.1.1 内聚到此
     // │  Who  : 由 DataFrame.isin / colIsin / where / mask 单行委托
-    // │  When : 2026-08-09 阶段 A
+    // │  When : DataFrame.isin / colIsin / where / mask 委托调用时
     // │  How  : isin 用 HashSet O(n+m);where(cond,other) 是 cond==false 替换;mask 是 cond==true 替换
 
     /**
@@ -262,7 +344,9 @@ public final class DataFrameMissing {
                 if (v instanceof Number num) {
                     double dv = num.doubleValue();
                     for (int k = 0; k < numCount; k++) {
-                        if (numValues[k] == dv) { out[i] = true; break; }
+                        // NaN↔NaN 等价命中(pandas isin([NaN]) 对 NaN 行 True;
+                        // IEEE == 下 NaN 永不等于任何值含自身,需显式判)。±0.0 在 == 下本就互 match。
+                        if (numValues[k] == dv || (Double.isNaN(dv) && Double.isNaN(numValues[k]))) { out[i] = true; break; }
                     }
                 } else if (objSet.contains(v)) {
                     out[i] = true;
@@ -276,6 +360,9 @@ public final class DataFrameMissing {
     /**
      * 列级成员判断(对齐 pandas Series.isin):某行该列值在 values 中则 true。
      * 数值走 {@code doubleValue() ==}(同 isin 语义)。
+     * @param df DataFrame 目标表;非 null
+     * @param col String 列名;非 null
+     * @param values String 值列名
      */
     public static boolean[] colIsin(DataFrame df, String col, Object[] values) {
         Column c = df.getColumn(col);
@@ -295,7 +382,8 @@ public final class DataFrameMissing {
             if (v instanceof Number num) {
                 double dv = num.doubleValue();
                 for (int k = 0; k < numCount; k++) {
-                    if (numValues[k] == dv) { out[i] = true; break; }
+                    // 同 isin,NaN↔NaN 等价命中
+                    if (numValues[k] == dv || (Double.isNaN(dv) && Double.isNaN(numValues[k]))) { out[i] = true; break; }
                 }
             } else {
                 out[i] = objSet.contains(v);
@@ -317,6 +405,9 @@ public final class DataFrameMissing {
 
     /**
      * 条件替换(对齐 pandas DataFrame.mask):cond==true 处用 other 替换。与 {@link #where} 互补。
+     * @param df DataFrame 目标表;非 null
+     * @param cond boolean[] 条件掩码
+     * @param other Object 替换值(缺失行用)
      */
     public static DataFrame mask(DataFrame df, boolean[] cond, Object other) {
         return fillByCond(df, cond, other, true);
@@ -386,12 +477,40 @@ public final class DataFrameMissing {
                 }
                 return new BoolColumn(name, b, mask);
             }
+            // DATE/DATETIME/CATEGORY 三分支:落到 default 会降级 OBJECT
+            // (pandas 的 where/mask 保留原 dtype)。
+            // null → 数组 null 元素即缺失(ffill 列首不填充/where 替换 null 均安全,不硬 cast NPE);
+            // 类型不符的 other(如 DATE 列填字符串)回退 ObjectColumn(降级保底,不抛 CCE)。
+            case DATE: {
+                java.time.LocalDate[] d = new java.time.LocalDate[arr.length];
+                for (int i = 0; i < arr.length; i++) {
+                    if (arr[i] != null && !(arr[i] instanceof java.time.LocalDate)) return new ObjectColumn(name, arr);
+                    d[i] = (java.time.LocalDate) arr[i];
+                }
+                return new DateColumn(name, d);
+            }
+            case DATETIME: {
+                java.time.LocalDateTime[] d = new java.time.LocalDateTime[arr.length];
+                for (int i = 0; i < arr.length; i++) {
+                    if (arr[i] != null && !(arr[i] instanceof java.time.LocalDateTime)) return new ObjectColumn(name, arr);
+                    d[i] = (java.time.LocalDateTime) arr[i];
+                }
+                return new DateTimeColumn(name, d);
+            }
+            case CATEGORY: {
+                String[] s = new String[arr.length];
+                for (int i = 0; i < arr.length; i++) {
+                    if (arr[i] != null && !(arr[i] instanceof String)) return new ObjectColumn(name, arr);
+                    s[i] = (String) arr[i];
+                }
+                return CategoryColumn.fromStrings(name, s);
+            }
             default:
                 return new ObjectColumn(name, arr);
         }
     }
 
-    // ======================== 阶段 F 缺失值扩展(2026-08-09)========================
+    // ======================== 缺失值扩展 ========================
 
     // ┌─ What : interpolate —— 线性插值(对齐 pandas Series.interpolate(method="linear"))
     // │  Why  : 与 fillna/ffill/bfill 同源(都是缺失值填充),按 §3.1.1.1 内聚到 DataFrameMissing
@@ -400,8 +519,12 @@ public final class DataFrameMissing {
      * 线性插值填充缺失值(对齐 pandas Series.interpolate(method="linear"))。
      * <p>策略:对每个缺失位置,找前一个非缺失值 prev 和后一个非缺失值 next,按线性比例插值。
      * 首/尾连续缺失(无 prev 或无 next)保持缺失。
+     * <p>LONG/INT 列<b>无缺失</b>时原列直通(不转 DOUBLE)——
+     * 因为无条件转 DOUBLE 会把无缺失的整型列强转(还引入 &gt;2^53 精度损失),
+     * 而 pandas 对无 NaN 的 int64 列原样返回,所以无缺失时直通。
+     * 有缺失时转 DOUBLE 插值(pandas 同)。
      * @param df DataFrame 目标表,非 null
-     * @return DataFrame 同结构,数值列的缺失位置被线性插值填上
+     * @return DataFrame 同结构,数值列的缺失位置被线性插值填上(LONG/INT 无缺失列 dtype 不变)
      */
     public static DataFrame interpolate(DataFrame df) {
         java.util.List<Column> out = new java.util.ArrayList<>();
@@ -409,8 +532,13 @@ public final class DataFrameMissing {
             if (c.dtype() == DType.DOUBLE) {
                 out.add(interpolateDoubleColumn(c));
             } else if (c.dtype() == DType.LONG || c.dtype() == DType.INT) {
-                DoubleColumn dc = interpolateDoubleColumn(toDoubleCol(c));
-                out.add(dc);
+                // 无缺失(nullCount==0)→ 原列直通,不改 dtype
+                if (c.nullCount() == 0) {
+                    out.add(c);
+                } else {
+                    DoubleColumn dc = interpolateDoubleColumn(toDoubleCol(c));
+                    out.add(dc);
+                }
             } else {
                 out.add(c);
             }

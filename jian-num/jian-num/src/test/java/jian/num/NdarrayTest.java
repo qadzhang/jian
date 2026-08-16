@@ -65,14 +65,17 @@ class NdarrayTest {
     }
 
     @Test
-    void 字符串长度_返回INT64() {
+    void 字符串长度_返回FLOAT64_null为NaN() {
+        // length 返回 FLOAT64、null → NaN(INT64 不支持缺失,哨兵会让 isna() 失效);
+        // 对齐 pandas .str.len()(NaN 输入 → NaN)
         Ndarray a = Ndarray.ofStrings("abc", "hello", null);
         Ndarray r = a.str().length();
-        assertThat(r.dtype()).isEqualTo(DType.INT64);
-        assertThat(r.getInt(0)).isEqualTo(3L);
-        assertThat(r.getInt(1)).isEqualTo(5L);
-        // null → Long.MIN_VALUE 标记缺失
-        assertThat(r.getInt(2)).isEqualTo(Long.MIN_VALUE);
+        assertThat(r.dtype()).isEqualTo(DType.FLOAT64);
+        assertThat(r.getFloat(0)).isEqualTo(3.0);
+        assertThat(r.getFloat(1)).isEqualTo(5.0);
+        // null → NaN(缺失),isna 可识别
+        assertThat(Double.isNaN(r.getFloat(2))).isTrue();
+        assertThat(r.isna().getBool(2)).isTrue();
     }
 
     @Test
@@ -109,7 +112,7 @@ class NdarrayTest {
         Ndarray a = Ndarray.ofStrings(big, big);
         assertThat(((String) a.get(0)).length()).isEqualTo(10_000_000);
         Ndarray len = a.str().length();
-        assertThat(len.getInt(0)).isEqualTo(10_000_000L);
+        assertThat(len.getFloat(0)).isEqualTo(10_000_000.0);
     }
 
     @Test
@@ -149,7 +152,7 @@ class NdarrayTest {
         assertThat(f.toDoubleArray()).containsExactly(1.0, 2.0, 3.0);
     }
 
-    // ======================== 2026-08-02 补齐:实例 sum/mean(规范 06 §2.1) ========================
+    // ======================== 实例 sum/mean(规范 06 §2.1) ========================
 
     @Test
     void sum与mean() {

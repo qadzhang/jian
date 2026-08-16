@@ -19,13 +19,18 @@ package jian.core;
  *
  * <p><b>不可变优先</b>(规范 §4.3):变换返回新 Column,不修改自身。
  *
+ * <p><b>警告</b>:各实现的 {@code dataInPlace()} 直接暴露内部可变数组,
+ * 仅限库内部热路径(如 DataFrameMerge 的 fast path)使用 —— 库外调用方一律视为
+ * 只读视图,不得写元素,否则会静默破坏 DataFrame 的不可变承诺。
+ *
  * @see DType 支持的列类型
  */
 public interface Column {
 
     /**
      * 列的数据类型。
-     * @return DType 枚举值(BYTE/INT/LONG/FLOAT/DOUBLE/BOOL/STRING/DATE/DATETIME/CATEGORY/OBJECT 之一),永不为 null
+     * @return DType 枚举值(INT/LONG/DOUBLE/BOOL/STRING/DATE/DATETIME/CATEGORY/OBJECT 之一),永不为 null
+     *         (jian v1 无 BYTE/FLOAT 这两种 dtype)
      */
     DType dtype();
 

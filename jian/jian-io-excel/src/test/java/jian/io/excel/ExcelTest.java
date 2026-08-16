@@ -70,6 +70,9 @@ class ExcelTest {
 
     @Test
     void 整数列保留精度() throws Exception {
+        // 因为 jian Excel.write→read 的写出走保精度路径,超 2^53 的 LONG 精确无损
+        // (读回 dtype 仍 LONG、值逐位相等 —— 与外部 POI 直写文件的 double 降级不同,
+        // 见 ExcelTypeTest.大整数超2_53同格收敛为Long),所以直接断言精确值,锁定往返无损契约。
         Path p = tmp.resolve("ids.xlsx");
         long bigId = 9_000_000_000_000_000_001L;
         DataFrame df = DataFrame.of(
@@ -77,9 +80,11 @@ class ExcelTest {
                 new Object[][]{{bigId, "a"}, {bigId + 1, "b"}});
         Excel.write(df, p.toString()).go();
         DataFrame r = Excel.read(p.toString()).go();
-        // 经 Excel 双精度存储,大整数可能丢精度 → 这是 Excel 格式本身的限制(15 位有效数字)
-        // 只验证能正常读写往返
         assertThat(r.rowCount()).isEqualTo(2);
+        assertThat(r.getColumn("id").get(0)).isEqualTo(bigId);      // 超 2^53 逐位无损
+        assertThat(r.getColumn("id").get(1)).isEqualTo(bigId + 1);
+        assertThat(r.getColumn("name").get(0)).isEqualTo("a");
+        assertThat(r.getColumn("name").get(1)).isEqualTo("b");
     }
 
     private DataFrame df() {

@@ -59,7 +59,7 @@ public interface StatsProvider {
      */
     double kurtosis(double[] data);
 
-    // ===== 2026-08-09 阶段 B 扩展(默认实现兜底,避免破坏现有实现类)=====
+    // ===== 扩展(默认实现兜底,避免破坏现有实现类)=====
 
     /**
      * 秩(对齐 pandas Series.rank,默认 method="average" 平均秩,NaN 排最后不计入)。
@@ -103,7 +103,7 @@ public interface StatsProvider {
     /**
      * 取当前可用 provider(优先 jian-num-bridge,回退内置)。
      *
-     * <p><b>Web 安全修复(2026-08-08)</b>:不再用 static ServiceLoader 缓存(同 DslEngine,避免 Tomcat redeploy 内存泄漏)。
+     * <p><b>Web 安全</b>:不用 static ServiceLoader 缓存(同 DslEngine,避免 Tomcat redeploy 内存泄漏)。
      *
      * @return StatsProvider 实例:优先返回第一个非 SimpleStatsProvider(jian-num-bridge 引入时);
      *         否则返回 BUILTIN

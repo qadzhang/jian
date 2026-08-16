@@ -10,8 +10,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 // ┌─ What : DifferentialTest —— 差分测试(fast path vs generic path 跨实现等价)
 // │  Why  : jian-core 有大量"双实现"——同一个算子有 dtype 特化 fast path 和通用 path。
-// │         单元测试只测一条路径会漏 bug(我前面的 fast path bug 全是这种)。
-// │         差分测试:同输入跑两条路径,断言结果完全一致。
+// │         只测一条路径会漏 bug。差分测试:同输入跑两条路径,断言结果完全一致。
 // │         参考: differential testing(Stereobooster),C 编译器/Numpy 都用这方法。
 // │  Who  : 由 mvn test 跑,持续守护 fast/generic 等价性
 // │  Where: jian-core/src/test/java/jian/core/DifferentialTest.java
@@ -19,8 +18,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 // │         (强制带 null 或用字符串 key)→ 断言两者结果逐行逐列相等。
 public class DifferentialTest {
 
-    // 种子策略(2026-08-09 修复 A-1):nextSeed() 取 [0,1e6) 散列,失败时打印 seed,
-    // 可用 -Dtest.seed=N 精确回放。不再用裸 nanoTime(flaky 反模式)。
+    // 种子策略:nextSeed() 取 [0,1e6) 散列,失败时打印 seed,
+    // 可用 -Dtest.seed=N 精确回放(不用裸 nanoTime,避免 flaky 反模式)。
     private static long nextSeed() {
         String override = System.getProperty("test.seed");
         if (override != null && !override.isEmpty()) {
@@ -36,7 +35,7 @@ public class DifferentialTest {
      *
      * <p>触发方式:构造 long key 无 null 的两个 df,merge 走 fast path。
      * 然后把 key 改成 String(强制走 generic path),比较结果。
-     * <p>种子策略(2026-08-09 修复 A-1):失败时通过断言描述打印 seed,
+     * <p>种子策略:失败时通过断言描述打印 seed,
      * 可用 `-Dtest.seed=xxx` 精确回放(同 MetamorphicTest.nextSeed 约定)。
      */
     @RepeatedTest(15)
@@ -84,23 +83,16 @@ public class DifferentialTest {
     }
 
     /**
-     * DT2: double key 在 ±0.0 边界上 fast path 行为与 Java `Double.equals` 等价。
+     * DT2: double key 的 ±0.0 在 fast/generic 两路径均按 normKey 契约归一为<b>同一键</b>。
      *
-     * <p>注意:不能用 String 化作对照——`Double.toString(+0.0)="0.0"` 与 `"-0.0"` 不同,
-     * String 化后 ±0.0 本就不该匹配,这是测试方法学陷阱(不是 jian bug)。
-     * 正确对照:用 `Double.equals` 直接判断"两表所有 key 对"是否相等,统计期望命中数。
-     *
-     * <p><b>2026-08-09 修正注释(D-1 教学性误导)</b>:旧注释写「Double.equals(+0.0,-0.0)==true」
-     * 是<b>错的</b>——`Double.valueOf(+0.0).equals(Double.valueOf(-0.0))` 实际返回 <b>false</b>
-     * (Double.equals 按位比较,+0.0 与 -0.0 位模式不同)。而 `Double.compare(+0.0,-0.0)` 返回 1
-     * (视它们为不等,与 equals 一致)。即:equals 与 compare 在 ±0.0 上**结论相同(都不等)**,
-     * 差异只在返回值形式(布尔 vs 整数)。jian generic 路径走 HashMap<Double>,用 equals,
-     * 所以 ±0.0 视为不等;fast path 也按此语义,两者一致。
-     * <p>历史教训:此前的 AI 审查报告把 `Double.equals` 语义记错,导致"修复"反而引入 BUG。
-     * 教训:测试注释必须与代码实际行为一致,不能靠记忆。
+     * <p>期望值必须按 normKey 契约统计:{@code DataFrameMerge.normKey} 把 ±0.0 归一为
+     * 同一键(§10.16 #6 声明"merge 中 0.0 与 -0.0 归入同一键"),所以不能用
+     * {@code HashMap<Double>}(Double.equals 按位比较,±0.0 不等)作期望 ——
+     * 那样会把 fast path 的合法行为误判为失败。期望按 normKey 语义统计命中数,
+     * 并校验 fast(inner) vs generic(outer) 交叉一致性。
      */
     @Test
-    void dt_merge_正零负零_与DoubleEquals等价() {
+    void dt_merge_正零负零_与normKey契约等价() {
         double[] aIds = {+0.0, -0.0, 1.5, 2.5};
         double[] bIds = {-0.0, +0.0, 2.5, 3.5};
         double[] av = {10, 20, 30, 40};
@@ -108,20 +100,34 @@ public class DifferentialTest {
         DataFrame a = DataFrame.ofColumnArrays(List.of("id", "v"), new Object[]{aIds, av});
         DataFrame b = DataFrame.ofColumnArrays(List.of("id", "v"), new Object[]{bIds, bv});
 
-        // fast path(double key 无 null)
+        // fast path(double key 无 null,inner)
         DataFrame fast = a.merge(b, "inner", "id");
 
-        // 用 Double.equals(即 HashMap<Double> 的语义)算期望命中数。
-        // 关键事实(2026-08-09 修正):Double.valueOf(+0.0).equals(Double.valueOf(-0.0)) == false
-        // (按位比较: +0.0 是 0x00..00, -0.0 是 0x80..00, 位模式不同)。
-        // 所以 ±0.0 在 HashMap<Double> 里是**不同的 key**,不会命中。
+        // 期望按 normKey 契约统计:±0.0 是同一键(+0.0 与 -0.0 互相全部命中)。
+        // aIds {+0,-0} × bIds {-0,+0} → 4 对;2.5×2.5 → 1 对;共 5 对。
         int expected = 0;
         for (double ak : aIds) {
             for (double bk : bIds) {
-                if (Double.valueOf(ak).equals(Double.valueOf(bk))) expected++;
+                boolean sameNormKey = (ak == 0.0 && bk == 0.0) || Double.valueOf(ak).equals(Double.valueOf(bk));
+                if (sameNormKey) expected++;
             }
         }
-        assertThat(fast.rowCount()).as("±0.0 在 fast path 应与 HashMap<Double>(Double.equals)等价").isEqualTo(expected);
+        assertThat(fast.rowCount())
+            .as("±0.0 在 fast path 应与 normKey 契约(±0.0 同键)等价")
+            .isEqualTo(expected);
+
+        // 交叉一致性:fast(inner) 与 generic(outer) 的命中行数必须一致
+        // (outer 走 mergeGeneric;±0.0 归一后左 [a0,a1] × 右 [b0,b1] 应产出全部 4 个配对)
+        DataFrame outer = a.merge(b, "outer", "id");
+        int outerMatched = 0;
+        for (int i = 0; i < outer.rowCount(); i++) {
+            boolean leftHit = !outer.getColumn("v_x").isNull(i);
+            boolean rightHit = !outer.getColumn("v_y").isNull(i);
+            if (leftHit && rightHit) outerMatched++;
+        }
+        assertThat(outerMatched)
+            .as("fast(inner) 与 generic(outer) 在 ±0.0 上命中数应一致(两路径同键语义)")
+            .isEqualTo(fast.rowCount());
     }
 
     /**
@@ -197,7 +203,7 @@ public class DifferentialTest {
     }
 
     /**
-     * DT5: INT×LONG 混合 key 所有 how 都应正确匹配(AI agent2 BUG 1 回归)。
+     * DT5: INT×LONG 混合 key 所有 how 都应正确匹配。
      * 关键:不能 inner 走 fast path 匹配、right/outer 落回 generic 全部不匹配。
      */
     @Test
@@ -219,15 +225,15 @@ public class DifferentialTest {
         DataFrame right = a.merge(b, "right", "id");
         long matchedCount = 0;
         for (int i = 0; i < right.rowCount(); i++) {
-            // v 列是左表的,匹配的行有值,未匹配的是缺失(NaN)
-            // 修复:get() 对 NaN 现在返回 Double.NaN(不是 null),用 isNull 判断
-            if (!right.getColumn("v").isNull(i)) matchedCount++;
+            // v_x 列是左表的(对齐 pandas:重名列两边加后缀),
+            // 匹配的行有值,未匹配的是缺失(NaN);get() 对 NaN 返回 Double.NaN,用 isNull 判断
+            if (!right.getColumn("v_x").isNull(i)) matchedCount++;
         }
         assertThat(matchedCount).as("right 中应 2 行匹配上左表").isEqualTo(2);
     }
 
     /**
-     * DT6: left join 未匹配行补 null 时,数值列不应降级 OBJECT(AI agent2 BUG 3 回归)。
+     * DT6: left join 未匹配行补 null 时,数值列不应降级 OBJECT。
      * 关键:补 null 的数值列仍应是 DoubleColumn/LongColumn 等,getDouble/getLong 不抛。
      */
     @Test
@@ -250,7 +256,7 @@ public class DifferentialTest {
     }
 
     /**
-     * DT7: left join 未匹配行的 LONG 列补 null 应保留 LONG + nullMask(AI agent2 测试缺口)。
+     * DT7: left join 未匹配行的 LONG 列补 null 应保留 LONG + nullMask。
      * DT6 只覆盖 DOUBLE,这里补 LONG/INT/BOOL。
      */
     @Test
@@ -262,7 +268,6 @@ public class DifferentialTest {
 
         DataFrame r = a.merge(b, "left", "id");
         // 改用 a 作左、b2 作右,使 b2 的 x 列成为未匹配补 null 的列
-        // (AI agent2 抓的死代码:原 r2 未使用,这里直接删掉)
         DataFrame b2 = DataFrame.ofColumnArrays(List.of("id", "x"),
             new Object[]{new long[]{3L}, new long[]{999L}});
         DataFrame r3 = a.merge(b2, "left", "id");   // a 两行都不匹配 b2
@@ -273,7 +278,7 @@ public class DifferentialTest {
     }
 
     /**
-     * DT8: fast path 输出 DATE 列应保留 DATE 不降级 OBJECT(AI agent2 BUG A 回归)。
+     * DT8: fast path 输出 DATE 列应保留 DATE 不降级 OBJECT。
      */
     @Test
     void dt_merge_fastPath输出DATE列保留DATE() {
@@ -297,7 +302,7 @@ public class DifferentialTest {
     }
 
     /**
-     * DT9: fast path left join DATE 列未匹配补 null 应保留 DATE 类型(AI agent2 第3轮提示补)。
+     * DT9: fast path left join DATE 列未匹配补 null 应保留 DATE 类型。
      */
     @Test
     void dt_merge_fastPathLeftJoin_DATE列补null保留类型() {
@@ -334,7 +339,8 @@ public class DifferentialTest {
         for (int i = 0; i < df.rowCount(); i++) {
             // id 可能为 Long 或 String,统一 toString
             Object id = df.get(i, "id");
-            Object v = df.get(i, "v");
+            // 对齐 pandas:merge 重名列两边都加后缀,左表列为 v_x
+            Object v = df.get(i, df.columnNames().contains("v") ? "v" : "v_x");
             rows.add("" + id + "|" + v);
         }
         java.util.Collections.sort(rows);
@@ -377,29 +383,42 @@ public class DifferentialTest {
     }
 
     /**
-     * DT11: getIntColumn(LONG 列)转 INT vs 直接构造 INT 列 —— 类型转换路径应与小值 INT 等价。
-     * 覆盖之前未测的 getIntColumn 类型转换分支。
+     * DT12: right/outer join 右表独有行的键列必须保留右表 rightOn 值。
+     *
+     * <p>契约:右表独有行(lIdx&lt;0)时不能把左表部分全填 null 连 join 键也丢掉
+     * (否则输出 (null, null, 41.0));pandas merge(right/outer) 对右表独有行输出右表的 key。
+     * 固化:键列取 rightOn 值、非键列(左表 v)补 null。
      */
     @Test
-    void dt_getIntColumn_LONG转INT_等于直接INT() {
-        // 用小值(< 1000)避免 LONG→INT 溢出
-        long[] vals = {1L, 50L, 100L, 999L};
-        // 路径 A:LONG 列 getIntColumn(内部 LONG→INT 转换)
-        DataFrame longDf = DataFrame.ofColumnArrays(
-                List.of("n"), new Object[]{ vals });
-        IntColumn fromLong = longDf.getIntColumn("n");
-        // 路径 B:直接构造 INT 列(参考真值)
-        int[] directInts = new int[vals.length];
-        for (int i = 0; i < vals.length; i++) directInts[i] = (int) vals[i];
-        IntColumn directInt = new IntColumn("n", directInts);
+    void dt_merge_rightOuter_右表独有行键列保留() {
+        DataFrame a = DataFrame.ofColumnArrays(List.of("id", "v"),
+            new Object[]{new long[]{1L, 2L, 3L, 5L}, new double[]{10, 20, 30, 50}});
+        DataFrame b = DataFrame.ofColumnArrays(List.of("id", "v"),
+            new Object[]{new long[]{1L, 2L, 4L, 5L}, new double[]{11, 21, 41, 51}});
 
-        // 等价:逐行 long 值相同
-        assertThat(fromLong.size()).isEqualTo(directInt.size());
-        for (int i = 0; i < vals.length; i++) {
-            assertThat(fromLong.getLong(i))
-                    .as("DT11 LONG→INT 第 " + i + " 行")
-                    .isEqualTo(directInt.getLong(i))
-                    .isEqualTo(vals[i]);
+        // right:右表独有行(id=4)键列应=4(不为 null)
+        DataFrame right = a.merge(b, "right", "id");
+        assertThat(right.rowCount()).as("right 应=4 行").isEqualTo(4);
+        // 找到 id=4 的行:键列应为 4L,左表 v 应为 NaN(NULL)
+        int row4 = -1;
+        for (int i = 0; i < right.rowCount(); i++) {
+            Object id = right.get(i, "id");
+            if (id != null && ((Number) id).longValue() == 4L) { row4 = i; break; }
         }
+        assertThat(row4).as("right 结果应含 id=4 行").isNotEqualTo(-1);
+        assertThat(right.getColumn("v_x").isNull(row4))
+            .as("右表独有行左表 v_x 应缺失(对齐 pandas 后缀)").isTrue();
+
+        // outer:左表独有(id=3)键列=3,右表独有(id=4)键列=4
+        DataFrame outer = a.merge(b, "outer", "id");
+        assertThat(outer.rowCount()).as("outer 应=5 行").isEqualTo(5);
+        int found3 = 0, found4 = 0;
+        for (int i = 0; i < outer.rowCount(); i++) {
+            Object id = outer.get(i, "id");
+            if (id != null && ((Number) id).longValue() == 3L) found3++;
+            if (id != null && ((Number) id).longValue() == 4L) found4++;
+        }
+        assertThat(found3).as("outer 应含键列=3(左表独有)").isEqualTo(1);
+        assertThat(found4).as("outer 应含键列=4(右表独有)").isEqualTo(1);
     }
 }

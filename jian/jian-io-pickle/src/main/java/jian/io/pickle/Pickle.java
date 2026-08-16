@@ -72,7 +72,11 @@ public final class Pickle {
      * @throws IOException 写出过程发生 IO 错误时抛出
      */
     public static void write(DataFrame df, OutputStream os) throws IOException {
-        String json = jian.io.json.Json.toJsonString(df, jian.io.json.Json.Orient.RECORDS);
+        // 因为 0 行经 RECORDS 会丢列(payload="[]"),所以 0 行切 COLUMNS 保列元数据
+        // (读侧 JsonReader 自动检测 COLUMNS 形态)
+        var orient = df.rowCount() == 0
+                ? jian.io.json.Json.Orient.COLUMNS : jian.io.json.Json.Orient.RECORDS;
+        String json = jian.io.json.Json.toJsonString(df, orient);
         byte[] payload = json.getBytes(StandardCharsets.UTF_8);
         byte[] header = new byte[8];
         header[0] = 'J'; header[1] = 'P'; header[2] = 'K'; header[3] = '2';
@@ -104,6 +108,8 @@ public final class Pickle {
 
     /**
      * 从输入流反序列化(校验魔数 + CRC32 后解析 JSON)。
+     * 说明:一次性 readAllBytes 入内存 —— 超大文件需等量堆,
+     * jian 定位单机内存库,超大文件建议分块或 v2 流式化。
      * @param is InputStream .jpk 数据输入流,调用方负责关闭;不允许 null
      * @return DataFrame 还原后的数据帧(类型按 JSON records 解析重建)
      * @throws IOException 数据过短、魔数错误、长度不匹配或 CRC 校验失败时抛出(含中文错误说明)
@@ -118,8 +124,12 @@ public final class Pickle {
             throw new IOException("魔数错误:期望 JPK2,实际 " + (char) all[0] + (char) all[1] + (char) all[2] + (char) all[3]);
         }
         int payloadLen = ((all[4] & 0xFF) << 24) | ((all[5] & 0xFF) << 16) | ((all[6] & 0xFF) << 8) | (all[7] & 0xFF);
-        if (8 + payloadLen + 4 > all.length) {
-            throw new IOException("文件长度不匹配:声明 payload " + payloadLen + ",但文件只剩 " + (all.length - 8));
+        // 因为 int 算术在 payloadLen 接近 Integer.MAX_VALUE 时溢出为负、检查会静默通过,
+        // 后续 crc.update 抛裸 AIOOBE,所以做 long 提升校验;负值 payloadLen 同样先拒绝
+        // (pandas read_pickle 对损坏文件抛可读 UnpicklingError)
+        if (payloadLen < 0 || (long) payloadLen + 12L > all.length) {
+            throw new IOException("payload 长度无效或文件长度不匹配:声明 payload " + payloadLen
+                    + ",文件总长 " + all.length + "(需 ≥ " + (12L + (long) Math.max(payloadLen, 0)) + ")");
         }
         // 校验 CRC
         CRC32 crc = new CRC32();
@@ -129,8 +139,11 @@ public final class Pickle {
         if ((int) crc.getValue() != expectedCrc) {
             throw new IOException("CRC 校验失败:文件损坏或非 jian-io-pickle 格式");
         }
-        // 解析 JSON
+        // 解析 JSON(0 行 pickle 的 payload 是 COLUMNS 形态 {"a":[],...},
+        // 按顶层类型自动选 orient —— object 且值全数组 → COLUMNS,否则 RECORDS)
         String json = new String(all, 8, payloadLen, StandardCharsets.UTF_8);
-        return jian.io.json.Json.parse(json, jian.io.json.Json.Orient.RECORDS);
+        jian.io.json.Json.Orient o = jian.io.json.Json.Orient.RECORDS;
+        if (!json.isEmpty() && json.charAt(0) == '{') o = jian.io.json.Json.Orient.COLUMNS;
+        return jian.io.json.Json.parse(json, o);
     }
 }

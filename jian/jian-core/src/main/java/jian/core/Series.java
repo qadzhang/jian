@@ -139,16 +139,20 @@ public final class Series {
 
     /**
      * 排序下标(内部)。
+     * <p>因为混型比较(如数值 vs 字符串)直接走 compareTo 会抛裸 ClassCastException
+     * (对齐 pandas sort_values 抛 TypeError,与 DataFrame.sortBy 同口径),
+     * 所以混型/不可比改抛 IllegalArgumentException;
+     * 含 null 的比较语义不变(null 走 isNull 分支先行短路)。
      * @param asc boolean true=升序;false=降序
      * @return int[] 排序后的行下标数组
+     * @throws IllegalArgumentException 同列内出现混型顺序比较时
      */
-    @SuppressWarnings("unchecked")
     private int[] sortIndices(boolean asc) {
         int n = column.size();
         Integer[] idx = new Integer[n];
         for (int i = 0; i < n; i++) idx[i] = i;
         java.util.Arrays.sort(idx, (a, b) -> {
-            // 修复:用 isNull 判断缺失(get() 对 NaN 现在返回 Double.NaN 不是 null)
+            // 因为 get() 对 NaN 返回 Double.NaN(不是 null),所以缺失判断用 isNull
             boolean aNull = column.isNull(a), bNull = column.isNull(b);
             if (aNull && bNull) return 0;
             if (aNull) return 1;  // 缺失排末尾
@@ -157,8 +161,16 @@ public final class Series {
             int cmp;
             if (va instanceof Number && vb instanceof Number) {
                 cmp = Double.compare(((Number) va).doubleValue(), ((Number) vb).doubleValue());
+            } else if (va.getClass() == vb.getClass() && va instanceof Comparable) {
+                @SuppressWarnings("unchecked")
+                Comparable<Object> ca = (Comparable<Object>) va;
+                cmp = ca.compareTo(vb);
             } else {
-                cmp = ((Comparable<Object>) va).compareTo(vb);
+                // 混型/不可比 → 抛 IAE(裸 CCE 无上下文;与 DataFrame.sortBy 同口径)
+                throw new IllegalArgumentException(
+                    "Series 排序混型比较不支持(对齐 pandas sort_values 抛 TypeError):第 " + a + " 行 "
+                    + va.getClass().getSimpleName() + "(" + va + ") 与第 " + b + " 行 "
+                    + vb.getClass().getSimpleName() + "(" + vb + ") 类型不同");
             }
             return asc ? cmp : -cmp;
         });
@@ -170,22 +182,31 @@ public final class Series {
     // ===== 变换(返回新 Series) =====
 
     /**
-     * 取前 n 个。
-     * @param n int 取前 n 行,≥ 0;n &gt; size() 时取全部
-     * @return Series 前 n 行的新 Series
+     * 取前 n 个(对齐 pandas Series.head)。
+     * <p>n &lt; 0 表示"去掉末尾 |n| 行"(与 DataFrame.head 语义一致);n &gt; size() 时取全部。
+     * @param n int 行数;负数 = 去掉末尾 |n| 行
+     * @return Series 前 n 行(或去掉末尾 |n| 行)的新 Series
      */
     public Series head(int n) {
-        n = Math.min(n, column.size());
-        return new Series(column.slice(0, n));
+        int sz = column.size();
+        // 负数 → slice(0, sz+n)(等价去掉末尾 |n| 行);|n| ≥ sz 时自然为空
+        if (n < 0) return new Series(column.slice(0, Math.max(sz + n, 0)));
+        return new Series(column.slice(0, Math.min(n, sz)));
     }
 
     /**
-     * 取末尾 n 个。
-     * @param n int 取末尾 n 行,≥ 0
-     * @return Series 末尾 n 行的新 Series
+     * 取末尾 n 个(对齐 pandas Series.tail)。
+     * <p>n &lt; 0 表示"去掉首部 |n| 行"(与 DataFrame.tail 一致);n &gt; size() 时取全部。
+     * @param n int 行数;负数 = 去掉首部 |n| 行
+     * @return Series 末尾 n 行(或去掉首部 |n| 行)的新 Series
      */
     public Series tail(int n) {
         int sz = column.size();
+        // 负数 → slice(-n, sz)(等价去掉首部 |n| 行)
+        if (n < 0) {
+            int start = Math.min(-n, sz);
+            return new Series(column.slice(start, sz));
+        }
         n = Math.min(n, sz);
         return new Series(column.slice(sz - n, sz));
     }
@@ -281,18 +302,27 @@ public final class Series {
                     case "year" -> t.get(java.time.temporal.ChronoField.YEAR);
                     case "month" -> t.get(java.time.temporal.ChronoField.MONTH_OF_YEAR);
                     case "day" -> t.get(java.time.temporal.ChronoField.DAY_OF_MONTH);
-                    case "hour" -> t.isSupported(java.time.temporal.ChronoField.HOUR_OF_DAY)
-                            ? t.get(java.time.temporal.ChronoField.HOUR_OF_DAY) : 0;
-                    case "minute" -> t.isSupported(java.time.temporal.ChronoField.MINUTE_OF_HOUR)
-                            ? t.get(java.time.temporal.ChronoField.MINUTE_OF_HOUR) : 0;
-                    case "second" -> t.isSupported(java.time.temporal.ChronoField.SECOND_OF_MINUTE)
-                            ? t.get(java.time.temporal.ChronoField.SECOND_OF_MINUTE) : 0;
+                    // DATE 列取 hour/minute/second 抛 IAE 带提示
+                    // (对齐 pandas:date 列 .dt.hour 抛错,时间分量不存在)
+                    case "hour" -> requireTemporalField(t, java.time.temporal.ChronoField.HOUR_OF_DAY, "hour");
+                    case "minute" -> requireTemporalField(t, java.time.temporal.ChronoField.MINUTE_OF_HOUR, "minute");
+                    case "second" -> requireTemporalField(t, java.time.temporal.ChronoField.SECOND_OF_MINUTE, "second");
                     case "dow" -> t.get(java.time.temporal.ChronoField.DAY_OF_WEEK);
                     case "doy" -> t.get(java.time.temporal.ChronoField.DAY_OF_YEAR);
                     default -> Double.NaN;
                 };
             }
             return r;
+        }
+
+        /** 取时间字段;类型不支持(如 DATE 列取 hour)时抛 IAE。 */
+        private static double requireTemporalField(java.time.temporal.TemporalAccessor t,
+                                                   java.time.temporal.ChronoField f, String name) {
+            if (!t.isSupported(f)) {
+                throw new IllegalArgumentException(
+                    "列类型不支持取 " + name + "(DATE 无时间分量;对齐 pandas .dt." + name + " 对 date 列抛错)");
+            }
+            return t.get(f);
         }
     }
 
@@ -320,10 +350,14 @@ public final class Series {
 
     /**
      * 偏移(对齐 pandas shift;返回 double[])。
-     * @param periods int 偏移期数;正=向后(取前 periods 期的值);负=向前
+     * 说明:返回 double[] 而非 typed Column,与 DataFrame.shift 返回
+     * DoubleColumn 的形状差异是 Series API 的既定约定(需要列形态请用 df.colShift)。
+     * periods==0 抛 IAE(与 DataFrame.shift 一致,0 偏移无意义)。
+     * @param periods int 偏移期数;正=向后(取前 periods 期的值);负=向前;不能为 0
      * @return double[] 与原列等长;越界/源缺失的位置为 NaN
      */
     public double[] shift(int periods) {
+        if (periods == 0) throw new IllegalArgumentException("shift periods 不能为 0");
         int n = column.size();
         double[] r = new double[n];
         for (int i = 0; i < n; i++) {
@@ -336,10 +370,12 @@ public final class Series {
 
     /**
      * 差分(对齐 pandas diff)。
-     * @param periods int 差分期数;正=当前减前 periods 期
+     * periods==0 抛 IAE(与 DataFrame 一致,0 差分无意义)。
+     * @param periods int 差分期数;正=当前减前 periods 期;不能为 0
      * @return double[] data[i] - data[i-periods];任一缺失为 NaN
      */
     public double[] diff(int periods) {
+        if (periods == 0) throw new IllegalArgumentException("diff periods 不能为 0");
         int n = column.size();
         double[] r = new double[n];
         for (int i = 0; i < n; i++) {
@@ -352,10 +388,12 @@ public final class Series {
 
     /**
      * pct_change(对齐 pandas,百分比变化)。
-     * @param periods int 间隔期数
+     * periods==0 抛 IAE(与 DataFrame 一致,0 间隔无意义)。
+     * @param periods int 间隔期数;不能为 0
      * @return double[] (data[i]-data[i-periods])/data[i-periods];源为 0 或缺失时 NaN
      */
     public double[] pctChange(int periods) {
+        if (periods == 0) throw new IllegalArgumentException("pctChange periods 不能为 0");
         int n = column.size();
         double[] r = new double[n];
         for (int i = 0; i < n; i++) {
@@ -398,7 +436,7 @@ public final class Series {
         return sb.toString();
     }
 
-    // ======================== pandas 同名方法补全(2026-08-09)========================
+    // ======================== pandas 同名方法补全 ========================
 
     /** 转为 Java List(对齐 pandas Series.tolist)。 */
     public List<Object> tolist() {
@@ -407,7 +445,12 @@ public final class Series {
         return out;
     }
 
-    /** 转为字典 {index: value}(对齐 pandas Series.to_dict)。 */
+    /**
+     * 转为字典 {index: value}(对齐 pandas Series.to_dict)。
+     * 说明:jian Series 无显式索引(RangeIndex 语义),
+     * 键 = 整数位置,等价 pandas RangeIndex 标签;显式标签索引支持见 v2 规划。
+     * @return java.util.Map&lt;Integer, Object&gt; 位置 → 值;有序(LinkedHashMap)
+     */
     public java.util.Map<Integer, Object> to_dict() {
         java.util.Map<Integer, Object> m = new java.util.LinkedHashMap<>();
         for (int i = 0; i < size(); i++) m.put(i, get(i));
@@ -417,7 +460,9 @@ public final class Series {
     /** 转为原始数组(对齐 pandas Series.to_numpy;等价 toArray)。 */
     public Object[] to_numpy() { return toArray(); }
 
-    /** 最大值的行号(对齐 pandas Series.argmax);空/全缺失返回 -1。 */
+    /** 最大值的行号(对齐 pandas Series.argmax);空/全缺失返回 -1。
+     *  注意:best 初始 NaN 的 `v > best` 恒 false,
+     *  靠 `bestIdx < 0` 短路兜底 —— 重构时务必保留该检查,否则全 NaN 列会返回 0。 */
     public int argmax() {
         int bestIdx = -1; double best = Double.NaN;
         for (int i = 0; i < size(); i++) {
@@ -441,7 +486,11 @@ public final class Series {
         return bestIdx;
     }
 
-    /** 值 ∈ [left, right] 的布尔掩码(对齐 pandas Series.between)。 */
+    /**
+     * 值 ∈ [left, right] 的布尔掩码(对齐 pandas Series.between)。
+     * @param left double 下边界值(含)
+     * @param right double 上边界值(含)
+     */
     public boolean[] between(double left, double right) {
         boolean[] out = new boolean[size()];
         for (int i = 0; i < size(); i++) {
@@ -469,7 +518,8 @@ public final class Series {
         for (int i = 0; i < size(); i++) {
             Object v = get(i);
             if (v == null) continue;
-            if (!seen.add(v)) return false;
+            // ±0.0 数值等价(pandas is_unique([0,-0])=False)
+            if (!seen.add(DataFrameStats.normUniqueKey(v))) return false;
         }
         return true;
     }

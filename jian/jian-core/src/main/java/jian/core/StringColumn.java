@@ -32,6 +32,8 @@ public final class StringColumn implements Column {
      * @param data String[] 主体,非 null;会被 clone;元素允许 null(表示缺失)
      */
     public StringColumn(String name, String[] data) {
+        // 列名不允许 null(null 名下游 toString/导出全 NPE)
+        java.util.Objects.requireNonNull(name, "列名不能为 null");
         this.name = name;
         this.data = data.clone();
     }
@@ -69,7 +71,10 @@ public final class StringColumn implements Column {
     @Override public DType dtype() { return DType.STRING; }
     /** @return String 列名 */
     @Override public String name() { return name; }
-    /** @return Column 改名后的新实例(noCopy) */
+    /**
+     * @return Column 改名后的新实例(noCopy)
+     * @param newName String 新列名;非 null
+     */
     @Override public Column rename(String newName) { return new StringColumn(newName, data, true); }
     /** @return int 行数 == data.length */
     @Override public int size() { return data.length; }

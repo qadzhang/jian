@@ -70,6 +70,8 @@ public final class HtmlRenderer {
      * @return HtmlRenderer 当前实例(链式)
      */
     public HtmlRenderer naRep(String v) { this.naRep = v; return this; }
+    // 说明:naRep 输出前经 HTML 转义(默认 "<NA>" 显示为文本 <NA>);
+    // 若需输出 HTML(如 "<b>NA</b>"),请自行传入已转义形式 "&lt;b&gt;NA&lt;/b&gt;"。
 
     /**
      * 设置 table 的 CSS class。
@@ -120,8 +122,10 @@ public final class HtmlRenderer {
         // 表体 tbody(带截断)
         sb.append("  <tbody>\n");
         boolean truncate = n > maxRows;
-        int headN = truncate ? (maxRows + 1) / 2 : n;
-        int tailN = truncate ? maxRows / 2 : 0;
+        // head/tail 均匀分配:maxRows=1 → head 0 + tail 1
+        // (head=(maxRows+1)/2 在奇数值时 head 比 tail 多 1,显示行数超 maxRows)
+        int headN = truncate ? maxRows / 2 : n;
+        int tailN = truncate ? maxRows - headN : 0;
         for (int r = 0; r < headN; r++) appendRow(sb, r, cols);
         if (truncate) {
             sb.append("    <tr>");

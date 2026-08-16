@@ -44,24 +44,72 @@ public final class Clipboard {
 
     // 降级内存变量(命令不可用时用)
     private static volatile String memoryFallback = null;
+    /** 读命令失败一次性提示开关(避免每次 read 刷屏) */
+    private static volatile boolean readFailWarned = false;
+
+    /**
+     * 清除内存降级缓存。
+     * <p>因为 memoryFallback 是 static volatile,测试间不清理会污染下一个测试的读;
+     * 且一旦命令不可用降级到内存,之后即使 xclip/pbcopy 恢复可用,read 也只会返回
+     * 旧内存值(粘滞,无法自愈),所以本方法设为 public —— 用户在剪贴板命令
+     * 恢复后(如新装 xclip / 进入图形会话)可显式调用本方法恢复真实剪贴板路径。
+     * 语义:清空后,下一次 read 重新探测真实剪贴板命令。
+     */
+    public static void resetMemoryFallback() { memoryFallback = null; }
+
+    // ┌─ What : testForceMemoryFallback —— 测试专用缝(包私有):强制读写走内存降级路径
+    // │  Why  : 测试类的前提是"CI 无剪贴板命令 → write 落 memoryFallback → read 从内存解析"。
+    // │         但开发机装有 xclip 时该前提被打破:write 走真实 X 剪贴板,多个 xclip daemon
+    // │         争夺 selection 所有权,read 可能拿到旧 daemon 的内容(实测 flaky);
+    // │         "清空降级后走真实路径"在有 xclip 的机器上也会读到不可控的真实剪贴板内容。
+    // │  Who  : 仅同包测试(ClipboardTest / ClipboardRegressionTest)
+    // │         在 @BeforeEach 置 true、@AfterEach 还原 false;生产代码零引用。
+    // │  When : 剪贴板单元测试运行期间
+    // │  Where: Clipboard.writeText / readText 入口
+    // │  How  : 关键变量变化:testForceMemoryFallback=true →
+    // │           writeText 直接 return false(不碰子进程)→ write 把 TSV 存 memoryFallback;
+    // │           readText 在 memoryFallback 为 null 时返回 ""(不碰真实剪贴板)。
+    // │         逻辑路线:flag=true → 读写均短路到内存路径(有降级用降级,无降级为空);
+    // │           flag=false → 生产路径完全不变。
+    static volatile boolean testForceMemoryFallback = false;
 
     // ======================== 写(DF → 剪贴板)========================
 
     /**
      * 把 DataFrame 写入剪贴板(TSV 格式,粘贴到 Excel 自动分列)。
+     * <p>因为本 TSV 的设计目的地就是"粘贴到 Excel 自动分列",无防护的 "=cmd|calc"
+     * 粘贴即被 Excel 当公式执行(OWASP CSV Injection,AGENTS.md §3.7.3 要求
+     * CSV/Excel/TSV 一致),所以 TSV 值(含表头列名)走与 Csv 相同的
+     * {@code = + - @} 前缀防护。null 仍输出空串;数值/布尔的字符串形式("-1.5"/"true")
+     * 不可能构成公式载荷,豁免(与 Csv 同款口径)。
      * @param df DataFrame 要写入剪贴板的数据帧,不允许 null
      * @throws IOException 写出过程发生 IO 错误时抛出(注:剪贴板命令不可用时不抛,降级到内存变量并打 warning)
      */
     public static void write(DataFrame df) throws IOException {
-        // 转 TSV
+        // 伪代码:
+        //   1. 表头列名逐个过公式注入防护(与 Csv 表头同口径)
+        //   2. 逐行逐值:非 Number/Boolean 的字符串若以(跳过前导空白后的)= + - @ 开头 → 加 ' 前缀
+        //   3. 拼 TSV(制表符分隔 + 换行)→ 写剪贴板(失败降级内存)
         StringBuilder sb = new StringBuilder();
-        sb.append(String.join("\t", df.columnNames())).append('\n');
+        StringBuilder hdr = new StringBuilder();
+        java.util.List<String> names = df.columnNames();
+        for (int c = 0; c < names.size(); c++) {
+            if (c > 0) hdr.append('\t');
+            hdr.append(startsWithFormulaAfterWhitespace(names.get(c)) ? "'" + names.get(c) : names.get(c));
+        }
+        sb.append(hdr).append('\n');
         for (Object[] row : df.iterRows()) {
             StringBuilder line = new StringBuilder();
             for (int c = 0; c < row.length; c++) {
                 if (c > 0) line.append('\t');
                 Object v = row[c];
-                line.append(v == null ? "" : String.valueOf(v));
+                if (v == null) {
+                    line.append("");   // null 仍输出空串(缺失值语义不变)
+                    continue;
+                }
+                String s = String.valueOf(v);
+                boolean sanitizable = !(v instanceof Number) && !(v instanceof Boolean);
+                line.append(sanitizable && startsWithFormulaAfterWhitespace(s) ? "'" + s : s);
             }
             sb.append(line).append('\n');
         }
@@ -71,6 +119,29 @@ public final class Clipboard {
             memoryFallback = tsv;
             System.err.println("[jian] 剪贴板命令不可用,数据保存到内存变量(同 JVM 内可读回;建议安装 xclip/pbcopy/clip)");
         }
+    }
+
+    // ┌─ What : startsWithFormulaAfterWhitespace —— 公式注入检测(OWASP 严格版)
+    // │  Why  : 与 Csv.CsvWriter / Excel.startsWithFormulaAfterWhitespace 同款逻辑 ——
+    // │         跳过前导空白类字符后再判定首字符是否公式起始符(防 "\t=cmd|..." / " =cmd|..." 绕过),
+    //         三处实现互指,修改须同步
+    // │  Who  : Clipboard.write()(表头 + 字符串值)
+    // │  When : 拼接 TSV 文本前
+    // │  Where: jian-io-clipboard/Clipboard.java
+    // │  How  : 关键变量变化:i 从 0 起跳过空格/Tab/CR/LF/NUL/BOM 六类字符,停在首个有效字符;
+    // │           该字符 ∈ {=, +, -, @} → true(需加 ' 前缀);全为空白/空串 → false。
+    // │         逻辑路线(三条路径):空串→false;首有效字符是公式符→true;否则 false。
+    private static boolean startsWithFormulaAfterWhitespace(String s) {
+        if (s.isEmpty()) return false;
+        int i = 0;
+        while (i < s.length() && (s.charAt(i) == ' ' || s.charAt(i) == '\t'
+                || s.charAt(i) == '\r' || s.charAt(i) == '\n'
+                || s.charAt(i) == '\u0000' || s.charAt(i) == '\uFEFF')) {
+            i++;
+        }
+        if (i >= s.length()) return false;
+        char ch = s.charAt(i);
+        return ch == '=' || ch == '+' || ch == '-' || ch == '@';
     }
 
     // ======================== 读(剪贴板 → DF)========================
@@ -84,6 +155,7 @@ public final class Clipboard {
     // ======================== 内部:平台命令探测 ========================
 
     private static boolean writeText(String text) throws IOException {
+        if (testForceMemoryFallback) return false;  // 测试缝:强制走内存降级(见字段注释)
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         String[] cmd;
         if (os.contains("linux")) {
@@ -95,13 +167,15 @@ public final class Clipboard {
         } else {
             return false;  // 未知平台
         }
+        Process p = null;
         try {
             ProcessBuilder pb = new ProcessBuilder(cmd);
-            // 把 stderr 重定向到单独的丢弃文件,避免子进程写满 stderr pipe 缓冲区(典型 64KB)
-            // 导致阻塞——尤其当 xclip/xsel 在无 X server 环境下大量报错时(2026-08-09 修复)。
+            // stderr/stdout 都丢弃:防子进程写满 pipe 缓冲区(典型 64KB)阻塞——
+            // 写命令只需要 stdin;stdout 管道若不显式处理,异常路径下 fd 会挂到 GC。
             pb.redirectError(ProcessBuilder.Redirect.DISCARD);
-            Process p = pb.start();
-            // Web 安全修复(2026-08-08):try-with-resources 关闭输出流 + waitFor 带超时(防挂死)
+            pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            p = pb.start();
+            // try-with-resources 关闭输出流 + waitFor 带超时(防挂死)
             try (var pOut = p.getOutputStream()) {
                 pOut.write(text.getBytes(StandardCharsets.UTF_8));
             }
@@ -110,14 +184,19 @@ public final class Clipboard {
             return finished && p.exitValue() == 0;
         } catch (InterruptedException e) { // 恢复中断标志
             Thread.currentThread().interrupt();  // 恢复中断标志
+            if (p != null && p.isAlive()) p.destroyForcibly();  // 中断路径同样回收进程
             return false;
         } catch (IOException e) {
-            return false;  // 命令不存在
+            // 因为 write 阶段抛 IOException(管道破裂等)时进程可能仍在运行,
+            // 所以 destroyForcibly 回收,防 fd/进程泄漏(不回收则进程挂起泄漏)
+            if (p != null && p.isAlive()) p.destroyForcibly();
+            return false;  // 命令不存在或写失败
         }
     }
 
     private static String readText() throws IOException {
         if (memoryFallback != null) return memoryFallback;
+        if (testForceMemoryFallback) return "";   // 测试缝:无降级内容时不碰真实剪贴板(见字段注释)
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         String[] cmd;
         if (os.contains("linux")) {
@@ -131,14 +210,22 @@ public final class Clipboard {
         }
         try {
             ProcessBuilder pb = new ProcessBuilder(cmd);
-            // 把 stderr 丢弃(见 writeText 同款修复):防子进程 stderr 写满缓冲区阻塞 stdout 读取。
+            // 因为子进程 stderr 写满管道缓冲区会阻塞 stdout 读取,所以丢弃 stderr(与 writeText 同口径)
             pb.redirectError(ProcessBuilder.Redirect.DISCARD);
             Process p = pb.start();
-            // Web 安全修复(2026-08-08):关闭 Process 的 InputStream + waitFor 带超时(防 native FD 泄漏 + 挂死)
+            // 关闭 Process 的 InputStream + waitFor 带超时(防 native FD 泄漏 + 挂死)
             try (var is = p.getInputStream()) {
                 String text = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-                if (!p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                boolean finished = p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
+                if (!finished) {
                     p.destroyForcibly();
+                }
+                // 失败退出码一次性提示(不抛错,保持优雅降级)
+                // —— 因为命令失败/超时的 stdout 空串与"剪贴板确实为空"不可区分,所以提示一次。
+                if ((!finished || p.exitValue() != 0) && !readFailWarned) {
+                    readFailWarned = true;
+                    System.err.println("[jian] 剪贴板读取命令失败(exit=" + p.exitValue()
+                        + "),返回空内容;如刚安装 xclip/pbcopy,可调 Clipboard.resetMemoryFallback() 重试");
                 }
                 return text;
             }
@@ -159,12 +246,18 @@ public final class Clipboard {
         }
         String[] header = lines[0].split("\t", -1);
         List<String> names = new ArrayList<>();
-        for (String h : header) names.add(h.trim());
+        // 因为空串列名轻则下游推断怪、重则两空字段触发"列名重复"IAE,
+        // 所以空表头字段兜底 "_0"/"_1"(FwfReader 同款;pandas 用 Unnamed:N,语义相同)。
+        for (int c = 0; c < header.length; c++) {
+            names.add(header[c].trim().isEmpty() ? "_" + c : header[c]);
+        }
         Object[][] rows = new Object[lines.length - 1][names.size()];
         for (int r = 1; r < lines.length; r++) {
             String[] parts = lines[r].split("\t", -1);
             for (int c = 0; c < names.size(); c++) {
-                String v = c < parts.length ? parts[c].trim() : "";
+                // 因为 TSV 与 Csv 两条读路径必须同口径(且 pandas read_clipboard 默认不 trim),
+                // 所以不 trim;需要清洗的用户自行 df.applyToString(c -> c.trim())。
+                String v = c < parts.length ? parts[c] : "";
                 rows[r - 1][c] = v.isEmpty() ? null : v;
             }
         }

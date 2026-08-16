@@ -89,8 +89,19 @@ public final class Excel {
         private String sheetName = null;
         private int sheetIndex = 0;
         private boolean header = true;
+        /** true=日期按系统默认时区解释为本地时刻;false(默认)=转 UTC ISO(历史行为)。 */
+        private boolean keepLocalTime = false;
 
         ExcelReader(Path p) { this.path = p; }
+
+        /**
+         * opt-in 开关:日期保留本地时刻。
+         * Excel 日期本质是"本地时刻"(POI 按系统时区解释);默认转 UTC ISO 会偏移
+         * (CST 09:00 → 01:00Z)。开启后按系统默认时区解释,保留写入时的本地时刻。
+         * 默认关闭(保持历史行为,不破坏现有用户)。
+         * @return ExcelReader 当前配置器,便于链式调用
+         */
+        public ExcelReader localTime() { this.keepLocalTime = true; return this; }
 
         /**
          * 按 sheet 名读取(优先级高于 sheetIndex)。
@@ -126,7 +137,7 @@ public final class Excel {
                 if (sheet == null) {
                     throw new IllegalArgumentException("sheet 不存在:" + sheetName + ",现有:" + allNames(wb));
                 }
-                return parseSheet(sheet, header);
+                return parseSheet(sheet, header, keepLocalTime);
             }
         }
 
@@ -140,7 +151,7 @@ public final class Excel {
     // ┌─ What : parseSheet —— 逐列扫描类型,精确转换(解决"一列多类型"问题)
     // │  How  : 阶段1 扫描每列所有数据单元格的 CellType → 推断列统一类型;
     //         阶段2 按列统一类型精确转换每个值(整数→Long 不经 double 中转;混合→String 保留原样)。
-    private static DataFrame parseSheet(Sheet sheet, boolean header) {
+    private static DataFrame parseSheet(Sheet sheet, boolean header, boolean keepLocalTime) {
         // 陷阱 #8/#9: getLastRowNum 可能虚高(含空行),用 isRowEmpty 探测真实数据行
         int lastRow = sheet.getLastRowNum();
         if (lastRow < 0) {
@@ -149,16 +160,47 @@ public final class Excel {
         // 跳过末尾空行
         while (lastRow > 0 && isRowEmpty(sheet.getRow(lastRow))) lastRow--;
 
-        Row firstRow = sheet.getRow(0);
-        int cols = firstRow != null ? firstRow.getLastCellNum() : 0;
         List<String> names = new ArrayList<>();
+        // ┌─ What : 空首行防护(跳过空首行定位真实表头/列宽)
+        // │  Why  : 因为 POI 对"已创建但无单元格"的行 getLastCellNum() 返回 **-1**,
+        //          若直接 `cols = firstRow.getLastCellNum()` 再 `new CellType[cols]`,
+        //          会以 -1 建数组抛 NegativeArraySizeException(表头行是空行的模板文件常见),
+        //          所以先向下找首个非空行再取列数。
+        // │  How  : 关键变量变化:
+        // │          - headerRowIdx:初始 -1 → 从 0 向下扫,首个非空行号;全空表保持 -1;
+        // │          - cols(header 模式):非空表头行的 getLastCellNum(≥1);非空行必有单元格,恒 ≥1;
+        // │          - cols(无 header 模式):初始 0 → 扫全部行取最大宽度(替代原 firstRow 取值,
+        //            firstRow 为空时不再得 -1)。
+        // │         逻辑路线(三条路径):
+        // │           路径 A(全空表,headerRowIdx=-1)→ 按空表路径返回 0 列 DataFrame,不抛异常;
+        // │           路径 B(header=true)→ 表头取首个非空行,数据行从 headerRowIdx+1 收集;
+        // │           路径 C(header=false)→ 列数按全表最大宽度,数据行从 0 收集(空行仍被 isRowEmpty 跳过)。
+        int headerRowIdx = -1;
+        for (int r = 0; r <= lastRow; r++) {
+            if (!isRowEmpty(sheet.getRow(r))) { headerRowIdx = r; break; }
+        }
+        if (headerRowIdx < 0) {
+            // 没有任何有内容的行(含"只有空首行"的形态)→ 空表
+            return DataFrame.of(new Schema(List.of(), List.of()), new Object[0][]);
+        }
+        int cols;
         int startRow;
         if (header) {
-            for (int c = 0; c < cols; c++) names.add(getCellString(firstRow.getCell(c, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK)));
+            // 表头行 = 首个有单元格的行(空首行向下找)
+            Row headerRow = sheet.getRow(headerRowIdx);
+            cols = headerRow.getLastCellNum();
+            if (cols < 0) cols = 0;   // 防御:理论上非空行不会为 -1,双保险不建负数组
+            for (int c = 0; c < cols; c++) names.add(getCellString(headerRow.getCell(c, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK)));
             // 陷阱 #5: 表头列名去重(重名自动加 _1 _2)
             names = dedupNames(names);
-            startRow = 1;
+            startRow = headerRowIdx + 1;
         } else {
+            // 无表头:列数按全表最大宽度(原实现取 firstRow,空 firstRow 时为 -1 触发负数组)
+            cols = 0;
+            for (int r = 0; r <= lastRow; r++) {
+                Row row = sheet.getRow(r);
+                if (row != null && row.getLastCellNum() > cols) cols = row.getLastCellNum();
+            }
             for (int c = 0; c < cols; c++) names.add("_" + c);
             startRow = 0;
         }
@@ -184,7 +226,7 @@ public final class Excel {
             for (int c = 0; c < cols; c++) {
                 Cell cell = row != null ? row.getCell(c, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK) : null;
                 rows[ri][c] = (cell == null || cell.getCellType() == org.apache.poi.ss.usermodel.CellType.BLANK)
-                        ? null : cellValuePrecise(cell, colTypes[c]);
+                        ? null : cellValuePrecise(cell, colTypes[c], keepLocalTime);
             }
         }
         // 构造 Schema(按列推断的 CellType → jian DType)
@@ -220,6 +262,12 @@ public final class Excel {
                 double d = cell.getNumericCellValue();
                 if (d != Math.floor(d) || Double.isInfinite(d)) allInt = false;
                 allString = false; allBool = false;
+                // 因为非日期的数值单元格必须清除 allDate 标志(下方 "if (allDate) return STRING"
+                // 优先级高于 NUMERIC 分支,漏清会导致纯数值列被误判为日期列走 STRING 路径,
+                // 整数列经"字符串再解析"降级 Integer/INT),所以在此显式清标志:
+                // 纯整数列→NUMERIC→Long→LONG,小数列→NUMERIC→Double→DOUBLE,
+                // 纯日期列 allDate 保持 true→STRING(ISO)。
+                allDate = false;
             } else if (ct == org.apache.poi.ss.usermodel.CellType.STRING) {
                 allInt = false; allNumeric = false; allBool = false; allDate = false;
             } else if (ct == org.apache.poi.ss.usermodel.CellType.BOOLEAN) {
@@ -244,7 +292,7 @@ public final class Excel {
      * - STRING 列:日期转 ISO 字符串;数值按原样字符串(保留手机号等);文本原样
      * - BOOLEAN 列:转 Boolean
      */
-    private static Object cellValuePrecise(Cell cell, org.apache.poi.ss.usermodel.CellType colType) {
+    private static Object cellValuePrecise(Cell cell, org.apache.poi.ss.usermodel.CellType colType, boolean keepLocalTime) {
         org.apache.poi.ss.usermodel.CellType ct = cell.getCellType();
         if (ct == org.apache.poi.ss.usermodel.CellType.FORMULA) ct = cell.getCachedFormulaResultType();
 
@@ -253,7 +301,12 @@ public final class Excel {
                 // 先看是否日期格式
                 if (org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell)) {
                     java.util.Date date = cell.getDateCellValue();
-                    return date.toInstant().toString();  // ISO 格式
+                    // localTime() 开启后按系统默认时区解释(保留本地时刻),
+                    // 默认转 UTC ISO(历史行为)
+                    return keepLocalTime
+                        ? java.time.LocalDateTime.ofInstant(date.toInstant(),
+                            java.time.ZoneId.systemDefault()).toString()
+                        : date.toInstant().toString();  // ISO 格式
                 }
                 double d = cell.getNumericCellValue();
                 // 整数 → Long(不经 double 累积误差;用 BigDecimal 精确取整)
@@ -268,7 +321,13 @@ public final class Excel {
                 switch (ct) {
                     case NUMERIC:
                         if (org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell)) {
-                            return cell.getDateCellValue().toInstant().toString();
+                            // 因为混合列内日期单元格必须与 NUMERIC 分支同口径,所以同样按
+                            // keepLocalTime 决定本地/UTC 序列化
+                            java.util.Date d2 = cell.getDateCellValue();
+                            return keepLocalTime
+                                ? java.time.LocalDateTime.ofInstant(d2.toInstant(),
+                                    java.time.ZoneId.systemDefault()).toString()
+                                : d2.toInstant().toString();
                         }
                         double d = cell.getNumericCellValue();
                         // 整数 → 不带小数点的字符串(13800000000 不是 1.38E10)
@@ -297,7 +356,7 @@ public final class Excel {
     /** 精确取值(公式取缓存结果类型,再按类型转)。 */
     private static Object cellValue(Cell cell) {
         return cellValuePrecise(cell, cell.getCellType() == org.apache.poi.ss.usermodel.CellType.FORMULA
-                ? cell.getCachedFormulaResultType() : cell.getCellType());
+                ? cell.getCachedFormulaResultType() : cell.getCellType(), false);
     }
 
     private static String getCellString(Cell cell) {
@@ -390,10 +449,16 @@ public final class Excel {
         }
 
         @Override public void close() throws IOException {
-            try (FileOutputStream fos = new FileOutputStream(path.toFile())) {
-                wb.write(fos);
+            // 因为 wb.write(fos) 抛 IOException 时 wb.close() 也必须执行(XSSFWorkbook
+            // 持有 native/临时资源,不关会泄漏),所以 wb 纳入 finally 保证 close,
+            // 与单写路径 ExcelWriter.go() 的 "try (Workbook wb = ...)" 同一写法。
+            try {
+                try (FileOutputStream fos = new FileOutputStream(path.toFile())) {
+                    wb.write(fos);
+                }
+            } finally {
+                wb.close();
             }
-            wb.close();
         }
     }
 
@@ -409,7 +474,11 @@ public final class Excel {
             Row row = sheet.createRow(r++);
             for (int c = 0; c < cols.size(); c++) {
                 Cell cell = row.createCell(c);
-                cell.setCellValue(cols.get(c));
+                // 因为列名为 "=cmd|calc"/"+x"/"@y" 时表头单元格同样会被 Excel 当公式执行
+                // (仅防护数据格不够,且 AGENTS.md §3.7.3 要求 CSV/Excel 两处一致,
+                // CSV 侧表头也已纳入防护),所以表头列名走与数据格同一公式注入防护。
+                String name = cols.get(c);
+                cell.setCellValue(startsWithFormulaAfterWhitespace(name) ? "'" + name : name);
             }
         }
         for (Object[] rowVals : df.iterRows()) {
@@ -431,7 +500,6 @@ public final class Excel {
                     cell.setCellValue((Boolean) v);
                 } else {
                     String s = String.valueOf(v);
-                    // Web 安全修复(2026-08-08,2026-08-09 增强):
                     // Excel 公式注入防护(与 CSV 一致)。OWASP 严格版——不只看首字符,
                     // 跳过前导空白/Tab/CR/LF 后再判定(防 "\t=cmd|..." / " =cmd|..." 绕过)。
                     if (startsWithFormulaAfterWhitespace(s)) {
@@ -447,7 +515,7 @@ public final class Excel {
     // ======================== 辅助:空行检测 + 列名去重 + 公式求值 + 公式注入防护 ========================
 
     /**
-     * 公式注入检测(OWASP 严格版,2026-08-09 增强自旧版 isFormulaStart(char))。
+     * 公式注入检测(OWASP 严格版)。
      * <p>不只看首字符——很多注入 payload 用前导空白/Tab/CR/LF 绕过首字符检查
      * (如 {@code "\t=cmd|..."}、{@code " =cmd|..."}),Excel 解析时会先 trim。
      * 本方法跳过前导空白类字符后,再看第一个有效字符是否是公式起始符。
@@ -456,10 +524,14 @@ public final class Excel {
      * @return boolean true=检测到公式起始符,需加单引号前缀防护
      */
     private static boolean startsWithFormulaAfterWhitespace(String s) {
+        // 因为跳过集若只有 4 字符(不含 NUL/BOM),"\uFEFF=1+1" 可绕过首字符检查,
+        // 所以跳过集取 6 字符(补 \u0000/\uFEFF),与 Csv.java 同口径;三处实现互指:
+        // Csv.startsWithFormulaAfterWhitespace / Excel(本处) / jian-export Styler.toExcel 内同名方法
         if (s.isEmpty()) return false;
         int i = 0;
         while (i < s.length() && (s.charAt(i) == ' ' || s.charAt(i) == '\t'
-                || s.charAt(i) == '\r' || s.charAt(i) == '\n')) {
+                || s.charAt(i) == '\r' || s.charAt(i) == '\n'
+                || s.charAt(i) == '\u0000' || s.charAt(i) == '\uFEFF')) {
             i++;
         }
         if (i >= s.length()) return false;

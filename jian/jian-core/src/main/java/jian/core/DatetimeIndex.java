@@ -77,6 +77,9 @@ public final class DatetimeIndex {
 
     /**
      * 工厂:未知频率(频率后续可用 {@link #inferFreq()} 推断)。
+     * 说明:允许乱序(不做升序检查)——
+     * asof/resample 等下游会自动排序,但<b>依赖输入升序的语义由调用方保证</b>;
+     * 需要升序校验的严格场景请走带频率的构造路径。
      * @param instants LocalDateTime[] 时间点;允许乱序(不做升序检查)
      * @return DatetimeIndex freq=null 的新实例
      */
@@ -187,7 +190,10 @@ public final class DatetimeIndex {
     }
 
     /**
-     * 二分查找 ≤ label 的最后一个非 null 下标(对齐 pandas asof:返回最近的有效观测点)。
+     * 全扫描查找 ≤ label 的最后一个非 null 下标(对齐 pandas asof:返回最近的有效观测点)。
+     * <p>因为"遇 &gt; label 即 break"的提前退出依赖升序,乱序输入会静默给错结果
+     * (如 [3/1, 1/1] 查 2/1:第 0 个 3/1 &gt; 2/1 直接 break 返回 empty,而 1/1 明明 ≤ 2/1),
+     * 所以全扫描(与 DataFrame.asof 语义一致,不依赖升序,取最后一个满足 instants[i] ≤ label 的行)。
      * @param label LocalDateTime 目标时间,非 null
      * @return OptionalInt 最大下标 i 满足 instants[i] != null 且 instants[i] <= label;
      *         无满足时 empty(所有时间都 > label 或全 null)
@@ -196,10 +202,9 @@ public final class DatetimeIndex {
         Objects.requireNonNull(label, "label 不能为 null");
         int found = -1;
         for (int i = 0; i < instants.length; i++) {
+            // 全扫描,不提前 break(乱序输入下"后面更小的时间点"仍是合法的 asof 观测)
             if (instants[i] != null && !instants[i].isAfter(label)) {
-                found = i;  // 线性扫,因 instants 可能不严格升序
-            } else if (instants[i] != null && instants[i].isAfter(label)) {
-                break;      // 升序时可以提前退出
+                found = i;
             }
         }
         return found >= 0 ? OptionalInt.of(found) : OptionalInt.empty();
@@ -207,6 +212,8 @@ public final class DatetimeIndex {
 
     /**
      * 推断频率(对齐 pandas infer_freq):扫前 3 个非 null 时间点的间隔。
+     * 说明:仅 2 个有效点时无法验证一致性,
+     * 直接按首间隔给频率(可能误判 —— 如 [1/1, 1/2] 与 [1/1, 2/1] 只凭 2 点无法区分)。
      * @return String 推断出的频率("1D"/"2H"/"unknown");无法确定时 "unknown"
      */
     public String inferFreq() {

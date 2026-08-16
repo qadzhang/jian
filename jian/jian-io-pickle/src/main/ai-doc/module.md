@@ -4,6 +4,7 @@
 - **library**: jian
 - **entryClass**: jian.io.pickle.Pickle
 - **deps**: jian-core;jian-io-json(records orient 复用);纯 JDK(CRC32)
+- **tests**: 6
 
 ## 摘要
 jian 自定义 `.jpk` 序列化格式,对齐 pandas.to_pickle 诉求(DataFrame 落盘再加载);"魔数 + JSON(records) + CRC32" 结构,可 debug、无 RCE 风险。
@@ -13,6 +14,9 @@ jian 自定义 `.jpk` 序列化格式,对齐 pandas.to_pickle 诉求(DataFrame �
 - Pickle.read(path):校验魔数 + CRC32 → 取 JSON → records orient 解析(复用 jian-io-json)→ DataFrame
 - 安全:反序列化仅读 JSON 数据,不实例化任意类,规避 JDK 序列化(已废弃)与 Kryo(CVE)的 RCE 风险
 - 损坏检测:魔数不符或 CRC 不匹配抛 IOException("文件损坏")
+
+### 行为细节
+- payload 长度 long 提升校验(不再 int 溢出绕过)
 
 ## 限制
 - 不与 Python pickle 互通(规范已说明,仅满足 DataFrame 落盘核心诉求)

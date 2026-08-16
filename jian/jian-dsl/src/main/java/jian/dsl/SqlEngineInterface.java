@@ -4,7 +4,7 @@ import jian.core.DataFrame;
 
 import java.util.*;
 
-// ┌─ What : SqlEngineInterface —— 通用 L3 SQL 引擎接口(2026-08-09 阶段 E 重新设计)
+// ┌─ What : SqlEngineInterface —— 通用 L3 SQL 引擎接口(可插拔引擎抽象)
 // │  Why  : 用户决策"L3 接口抽象要通用,不拘泥于一两个特定库"
 // │         原 v1 接口(execute+name 两方法)太薄,无法表达引擎能力面
 // │         新设计抽象 SQL 引擎的通用能力,不绑定 jOOQ/JSqlParser/Calcite 任何特有概念

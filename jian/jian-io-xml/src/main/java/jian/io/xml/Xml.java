@@ -79,6 +79,17 @@ public final class Xml {
         List<com.fasterxml.jackson.databind.JsonNode> rows = new ArrayList<>();
         findRows(root, rowName, rows);
         if (rows.isEmpty()) {
+            // 因为写出端 0 行时把列元数据写入根元素 cols 属性,所以空行但根元素带
+            // cols 属性时据此重建 0 行 N 列(元数据不丢);解码走与写侧对称的
+            // escapeAttrValue/decodeAttrValue。
+            com.fasterxml.jackson.databind.JsonNode colsAttr = root.get("cols");
+            if (colsAttr != null && colsAttr.isTextual()) {
+                // split 用 -1 限制:保留末尾空串列名(默认 split 会丢弃尾空元素)
+                String[] names = colsAttr.asText().split(",", -1);
+                List<String> nc = new ArrayList<>();
+                for (String nm : names) nc.add(decodeAttrValue(nm));
+                return DataFrame.of(Schema.infer(nc, new Object[0][nc.size()]), new Object[0][nc.size()]);
+            }
             return DataFrame.of(new Schema(List.of(), List.of()), new Object[0][]);
         }
         // 取列名(首行的字段)
@@ -120,7 +131,10 @@ public final class Xml {
         if (node.isLong()) return node.longValue();
         if (node.isDouble()) return node.doubleValue();
         if (node.isBoolean()) return node.booleanValue();
-        return node.asText();
+        // 因为空元素(<id></id>)是缺失值的写出形态,读回应映射 null(与 CSV 空字段一致;
+        // 若返回 "" 会污染 Schema.infer,含任一缺失值的数值列整列降级 STRING 且 isNull 判断断裂)
+        String t = node.asText();
+        return t.isEmpty() ? null : t;
     }
 
     // ======================== 写 ========================
@@ -167,8 +181,21 @@ public final class Xml {
         private String render() {
             StringBuilder sb = new StringBuilder();
             sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-            sb.append('<').append(escapeName(rootName)).append(">\n");
+            // 0 行时列元数据写入根元素 cols 属性(读侧据此重建空列,不丢 schema)
             List<String> cols = df.columnNames();
+            if (df.rowCount() == 0 && !cols.isEmpty()) {
+                StringBuilder names = new StringBuilder();
+                for (String c : cols) {
+                    if (names.length() > 0) names.append(',');
+                    // 因为列名裸拼进属性值时,列名含 " / & / < 会产出非法 XML
+                    // (cols="a"b,c&d"),读回 JsonParseException,所以做属性值转义(& < ")
+                    names.append(escapeAttrValue(c));
+                }
+                sb.append('<').append(escapeName(rootName)).append(" cols=\"").append(names).append("\">\n");
+                sb.append("</").append(escapeName(rootName)).append(">\n");
+                return sb.toString();
+            }
+            sb.append('<').append(escapeName(rootName)).append(">\n");
             for (Object[] row : df.iterRows()) {
                 sb.append("  <").append(escapeName(rowName)).append(">\n");
                 for (int c = 0; c < cols.size(); c++) {
@@ -188,6 +215,36 @@ public final class Xml {
     /** 文本内容转义:& < >(引号在元素文本中无需转义)。 */
     private static String escape(String s) {
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    // ┌─ What : escapeAttrValue / decodeAttrValue —— cols 属性值的编码与解码(互为逆操作)
+    // │  Why  : 0 行分支把全部列名拼进根元素的 cols="..." 属性。① 属性值里的 " & < 必须转义,
+    //          否则产出非法 XML;② 逗号是列名分隔符,列名自含逗号需占位 —— 因为字符引用
+    //          &#44; 会被 XML 解析器(Stax/Woodstox)**解码回 ','**,读回 split(",")
+    //          照样切断、往返必坏,所以改用 %2C 百分号编码 —— 它是字面文本,
+    //          解析器原样保留,读侧对称还原。
+    // │  Who  : XmlWriter.render()(0 行分支编码)/ Xml.parse()(rows.isEmpty() 分支解码)
+    // │  When : 列名写入/读出 cols 属性时
+    // │  Where: jian-io-xml/Xml.java
+    // │  How  : 编码顺序(关键,先%后逗号,防 %2C 的 % 被二次编码):
+    // │           1. XML 属性转义:& → &amp;、< → &lt;、" → &quot;
+    // │           2. % → %25(先做:后续生成的 %2C 才不被再转义)
+    // │           3. , → %2C(占位,分隔符语义保留)
+    // │         解码顺序(与编码相反,%2C 先还原):
+    // │           1. %2C → ,(2. %25 → %
+    // │         关键变量变化:name "a,b%2C" → 编码 "a%2Cb%252C" → XML 属性字面 →
+    // │           解析器解码 XML 实体(不动 %xx)→ split(",") 不切(%2C 无裸逗号)→
+    // │           解码 → "a,b%2C"(逐字符还原)。
+    // │         逻辑路线(两条路径):编码走 3 步串行 replace;解码走 2 步串行 replace,
+    // │           顺序错误即产生 %252C/%2C 的歧义污染(注释锚定顺序,改动须同步)。
+    private static String escapeAttrValue(String s) {
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace("\"", "&quot;")
+                .replace("%", "%25").replace(",", "%2C");
+    }
+
+    /** cols 属性值解码(escapeAttrValue 的逆操作;顺序:%2C 先还原、%25 后还原,见 escapeAttrValue 注释)。 */
+    private static String decodeAttrValue(String s) {
+        return s.replace("%2C", ",").replace("%25", "%");
     }
 
     /**

@@ -49,8 +49,13 @@ public final class JianNumRandom {
      *
      * @param n int 生成个数,约束:n &gt;= 0
      * @return double[] 长度为 n 的 [0,1) 均匀分布随机数数组
+     * @throws IllegalArgumentException 当 n &lt; 0 时抛出(负数长度无意义,
+     *                                  numpy 对负数长度抛 ValueError;教学提示与 randint 同款)
      */
     public double[] rand(int n) {
+        // 因为负数长度无意义且 numpy 抛 ValueError,所以统一教学型 IAE(而非裸抛 NegativeArraySizeException)
+        if (n < 0) throw new IllegalArgumentException("n 必须 >=0,实际=" + n
+                + "(np.random.rand 对负数长度同样抛 ValueError)");
         double[] r = new double[n];
         for (int i = 0; i < n; i++) r[i] = rng.nextDouble();
         return r;
@@ -63,10 +68,14 @@ public final class JianNumRandom {
      * @param mu    double 正态分布均值,取值范围:任意实数
      * @param sigma double 正态分布标准差,约束:sigma &gt; 0
      * @return double[] 长度为 n 的 N(mu, sigma²) 随机数数组
-     * @throws IllegalArgumentException 当 sigma &lt;= 0 时抛出
+     * @throws IllegalArgumentException 当 sigma &lt;= 0 或 n &lt; 0 时抛出
      */
     public double[] randn(int n, double mu, double sigma) {
-        if (sigma <= 0) throw new IllegalArgumentException("sigma 必须 >0,实际=" + sigma);
+        // 因为 NaN<=0 恒 false 会放行并产出 0 中心序列,所以先做 NaN 校验
+        if (Double.isNaN(sigma) || sigma <= 0) throw new IllegalArgumentException("sigma 必须 >0,实际=" + sigma);
+        // 因为负数长度无意义且 numpy 抛 ValueError,所以统一教学型 IAE
+        if (n < 0) throw new IllegalArgumentException("n 必须 >=0,实际=" + n
+                + "(np.random.randn 对负数长度同样抛 ValueError)");
         double[] r = new double[n];
         for (int i = 0; i < n; i++) r[i] = mu + sigma * rng.nextGaussian();
         return r;
@@ -93,9 +102,14 @@ public final class JianNumRandom {
      */
     public int[] randint(int low, int high, int n) {
         if (high <= low) throw new IllegalArgumentException("high 必须 >low:low=" + low + ", high=" + high);
+        // 因为负数长度无意义且 numpy 抛 ValueError,所以统一教学型 IAE
+        if (n < 0) throw new IllegalArgumentException("n 必须 >=0,实际=" + n);
+        // 因为 span 用 int 相减在全范围 [MIN_VALUE, MAX_VALUE] 会溢出为负,
+        // rng.nextInt(负数) 抛 "bound must be positive"(numpy randint 全范围正常),
+        // 所以 span 用 long 尺度取模后回填
+        long span = (long) high - (long) low;
         int[] r = new int[n];
-        int span = high - low;
-        for (int i = 0; i < n; i++) r[i] = low + rng.nextInt(span);
+        for (int i = 0; i < n; i++) r[i] = (int) (low + Math.floorMod(rng.nextLong(), span));
         return r;
     }
 
@@ -106,10 +120,17 @@ public final class JianNumRandom {
      * @param p     double 成功概率,取值范围:[0, 1]
      * @param count int 生成个数(独立重复采样次数),约束:count &gt;= 0
      * @return int[] 长度为 count 的二项分布采样结果,每个元素为 [0, n] 的成功次数
-     * @throws IllegalArgumentException 当 p 不在 [0,1] 范围内时抛出
+     * @throws IllegalArgumentException 当 p 不在 [0,1] 范围内、n &lt; 0 或 count &lt; 0 时抛出
      */
     public int[] binomial(int n, double p, int count) {
-        if (p < 0 || p > 1) throw new IllegalArgumentException("p 必须在 [0,1],实际=" + p);
+        // 因为 p=NaN 时 "p<0||p>1" 双 false 会放行并产出全 0 序列(numpy 抛 ValueError),
+        // 所以 NaN 与区间外一并拦截
+        if (Double.isNaN(p) || p < 0 || p > 1) throw new IllegalArgumentException("p 必须在 [0,1],实际=" + p);
+        // 因为负参(count<0)无意义且 numpy 抛 ValueError,负试验次数 n<0 会静默产出全 0 错误数据,
+        // 所以两者都统一教学型 IAE
+        if (count < 0) throw new IllegalArgumentException("count 必须 >=0,实际=" + count);
+        if (n < 0) throw new IllegalArgumentException("试验次数 n 必须 >=0,实际=" + n
+                + "(负试验次数无意义;np.random.binomial 同样抛 ValueError)");
         int[] r = new int[count];
         for (int k = 0; k < count; k++) {
             int succ = 0;
@@ -128,6 +149,8 @@ public final class JianNumRandom {
      * @throws IllegalArgumentException 当 k &gt; pool.length 时抛出
      */
     public int[] choice(int[] pool, int k) {
+        // 因为负采样个数无意义且 numpy 抛 ValueError,所以统一教学型 IAE
+        if (k < 0) throw new IllegalArgumentException("k 必须 >=0,实际=" + k);
         if (k > pool.length) throw new IllegalArgumentException(
                 "无放回采样 k=" + k + " 超过 pool 长度 " + pool.length);
         // Fisher-Yates 部分洗牌

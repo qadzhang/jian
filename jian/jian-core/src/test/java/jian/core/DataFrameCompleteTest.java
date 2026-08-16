@@ -138,7 +138,9 @@ class DataFrameCompleteTest {
         DataFrame d = DataFrame.of(Schema.of("v", DType.DOUBLE),
             new Object[][]{{-5.0}, {3.0}});
         DataFrame r = d.abs();
-        assertThat(r.getDoubleColumn("v_abs").getDouble(0)).isEqualTo(5.0);
+        // 对齐 pandas:df.abs() 同名替换,不加 "_abs" 后缀
+        assertThat(r.getDoubleColumn("v").getDouble(0)).isEqualTo(5.0);
+        assertThat(r.getDoubleColumn("v").getDouble(1)).isEqualTo(3.0);
     }
 
     @Test void colMode_众数() {
@@ -186,18 +188,18 @@ class DataFrameCompleteTest {
     @Test void firstValidIndex_首个非缺失() {
         DataFrame d = DataFrame.of(Schema.of("v", DType.DOUBLE),
             new Object[][]{{Double.NaN}, {5.0}, {10.0}});
-        assertThat(d.firstValidIndex()).isEqualTo(1);
+        assertThat(d.firstValidIndex()).isEqualTo(java.util.OptionalInt.of(1));
     }
 
     @Test void lastValidIndex_末个非缺失() {
         DataFrame d = DataFrame.of(Schema.of("v", DType.DOUBLE),
             new Object[][]{{5.0}, {10.0}, {Double.NaN}});
-        assertThat(d.lastValidIndex()).isEqualTo(1);
+        assertThat(d.lastValidIndex()).isEqualTo(java.util.OptionalInt.of(1));
     }
 
-    @Test void firstValidIndex_全缺失返回负1() {
+    @Test void firstValidIndex_全缺失返回empty() {
         DataFrame d = DataFrame.of(Schema.of("v", DType.DOUBLE),
             new Object[][]{{Double.NaN}});
-        assertThat(d.firstValidIndex()).isEqualTo(-1);
+        assertThat(d.firstValidIndex()).isEmpty();
     }
 }

@@ -13,7 +13,8 @@ package jian.num;
  * 描述统计摘要,由 {@link Stats#describe} 返回。
  *
  * <p>字段对齐 pandas {@code df.describe()} 的默认输出:count / mean / std / min / 25% / 50% / 75% / max。
- * std 默认样本标准差(ddof=1),与 pandas 一致。
+ * std 默认样本标准差(ddof=1),与 pandas 一致。q1/q3 为 Commons Math 默认 R-6 插值
+ * (与 numpy 'linear'/R-7 非中位数分位有差异,见 {@link Stats#percentile},此为有意保留的设计差异)。
  *
  * @param count  long 非 NaN 值个数
  * @param mean   double 均值
@@ -36,7 +37,7 @@ public record Summary(
 ) {
     @Override
     public String toString() {
-        return String.format(
+        return String.format(java.util.Locale.ROOT, 
                 "Summary{count=%d, mean=%.6f, std=%.6f, min=%.6f, Q1=%.6f, median=%.6f, Q3=%.6f, max=%.6f}",
                 count, mean, std, min, q1, median, q3, max);
     }

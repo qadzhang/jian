@@ -2,7 +2,7 @@
 
 > **本文件凌驾于本目录所有其它文档。** 与上级目录的通用 `AGENTS.md`(通用规范)冲突时,以本文件为准;本文件未覆盖处,沿用通用规范的对应条款。
 >
-> **jian 的特殊性**:本目录产出的是**对外分发的通用 Java 库**(jian / jian-sql / jian-num),不是脚本工具集,也不是插件包。因此对通用规范做了四处重大调整:① **只用 Java 编写,不用 Groovy/Kotlin 等 JVM 语言**(§1);② **破例引入 Maven 多模块**(§2);③ **子模块零整合、顶层三库可选 fat**(子模块的 jar 一律按 `groupId:artifactId:version` 精细引用、严禁 shade;顶层 jian/jian-num/jian-sql 经 `-Pfat` 允许出 `*-all.jar`,见 §2.5);④ **不适用插件开发标准**(通用规范第 0、6 章整章不适用,见 §0 说明)。
+> **jian 的特殊性**:本目录产出的是**对外分发的通用 Java 库**(jian / jian-sql / jian-num),不是脚本工具集,也不是插件包。因此对通用规范做了四处重大调整:① **只用 Java 编写,不引入其它 JVM 语言**(§1);② **破例引入 Maven 多模块**(§2);③ **子模块零整合、顶层三库可选 fat**(子模块的 jar 一律按 `groupId:artifactId:version` 精细引用、严禁 shade;顶层 jian/jian-num/jian-sql 经 `-Pfat` 允许出 `*-all.jar`,见 §2.5);④ **不适用插件开发标准**(通用规范第 0、6 章整章不适用,见 §0 说明)。
 
 ---
 
@@ -20,26 +20,32 @@ jian 是 **JVM 上对标 pandas / sqlalchemy / numpy 子集**的轻量数据栈,
 **严禁把任何本机的路径、配置、软件环境、用户名、凭据、硬件特征硬编码到任何源码、脚本、文档、注释里。**
 
 - ❌ 不得出现:任何本机绝对路径(家目录/工具目录/用户名/盘符)、本机已装版本号、数据库连接串、API Key、内网域名。
-- ✅ 必须做到:运行时探测(`System.getProperty` / `System.getenv` / `command -v`)、环境变量 + 平台无关回退默认值(如 `${JAR_HOME:-~/tools/jar}`)、敏感信息走 `.env`、依赖缺失时优雅降级给安装提示而非崩溃。
+- ✅ 必须做到:运行时探测(`System.getProperty` / `System.getenv` / `command -v`)、环境变量 + 平台无关回退默认值(如 `${XDG_CACHE_HOME:-~/.cache}`)、敏感信息走 `.env`、依赖缺失时优雅降级给安装提示而非崩溃。
 - **跨平台**:Linux / macOS / Windows 三平台通用;调用外部程序按目标平台动态确认可执行文件名与后缀(详见 §7)。
 
-### 0.3 文档双轨同时维护(强制 · 红线)
+### 0.3 文档四轨同时维护(强制 · 红线)
 
-**`doc/*.md` 与 `doc/index.html` 是同一份需求/接口说明的两种形态,必须同步维护,不允许只改一边。**
+**本项目的"文档"包括四类,全部必须与源代码保持同步,不允许任何一轨滞后:**
 
-- **md 是事实来源**(source of truth):`00-overview.md` ~ `07-jian-dsl.md` 是详细需求分册。
-- **html 是可视化门户**:由 `doc/index.html` 单文件承载,数据驱动渲染(模块卡 / API 速查 / 方法卡均由文件末尾 `<script>` 里的 `MODULES` / `API_QUICK` / `API_REF` 数据数组生成)。
-- **改文档时的强制流程**(详见 §5):
-  - 改需求/接口的**事实内容** → 先改对应 md 分册 → 再同步到 html。
-  - html 的数据数组(`MODULES` / `API_QUICK` / `API_REF`)与 md 不一致时,**以 md 为准,改 html 对齐 md**。
-- md 与 html 冲突时,**以 md 为准**(这是 `00-overview.md` 已声明的原则)。
+| 轨道 | 内容 | 位置 | 同步要求 |
+|---|---|---|---|
+| ① md 分册(**事实来源**) | 需求/接口/API 说明 | `doc/00-overview.md` ~ `07-jian-dsl.md`、`doc/api-counts.md` | 改代码事实 → 先改 md |
+| ①+ 图片资产 | 架构图(README + doc/index.html 依赖全景区共同引用) | `doc/architecture.svg`(文本 SVG,可直改;index.html 经 `<img src>` 引用,**不内联副本**,避免两处漂移) | 模块结构/依赖关系/制品形态变化 → 只改 architecture.svg 一处(单一事实来源);门户分发时两文件同目录携带 |
+| ② html 门户 | 可视化门户(数据驱动渲染) | `doc/index.html` | md 改后同步 html 对应区块/数据 |
+| ③ ai-doc 模块文档 | 每模块能力/限制/快速上手 | `<module>/src/main/ai-doc/module.md`(22 份) | 模块能力/签名变化 → 同一次提交改 |
+| ④ jar 内 AI 文档 | fat jar 总索引 + 场景集(简版预期值)**+ 场景完整标准答案源码** | `<顶层>/.../META-INF/ai/aggregated.md`、`jian-facade/.../META-INF/ai/scenarios.md`;**完整断言源码经 facade pom 资源配置打进 `META-INF/ai/scenarios-src/`** | 新增场景 → scenarios.md 与 scenarios-src/ 同步(jar 消费者拿到的就是完整可执行答案);见 §2.5.3 第 4 条 |
+
+- **md 是事实来源**,html/ai-doc 与 md 冲突时以 md 为准,改 html/ai-doc 对齐 md。
+- **改需求/接口事实内容** → 先改 md 分册 → 再同步 html + ai-doc + jar 内 AI 文档。
+- **新增真实场景测试**(如 `scenario` 测试类)→ 必须同步登记进 `META-INF/ai/scenarios.md`(AI 拿 jar 可见)。
+- **模块能力/公开 API/测试数变化** → module.md 的"能力/限制/tests 数"字段同次更新;`doc/api-counts.md` 刷新(它是数字的唯一事实来源)。
 
 ### 0.4 与通用规范的关系(删/留清单)
 
 | 通用规范章节 | 在 jian 的适用性 | 处理 |
 |---|---|---|
 | §0 AI 工具使用规范 | ❌ 不适用(jian 是独立 Java 库) | **整章删除** |
-| §1 编程语言与运行环境 | ⚠️ **只用 Java**(不用 Groovy/Kotlin 等 JVM 语言)、JDK 改 17 | §1 重写 |
+| §1 编程语言与运行环境 | ⚠️ **只用 Java**(不引入其它 JVM 语言)、JDK 改 17 | §1 重写 |
 | §2 依赖与 jar 包管理 | ⚠️ 破例用 Maven、**子模块零整合**(禁 shade),顶层三库可选 fat | §2 重写 |
 | §3 编码与文档规范 | ✅ 完全适用 | §3 保留(示例改 Java) |
 | §4 脚本与临时文件管理 | ✅ 适用 | §6 保留 |
@@ -62,7 +68,7 @@ jian 是 **JVM 上对标 pandas / sqlalchemy / numpy 子集**的轻量数据栈,
 
 1. **凡对标 pandas 的算子**(sortBy/sort_values、merge、groupBy/agg、head/tail、filter/query、concat、dropDuplicates、fillna/dropna/ffill/bfill、astype、select/drop、slice/iloc、nlargest/nsmallest、colAdd/colMul、assign 等),**必须有 pandas 对照测试**。
 2. 对照测试放在 `tests-pbt/properties/test_pandas_diff.py`,用 Hypothesis 生成同一种输入:
-   - 一份发给 jian(通过 `JianPbtBridge` subprocess + JSON 协议)
+   - 一份发给 jian(通过 JPype 直调 `JianJpypeBridge`,JVM 嵌入 pytest 进程)
    - 一份发给 pandas(直接 `import pandas as pd`)
    - 逐行逐列比对结果(允许浮点容差、缺失值等价)
 3. **失败时让 Hypothesis shrink 到最小失败用例**——直接定位 jian 与 pandas 的具体行为差异点。
@@ -71,9 +77,7 @@ jian 是 **JVM 上对标 pandas / sqlalchemy / numpy 子集**的轻量数据栈,
    - **方案 B**:声明这是有意的设计差异(在 `doc/00-overview.md` 显式记录 + 测试中加 `@pytest.mark.xfail` 注释原因)
 5. **绝对禁止**:发现差异后既不对齐也不声明,让 jian 与 pandas 行为悄悄不一致(这是测试偷懒,违反本红线)。
 
-#### 已落地的对照范围(持续扩展)
-
-当前 `test_pandas_diff.py` 覆盖 **38 个 pandas 对照测试**(d1-d38,含 head/tail/sortBy/filter/dropDuplicates/merge/concat/nlargest/nsmallest/select/drop/slice/colSub/colDiv/colLt/fillna/dropna/ffill/astype/groupBy/idxmax/idxmin/duplicated/sample/isin/where/mask/cumsum/diff/pct_change/clip/quantile/rank/round/prod/pivot/explode/merge_asof;完整清单见 `tests-pbt/properties/test_pandas_diff.py` 的 `test_d*` 函数)。每次 jian 新增/修改算子,对应的 pandas 对照测试必须同步增加。详见 `doc/00-overview.md §10.12`(pandas 对照测试实战)。
+> 对照测试的实际覆盖范围(已覆盖哪些算子)以 `tests-pbt/properties/test_pandas_diff.py` 的 `test_d*` 函数清单为准;每次 jian 新增/修改算子,对应的 pandas 对照测试必须同步增加。详见 `doc/00-overview.md §10.12`。
 
 #### 跑法
 
@@ -82,7 +86,7 @@ jian 是 **JVM 上对标 pandas / sqlalchemy / numpy 子集**的轻量数据栈,
 python3 -m pytest tests-pbt/properties/test_pandas_diff.py -v
 ```
 
-> **本机要求**:pandas 1.5.3+(由 `pip install pandas` 或系统包提供)。本机 pandas 不在 classpath 里时,本测试套件会 skip 而非 fail(优雅降级,符合 §0.2 零本机绑定的精神)。
+> **本机要求**:需要 pandas(由 `pip install pandas` 或系统包提供)。本机未装 pandas 时,本测试套件会 skip 而非 fail(优雅降级,符合 §0.2 零本机绑定的精神)。
 
 ---
 
@@ -90,7 +94,7 @@ python3 -m pytest tests-pbt/properties/test_pandas_diff.py -v
 
 ### 1.1 只用 Java
 
-jian 项目**只用 Java 编写,不使用 Groovy、Kotlin 等 JVM 语言**。库源码、测试代码、一次性验证 / demo / 冒烟脚本,全部用 Java。
+jian 项目**只用 Java 编写,不引入任何其它 JVM 语言**。库源码、测试代码、一次性验证 / demo / 冒烟脚本,全部用 Java。
 
 | 场景 | 语言 | 说明 |
 |---|---|---|
@@ -143,13 +147,19 @@ https://maven.aliyun.com/repository/public
 - Maven 项目的 `pom.xml` / `settings.xml` 配置阿里云镜像。
 - 手动下载 jar 时,URL 拼接规则不变:`{group路径}/{artifactId}/{version}/{artifactId}-{version}.jar`。
 
-### 2.4 共享 jar 仓库(本机开发时)
+### 2.4 jar 由 Maven 管理(无共享 jar 仓库)
 
-本机开发时,共享 jar 仓库仍走通用规范 §2 约定的目录(本机如 `~/tools/jar`)。但**严禁把绝对路径写进任何源码、文档、pom、注释**;该路径只用于"在本机跑日常验证",一旦封装进库,必须替换为运行时探测(见 §0.2 / §7)。
+jian 的所有外部依赖都**声明在各模块的 `pom.xml` 里**,由 Maven 从阿里云镜像(§2.3)自动拉取到本地仓库(`~/.m2/repository`),**不维护任何"共享 jar 仓库"**(通用规范的共享仓库约定在 jian 不适用)。
+
+- 开发/测试:一律走 Maven(`mvn compile` / `mvn test`),classpath 由 Maven 自动解析,无需手工拼 jar。
+- 一次性验证脚本需要手工 classpath 时,从 Maven 本地仓库取已拉取的 jar,见 §2.7。
+- **严禁把任何本机绝对路径(含 `~/.m2` 的具体路径)写进源码、pom、注释、对外文档**;封装进库后必须替换为运行时探测(见 §0.2 / §7)。
 
 ### 2.5 引用与打包原则(强制 · 子模块禁整合,顶层三库允许 fat)
 
-**核心立场:子模块对外发布的 jar 一律按其具体 `groupId:artifactId:version` 精细声明、绝不整合;但顶层三库(jian / jian-num / jian-sql)允许通过 `-Pfat` 出可选的 `*-all.jar`(fat jar),作为"单文件即可上手"的 AI 友好补充制品。**
+**核心立场:子模块对外发布的 jar 一律按其具体 `groupId:artifactId:version` 精细声明、绝不整合;但顶层三库(jian / jian-num / jian-sql)允许通过 `-Pfat` 出可选的 `*-all.jar`(fat jar),作为"单文件即可上手"的 AI 友好补充制品;另有列存附加制品 `jian-columnar-all`(第 4 个 fat,见下)。**
+
+> **列存例外**:`jian-io-parquet` / `jian-io-orc` 自带 ~45MB Hadoop 生态依赖,**默认构建不含**(`./mvnw install` 只编 21 模块);`-Pcolumnar` 显式构建;`-Pfat` 时它们**不进 jian-all**(30M,无列存),而是单独聚合成 `jian-columnar-all`(68M,与 jian-all 叠加使用)。facade 对列存编译期解耦(反射 + `ModuleNotLoadedException` 指引,§4.2 按需加载)。详见 doc/02-jian-io.md §9.7。
 
 #### 2.5.1 子模块:精细引用(强制,红线)
 
@@ -178,17 +188,23 @@ https://maven.aliyun.com/repository/public
 
 #### 2.5.3 fat jar 的强制元数据要求(红线)
 
-顶层 fat jar **必须**满足以下三条,否则视为不合格:
+顶层 fat jar **必须**满足以下四条,否则视为不合格:
 
 1. **shade 必须配 `ServicesResourceTransformer`** —— 合并 `META-INF/services/*`(SPI 注册文件),否则 jian-dsl / jian-num-bridge 的 ServiceLoader 在 fat jar 里会因文件被覆盖而失效(SPI 静默退化)。
 2. **shade 必须排除签名文件** —— `<excludes>` 里排 `META-INF/*.SF`、`META-INF/*.DSA`、`META-INF/*.RSA`,否则把签名过的依赖(如 BouncyCastle)的签名块打进新 jar 后,JVM 运行时会因签名校验失败抛 `SecurityException`。
-3. **MANIFEST.MF 必须带 Ai-Aggregated 标记** —— 用 `ManifestResourceTransformer` 加两个 AI 可识别字段,让 AI 拿到 jar 能一眼判别"这是聚合 jar,不是单一 artifact":
+3. **MANIFEST.MF 必须带 AI 标记** —— 用 `ManifestResourceTransformer` 加 AI 可识别字段,让 AI 拿到 jar 能一眼判别"这是聚合 jar,不是单一 artifact",并顺着 `Ai-Modules` 直接跳到总索引:
    ```
    Ai-Aggregated: true
    Ai-Library: jian        # 或 jian-num / jian-sql
+   Ai-Modules: META-INF/ai/aggregated.md
    ```
+4. **AI 文档必须全量聚合,不得同名丢失(红线)** —— 各子模块的 `module.md` 在 fat jar 内路径唯一,AI 才能看到全部模块的能力说明:
+   - **排除** thin 形态的 `META-INF/ai/module.md`(`shade excludes` 加 `<exclude>META-INF/ai/module.md</exclude>`)—— 多模块同名只留一份会误导 AI;
+   - **保留** `META-INF/ai/modules/<artifactId>/module.md`(由根 pom 资源插件统一复制,路径唯一,一模块一份);
+   - **提供** `META-INF/ai/aggregated.md` 总索引(顶层模块 `src/main/resources/META-INF/ai/aggregated.md`):库定位 + 30 秒可跑示例(**示例 API 必须逐个核实真实存在,禁止凭记忆编写**)+ 模块清单表;MANIFEST 的 `Ai-Modules` 指向它;
+   - AI 发现闭环:MANIFEST(`Ai-Aggregated` 识别聚合)→ `Ai-Modules` 跳总索引 → 索引逐模块链到 `modules/<artifactId>/module.md`。
 
-> 顶层三库(jian / jian-num / jian-sql)的 pom.xml 已按上述三条配好,新增 fat jar 制品时必须照此模板,不得省略任一项。
+> 顶层三库(jian / jian-num / jian-sql)的 pom.xml 已按上述四条配好,新增 fat jar 制品时必须照此模板,不得省略任一项。
 
 > **取舍记录**:本规则与通用规范 §2.2"uber/fat jar 优先"在**子模块层面**相反(jian 子模块一律禁整合),在**顶层三库层面**对齐(允许并优先提供 fat jar)。整体立场是"子模块零整合、顶层可选 fat",取舍理由见 `doc/00-overview.md` §8 决策与 §10.15(AI 友好的 jar 制品设计)。
 
@@ -197,17 +213,21 @@ https://maven.aliyun.com/repository/public
 - **始终下载最新稳定版**(可抓 `maven-metadata.xml` 取 `<latest>`)。
 - **冲突仲裁**:多包依赖同一传递依赖的不同版本时,由 Maven 的 `<dependencyManagement>` 统一锁版本,保留一个全兼容的最新版;无法确定时取最新版并在 `doc/00-overview.md` §2.3 记录取舍理由。
 - 同一制品只保留一个版本。
+- **例外:有意选旧版**——当最新版是 beta/不稳定时,可刻意选上一稳定版并在 pom 注释说明。例如 jian-num 用 `commons-math3` **3.6.1**(稳定多年,jian-num 用途避开已知问题),不用 4.0 beta。
 
 ### 2.7 一次性验证脚本的 classpath(Java 单文件)
 
-写一次性 Java 验证脚本(`java Demo.java`)需要带外部 jar 时,**不依赖 uber jar**,直接列具体 jar 或用 Maven 拉的真实 jar 路径:
+jian 的依赖都在 Maven(§2.4),写一次性 Java 验证脚本(`java Demo.java`)需要带外部 jar 时,**优先走 Maven,不要手工维护 jar 目录**:
 ```bash
-# 方式 A:逐个列具体 jar(明确、可追溯)
-java -cp "${JAR_HOME:-~/tools/jar}/poi-ooxml-5.5.1.jar:${JAR_HOME:-~/tools/jar}/xmlbeans-*.jar" Demo.java
-
-# 方式 B(推荐):写进对应子模块的 JUnit 测试,用 mvn test 跑,Maven 自动解析 classpath
+# 方式 A(推荐):写进对应子模块的 JUnit 测试,Maven 自动解析全部 classpath
 mvn -pl jian-io-excel -am test
+
+# 方式 B:用 Maven 导出完整 classpath,交给 java 单文件源码启动
+CP=$(mvn -pl jian-io-excel -am dependency:build-classpath -q -Dmdep.outputFile=/dev/stdout)
+java -cp "$CP" Demo.java
 ```
+> 补充:`java` 启动器支持 `-cp "目录/*"` 形式的通配符(Java 6+ 的 JVM 内置特性,JVM 启动时展开该目录下所有 `.jar`/`.zip`,`*` 必须用引号包裹)。但 Maven 本地仓库(`~/.m2/repository`)按 `group/artifact/version` 分层,无法用单个 `*` 一次取齐一组依赖,故 jian 场景下**优先用上面的 Maven 方式**,不手工拼路径。
+>
 > 一次性脚本任务结束按 §6 清理;长期验证沉淀为 JUnit 测试入库。
 
 ### 2.8 AI 友好元数据规范(强制)
@@ -217,7 +237,9 @@ mvn -pl jian-io-excel -am test
 #### 2.8.1 每模块 module.md
 
 - **位置**:`<module>/src/main/ai-doc/module.md`(每个子模块一份,共 22 份)。
-- **打包**:根 pom 的 `maven-resources-plugin` 在打包期把 `src/main/ai-doc/module.md` 复制进 jar 的 `META-INF/ai/module.md`,随 jar 一同分发。
+- **打包(双路径)**:根 pom 的 `maven-resources-plugin` 复制两份——
+  1. `META-INF/ai/module.md`(thin jar 规范路径,单模块 jar 内唯一);
+  2. `META-INF/ai/modules/<artifactId>/module.md`(fat jar 聚合时路径唯一,shade 不覆盖,见 §2.5.3 第 4 条)。
 - **必填字段**:
   - `library` —— 归属库(jian / jian-sql / jian-num)
   - `entryClass` —— 入口类全限定名(如 `jian.Jian`、`jian.core.DataFrame`)
@@ -226,6 +248,7 @@ mvn -pl jian-io-excel -am test
   - **能力** —— 列出关键能力/方法清单
   - **限制** —— 不能做的事、已知约束、缺失时如何降级
   - **快速上手** —— 3~5 行真实可跑的 Java 示例
+- **维护同步(红线)**:模块新增/删除/改名、能力清单变化 → `module.md` 与 fat jar 的 `aggregated.md` 总索引(§2.5.3 第 4 条)**同一次提交内一起改**,两者不一致视为文档欠账。
 
 #### 2.8.2 sources + javadoc jar
 
@@ -235,7 +258,7 @@ mvn -pl jian-io-excel -am test
 
 #### 2.8.3 @param/@return/@throws(全量覆盖)
 
-- **全项目所有带参数的 public 方法必须有 `@param`**(2026-08-08 已达 495/495 = 100% 覆盖)。
+- **全项目所有带参数的 public 方法必须有 `@param`**。
 - 有返回值的 public 方法必须有 `@return`;可能抛检查异常的必须有 `@throws`。
 - **每次新增 public 方法必须同步补 `@param`**,不允许出现"先写代码后补注释"的欠账 —— 这是 AI 理解 API 的关键元数据,缺失即视为不合规。
 
@@ -246,6 +269,7 @@ mvn -pl jian-io-excel -am test
 - shade 必须配 **`ServicesResourceTransformer`**(合并 `META-INF/services/*` 的 SPI 注册,防 ServiceLoader 失效)。
 - shade 必须排 **`META-INF/*.SF` / `*.DSA` / `*.RSA`**(签名文件,防运行时签名校验失败)。
 - `MANIFEST.MF` 必须加 **`Ai-Aggregated: true`** + **`Ai-Library: <lib>`**(lib = jian / jian-num / jian-sql),让 AI 一眼识别这是聚合 jar。
+- **AI 文档全量聚合**(详见 §2.5.3 第 4 条):排 `META-INF/ai/module.md`、留 `META-INF/ai/modules/<artifactId>/module.md`、供 `META-INF/ai/aggregated.md` 总索引,`Ai-Modules` 属性指向总索引。
 
 ---
 
@@ -308,20 +332,7 @@ mvn -pl jian-io-excel -am test
            └─ 否 → 找最接近的既有类并入,不要为"新"而新
 ```
 
-##### 历史教训(2026-08-09 反例归档)
-
-阶段 A 落地时曾犯过以下错误,被用户当场叫停后修正:
-
-| 错误(已删) | 错在哪 | 正确归属 |
-|---|---|---|
-| ~~新建 `DataFrameIndex.java` 装 idxmax/idxmin~~ | DataFrameSort 已有 `nlargest/nsmallest`(都是"找极值位置"),功能同源 | **并入 `DataFrameSort`** |
-| ~~新建 `DataFrameIndex.java` 装 duplicated~~ | DataFrameReshape 已有 `dropDuplicates`(判重掩码 vs 去重,同一个算法两种产出) | **并入 `DataFrameReshape`** |
-| ~~新建 `DataFrameFilter.java` 装 isin/where/mask~~ | DataFrameMissing 已有 `isna/fillna/ffill/bfill`(都是"掩码与值替换"语义) | **并入 `DataFrameMissing`** |
-| ~~新建 `DataFrameSample.java` 装 sample/pipe/applyRow~~ | 链式入口与 DataFrame.java 主类的 `eval/sql` 等同类;sample 也无独立伴生必要 | **并入 `DataFrame` 主类**(链式入口集中) |
-
-**经验**:每加一个伴生类前,问自己一句 —— "如果这个类名前缀去掉 DataFrame,功能与既有类的子集是不是高度重叠?" 是 → 并入既有类,不要新开。
-
-##### 既有类归属速查(jian-core,持续维护)
+##### 既有类归属速查(jian-core)
 
 | 伴生类 | 装什么 |
 |---|---|
@@ -420,7 +431,38 @@ public static String sanitizeSql(String raw) {
 - 临时调试注释(`// TODO 待删`、注释掉的旧代码)**交付前必须清理**。
 - 注释行不计入 §3.1 的 600 行代码上限,放心详写。
 
+### 3.4 文本块优先(多行文本与引号规避)
+
+处理多行文本、或含大量双引号/特殊字符的文本时,**优先使用 Java 文本块(`"""..."""`),不要用 `+` 拼接或大量 `\"` 转义**。典型场景:SQL、JSON、HTML、XML、OOXML 片段、长提示词、多行日志模板。
+
+**版本依据**:Java 文本块自 **JDK 15** 起为正式标准特性(JEP 378;13/14 曾为 preview),**JDK 17 完整支持**——jian 基线就是 JDK 17(§1.2),可直接用,既非 JDK 17 才有,更非 JDK 21 才有。
+
+**核心好处**:文本块**内部的单个 `"` 无需转义**,直接规避 JSON/SQL/HTML 的引号地狱;多行结构清晰可读;JDK 15+ 自动去除相对闭合 `"""` 的公共缩进。
+
+**Java 示例(合规)**:
+```java
+// 文本块:内部 " 不转义;用 %s 占位 + .formatted() 代入变量(Java 15 新增实例方法)
+String name = "jian";
+String json = """
+        {
+            "name": "%s",
+            "desc": "含"双引号"也无需转义"
+        }
+        """.formatted(name);
+System.out.print(json);
+```
+
+> **变量代入**:Java 文本块**没有 `${}` 插值**,用 `%s`/`%d` 占位 + `.formatted(...)` / `String.format(...)` 在末尾代入(已实测可用)。典型错误:在文本块里写 `"name": "${name}"`——编译不报错但**插值不生效**,输出的是字面量 `${name}`。JDK 21/22 曾 preview 过 `${name}` 式字符串模板(`STR`),但 JEP 465 在 **JDK 23 已撤回移除**(Java 史上首个未能转正的 preview 特性),**切勿依赖**。
+
+**反例(不合规)**:用 `+` 与 `\"` 硬拼——引号多时极易出错、可读性差:
+```java
+// 反例:引号地狱,禁止
+String bad = "{ \"name\": \"" + name + "\", \"desc\": \"含\\\"双引号\\\"需转义\" }";
+```
+
 ### 3.5 缺失值语义规范(强制 · 红线)
+
+> ⚠️ **修改本契约前必读**:LONG/INT 用 `Long.MIN_VALUE` 哨兵、DOUBLE 用 NaN 表示缺失是**项目核心契约**,与 pandas 的差异已在 `doc/00-overview.md §10.16`(与 pandas 的已知设计差异)显式声明,对照测试已锁定。动契约 = 动全项目 + 全部对照测试,必须先读 §10.16 与 §0.5 红线再决策。
 
 > jian 的缺失值处理遵循**"内部不失真、边界做转换"**原则。计算精度优先于一切——NaN 在内部传递时不能变成 null。
 
@@ -439,7 +481,7 @@ public static String sanitizeSql(String raw) {
 
 - **判断缺失一律用 `isNull(i)`**,不得用 `get(i) == null`——因为 DoubleColumn.get(NaN) 现在返回 Double.NaN 不是 null
 - **IO 写出(CSV/JSON/SQL)一律通过 `getRow(i)` 或 `toObjectArray()` 取值**——它们在边界把 NaN 转成 null
-- **export 显示(各格式默认 naRep,2026-08-09 L8 修正对齐代码/04 分册)**:
+- **export 显示(各格式默认 naRep)**:
   - **HTML** 默认 `<NA>`(对齐 pandas `to_html` 默认;`HtmlRenderer.naRep` 可改)
   - **Markdown/LaTeX/Excel/控制台** 默认空字符串
   - **不得**输出裸 `NaN` 字样(数值 NaN 经 `getRow(i)` 已转 null,渲染层不再看到 NaN)
@@ -453,11 +495,11 @@ pandas 把 NaN 和 null 在数值列里等价处理(NaN 表示缺失,null 也变
 
 ### 3.6 SQL 跨库类型映射规范(强制)
 
-> jian-io-sql 的 `Sql.java` 必须按数据库方言自适应 SQL 类型名,不能用硬编码。2026-08-08 系统查证六大数据库官方文档后确立。
+> jian-io-sql 的 `Sql.java` 必须按数据库方言自适应 SQL 类型名,不能用硬编码。
 
 #### 3.6.1 类型映射表
 
-> **SQLite 列说明(2026-08-09 L8 修正)**:SQLite 是动态类型系统,列声明的类型名只是**"类型亲和"(advisory)**,不强制 —— 实际存储按值的类型走。
+> **SQLite 列说明**:SQLite 是动态类型系统,列声明的类型名只是**"类型亲和"(advisory)**,不强制 —— 实际存储按值的类型走。
 > `Sql.java dtypeToSqlType()` 当前**无 isSqlite 专设分支**,SQLite 落到默认分支(与 PG/H2 共用):`LONG→BIGINT / DOUBLE→DOUBLE PRECISION / BOOL→BOOLEAN / DATETIME→TIMESTAMP / DATE→DATE`。
 > 这与下表"理想映射"(SQLite 列写 INTEGER/REAL/TEXT)在**字面量上不同,但 SQLite 都能接受**(类型亲和容忍),不发错 SQL,数据往返正确。
 > 若用户严格需要 SQLite 风格类型名,可在 v2 加 isSqlite 分支(ROI 低,见 doc/02 §9.5)。
@@ -510,18 +552,17 @@ pandas 把 NaN 和 null 在数值列里等价处理(NaN 表示缺失,null 也变
 
 - ❌ **禁止**:把 `ServiceLoader.load(...)` 存在 static final 字段里(ServiceLoader 内部缓存引用 WebappClassLoader,Tomcat redeploy 时 ClassLoader 无法 GC,经典内存泄漏)
 - ✅ **必须**:每次 `current()` 调用时新建 `ServiceLoader.load(...)`,由 GC 自动回收
-- 适用:`DslEngine.current()` / `StatsProvider.current()`(已修复)
+- 适用:`DslEngine.current()` / `StatsProvider.current()`
 
 #### 3.7.2 只读模式必须生效(防 SQL 写操作)
 
-- `Engine.checkReadOnly(sql)` **必须**在 `engine.sql()` 入口调用(之前是死代码,只读拦截完全没生效)
+- `Engine.checkReadOnly(sql)` **必须**在 `engine.sql()` 入口调用
 - 拦截:DROP/DELETE/TRUNCATE/ALTER/CREATE/GRANT/INSERT/UPDATE(剥前导注释后整词匹配)
 - `readOnly=true` 时,任何写操作抛 `SecurityException`
 
 #### 3.7.3 Excel/CSV 公式注入防护(一致)
 
 - CSV 和 Excel 写出都**必须**对 `= + - @` 开头的单元格加单引号前缀(OWASP CSV Injection 规范)
-- 之前 CSV 有防护、Excel 漏了;已统一修复
 
 #### 3.7.4 Process 超时与流关闭(Clipboard)
 
@@ -531,7 +572,7 @@ pandas 把 NaN 和 null 在数值列里等价处理(NaN 表示缺失,null 也变
 
 #### 3.7.5 HikariCP 连接池生命周期(Web 集成方负责)
 
-- `Engine` 已实现 `AutoCloseable`(close 时关 HikariDataSource)
+- `Engine` 实现 `AutoCloseable`(close 时关 HikariDataSource)
 - Spring Boot 集成:`@Bean` 返回 Engine 类型,Spring 会自动调 close
 - 非 Spring 集成:必须手动 `engine.close()` 或注册 shutdown hook
 - **jian 库不提供自动 shutdown 机制**(避免对容器生命周期做假设)
@@ -547,16 +588,26 @@ pandas 把 NaN 和 null 在数值列里等价处理(NaN 表示缺失,null 也变
 
 #### 3.7.7 安全的方面(无需改)
 
-#### 3.7.6 安全的方面(无需改)
-
 - ✅ **反序列化安全**:Jackson 未开 `enableDefaultTyping`;Pickle(.jpk)走自定义容器 + CRC + JSON,无 `ObjectInputStream`
 - ✅ **SQL 参数化**:SqlBridge/SqlBuilder 全用 PreparedStatement + ? 占位符
 - ✅ **Connection/Statement/ResultSet**:全 try-with-resources
 - ✅ **文件流**:全 try-with-resources 或 Files 工具方法
 - ✅ **DataFrame 不可变**:构造后无 mutator;`dataInPlace()` 仅内部 hot path
 - ✅ **ofColumnArraysSafe**(Web 安全版本):防御性 clone 所有入参数组;`ofColumnArrays`(零拷贝)首次调用时 stderr 提醒改用 Safe 版本
-- ✅ **无 ThreadLocal**:全项目零 ThreadLocal
-- ✅ **无静态可变状态**:全 `static final` 或 static 方法
+- ⚠️ **ThreadLocal 仅一处**:`jian.dsl.SqlEngines`(多请求引擎隔离,正当用途)。
+  容器(Tomcat/Spring Boot)线程复用下 `useCustom` 未 `reset` 会跨请求泄漏引擎选择 —— 必须
+  try-finally `reset()`,详见其 javadoc 警示与 `SecurityAuditTest.ThreadLocal引擎跨调用泄漏与reset修复`
+- ✅ **无其它 ThreadLocal / 无静态可变状态**(除上条 SqlEngines 的显式设计):全 `static final` 或 static 方法
+
+#### 3.7.8 两种部署形态的安全指引
+
+| 形态 | 主要威胁面 | jian 的防护(测试锁定) |
+|---|---|---|
+| **本地 jar**(java -cp 单文件/脚本) | 公式注入(CSV/Excel 打开即执行)、XXE/zip bomb、慢 URL 挂起 | `= + - @` 前缀转义(§3.7.3,CsvEdgeCase/ExcelEdgeCase 实测);Jackson 默认配置无外部实体;POI 自带 zip bomb 检测;readUrl 10s 超时 + 8MB 上限 + 仅 http/https |
+| **Tomcat / Spring Boot** | 存储型 XSS(报表 toHtml)、SQL 注入(标识符/值)、SSRF(readUrl)、ThreadLocal 跨请求泄漏、redeploy 类卸载受阻 | toHtml 五字符转义;表名/列名白名单(标识符无合法转义形式,白名单是唯一安全解);值参数化 `Jian.query(df, expr, Params)`(占位字面量化 + '' 翻倍);`Engine.checkReadOnly` 拦写;SqlEngines 警示;ServiceLoader 不缓存 |
+| 通用(SCA) | 依赖 CVE | hadoop-common 3.3.6(columnar 附加 jar,本地 IO 子集使用、无网络面,风险缓解;升级随 orc/parquet 兼容矩阵);jackson/POI/jsoup/HikariCP 均为较新稳定版 |
+
+> 用户可控值**一律** `Jian.query(df, "列 == ${名}", Params.of(...))` 参数化,禁止拼进表达式/SQL(场景示例见 `META-INF/ai/scenarios.md` 安全写法节)。
 
 ---
 
@@ -591,6 +642,8 @@ pandas 把 NaN 和 null 在数值列里等价处理(NaN 表示缺失,null 也变
 | `doc/01-jian-core.md` ~ `07-jian-dsl.md` | 事实来源 | 各分册详细需求 |
 | `NAMING.md` | 事实来源 | 命名由来(玉简) |
 | `doc/index.html` | 可视化门户 | 单文件,数据驱动渲染(见 §5.3) |
+| `<module>/src/main/ai-doc/module.md` | AI 文档 | 每模块能力/限制/快速上手(22 份,打包进 jar,见 §2.8.1) |
+| `META-INF/ai/aggregated.md` / `scenarios.md` | AI 文档 | fat jar 总索引 / 真实场景集(见 §2.5.3 第 4 条;scenarios 随场景测试同步) |
 
 ### 5.2 改文档时的强制流程
 
@@ -621,13 +674,13 @@ pandas 把 NaN 和 null 在数值列里等价处理(NaN 表示缺失,null 也变
 
 ### 5.3 html 数据驱动的渲染机制(认知)
 
-`doc/index.html` 末尾 `<script>` 内有三个数据数组,模板化渲染:
+数据数组已外置为独立 js 文件(`doc/modules.js`、`doc/api-quick.js`、`doc/api-ref.js`),`doc/index.html` 末尾以 `<script src>` 引用之,由 `doc/render.js` 模板化渲染:
 
 - `MODULES`(8 项)→ 模块卡片
 - `API_QUICK`(4 组)→ 顶层 API 速查表
 - `API_REF`(约 28 项)→ 方法目录卡(日后扩展的核心区)
 
-**新增内容只往数组里加一项,不动 HTML 结构。** md 与 html 数据冲突时,**以 md 为准,改 html 对齐**。
+**新增内容只往对应 js 数据数组里加一项,不动 HTML 结构。** md 与 html 数据冲突时,**以 md 为准,改 html 对齐**。
 
 ### 5.4 模块实现完成后的文档同步(强制 · 红线)
 
@@ -660,6 +713,9 @@ pandas 把 NaN 和 null 在数值列里等价处理(NaN 表示缺失,null 也变
 - [ ] html 改了数据数组 → 对应 md 的事实内容对齐了吗?
 - [ ] html 改完用浏览器打开确认渲染正常(7 模块卡 / 5 速查表 / 方法卡数量正确,无 JS 错)。
 - [ ] **模块完成 → §5.4 的 4 步都做了吗?**(实现说明、偏差、TODO、html 状态都更新)。
+- [ ] **公共 API/能力/测试数变化 → 对应 module.md 的"能力/tests"字段改了吗?api-counts.md 刷新了吗?**
+- [ ] **新增场景测试 → META-INF/ai/scenarios.md 登记了吗?**(AI 拿 jar 须能看到场景集)。
+- [ ] **模块增删/改名 → module.md 与对应 aggregated.md 总索引同次更新了吗?**(§2.5.3 第 4 条)。
 
 ---
 
@@ -679,7 +735,7 @@ pandas 把 NaN 和 null 在数值列里等价处理(NaN 表示缺失,null 也变
 ### 6.2 清理原则
 
 - **清理前确认**:删除前查看目标,内容与预期不符或非自身创建,**暂停向用户确认**,不擅自删除。
-- **保留交付物**:用户要求的产出、共享 jar 仓库中已登记的依赖 jar、`AGENTS.md` / `doc/` 规范与需求文档不清理。
+- **保留交付物**:用户要求的产出、Maven 管理的依赖(`pom.xml` 声明,本地仓库由 Maven 维护)、`AGENTS.md` / `doc/` 规范与需求文档不清理。
 - 清理后简要说明删了什么。
 
 ---
@@ -693,7 +749,7 @@ pandas 把 NaN 和 null 在数值列里等价处理(NaN 表示缺失,null 也变
 - ❌ 本机绝对路径(家目录、/opt、/usr/local、Windows 盘符等)、用户名、硬件路径。
 - ❌ 写死用户名/家目录前缀。
 - ✅ Java 用 `System.getProperty("user.home")` / `System.getenv()` / `File.pathSeparator` / `new File(".").absolutePath`。
-- ✅ 需要 jar 仓库/缓存目录时走环境变量(`${JAR_HOME}`、`${XDG_CACHE_HOME}`),平台无关回退默认值(如 `~/tools/jar`),默认值本身不含盘符/用户名。
+- ✅ 需要缓存目录时走环境变量(`${XDG_CACHE_HOME}`),平台无关回退默认值(如 `~/.cache`),默认值本身不含盘符/用户名。
 
 ### 7.2 禁止写死硬件/架构/外部程序路径/可执行文件后缀
 
@@ -723,7 +779,7 @@ pandas 把 NaN 和 null 在数值列里等价处理(NaN 表示缺失,null 也变
 
 1. **环境确认**:`java -version`(应为 17 或更高)。
 2. **需求定位**:明确改的是哪个模块/分册;查 `doc/00-overview.md` 与对应分册。
-3. **依赖查找**:先查共享 jar 仓库与 JDK 自带库 → 缺失才从阿里云下载(见 §2)。
+3. **依赖查找**:依赖都在各模块 `pom.xml` 里声明(见 §2.4),由 Maven 从阿里云镜像自动拉取;新增依赖直接在对应模块 pom 加 `<dependency>`,无需手工查共享仓库。
 4. **编码**:Java + UTF-8 + 中文注释(见 §3)。源码放对应子模块 `src/main/java/...`。检查两项硬指标:
    - **行数**:每个 `.java` 文件不含注释尽量 ≤ 600 行,超了优先拆分(见 §3.1)。
    - **5W1H 的 How**:非平凡函数的 How 必须详写关键变量数值变化 + 逻辑路线 + 数据走向(见 §3.3.1),不能只写一句话。
@@ -734,28 +790,11 @@ pandas 把 NaN 和 null 在数值列里等价处理(NaN 表示缺失,null 也变
 
 ---
 
-## 9. 已确认的关键决策(2026-08-01 评审,贯穿全项目)
-
-1. **JDK 基线:JDK 17 LTS**(向下兼容 17+,三库与全分册统一,不混用 21)。
-2. **主语言:只用 Java**(不用 Groovy/Kotlin 等 JVM 语言,见 §1.1)。
-3. **构建工具:Maven 多模块**(破例,见 §2)。
-4. **打包形态:每个子模块一个 jar**(细粒度按需加载)。
-5. **子模块零整合、顶层三库可选 fat**:子模块的 jar 一律按 `groupId:artifactId:version` 精细引用、严禁 shade;顶层 jian/jian-num/jian-sql 经 `-Pfat` 允许出 `*-all.jar`(fat jar,带 `Ai-Aggregated` manifest,见 §2.5)。
-6. **功能范围:大面对齐 pandas 3.x**(IO 12 类 Tier 1 + 图表 13 种(10 plot + 3 plotting,高维图 v2 规划)+ Styler 全功能)。
-7. **DSL 不嵌入任何外部脚本引擎**:L1/L2 手写 Pratt,L3 用自写正则子句切分(不用 ANTLR4,ANTLR 已整体弃用,见 07 分册 §9.4)。
-8. **DSL 方言:Oracle 基线 + PG/MySQL 兼容**,通过 `SqlDialect` 变量切换。
-9. **Commons Math 选 3.6.1**(稳定 10 年,jian-num 用途避开已知问题;不用 beta 版 4.0)。
-10. **文档双轨**:md(事实来源)+ html(数据驱动门户)同时维护。
-
-> 详细决策见 `doc/00-overview.md` §8 与 `doc/index.html`「关键决策记录」章节(两者同步)。
-
----
-
 ## 附录 A:本文件与通用规范的差异速查
 
 | 维度 | 通用 `AGENTS.md`(上级目录) | 本文件 `jian/AGENTS.md` |
 |---|---|---|
-| 主语言 | Groovy 脚本优先 | **只用 Java**(不用 Groovy/Kotlin 等 JVM 语言) |
+| 主语言 | 允许多种 JVM 语言 | **只用 Java**(不引入其它 JVM 语言) |
 | JDK | 21 | **17 LTS** |
 | 构建工具 | 禁用 Maven/Gradle | **破例用 Maven 多模块** |
 | 包整合 | uber/fat jar 优先 | **子模块禁 shade,精细引用;顶层三库可选 fat**(`-Pfat`,见 §2.5) |
@@ -764,6 +803,7 @@ pandas 把 NaN 和 null 在数值列里等价处理(NaN 表示缺失,null 也变
 | 零本机绑定 | 仅插件强制 | **全项目强制**(库要对外分发) |
 | UTF-8 + 5W1H + 伪代码 | 强制 | **强制**,且 **How 必须详写**(变量变化/逻辑路线/数据走向,见 §3.3.1) |
 | 单文件行数 | 无限制 | **不含注释 ≤ 600 行**,超了优先拆分(见 §3.1) |
+| 文本块(多行文本) | 多语言示例 | **只用 Java 文本块**(§3.4) |
 
 ---
 

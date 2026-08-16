@@ -6,7 +6,7 @@
   <parent>
     <groupId>jian</groupId>
     <artifactId>jian-parent</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <relativePath>../../pom.xml</relativePath>
   </parent>
   <artifactId>jian-core</artifactId>
@@ -58,7 +58,7 @@
 
        报告位置:jian/jian-core/target/pit-reports/<时间戳>/index.html
 
-       阈值策略(2026-08 与 claude 商议共识,immutable-first 项目专属):
+       阈值策略(immutable-first 项目专属):
          - <coverageThreshold>80</coverageThreshold>  JaCoCo 行覆盖 80%(硬门禁)
          - <mutationThreshold>40</mutationThreshold>  变异分数地板值 40(守底线)
          地板值 40 而非行业惯例 80% 的理由:immutable-first 设计下,大量变异

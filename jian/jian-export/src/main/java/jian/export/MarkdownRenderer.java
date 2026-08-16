@@ -30,6 +30,17 @@ public final class MarkdownRenderer {
 
     private MarkdownRenderer(DataFrame df) { this.df = df; }
 
+    /** 缺失值表示(默认空串,对齐 pandas to_markdown 默认)。 */
+    private String naRep = "";
+
+    /**
+     * 设置缺失值表示(对齐 pandas to_markdown(na_rep="N/A"))。
+     *
+     * @param v String 缺失值展示文本,如 "N/A";null 视为空串
+     * @return MarkdownRenderer 当前实例(链式)
+     */
+    public MarkdownRenderer naRep(String v) { this.naRep = v == null ? "" : v; return this; }
+
     /**
      * 创建 MarkdownRenderer。
      *
@@ -121,10 +132,10 @@ public final class MarkdownRenderer {
         for (int c = 0; c < cols.size(); c++) {
             boolean missing = df.getColumn(cols.get(c)).isNull(r);
             Object v = df.get(r, c);
-            // 缺失行显示空(不是 "NaN" 或 "<NA>");Excel/表格里空就是空
-            String s = missing ? "" : String.valueOf(v);
-            // 管道符转义(对齐规范 04 §5)
-            s = s.replace("|", "\\|");
+            // 缺失行显示 naRep(可配,默认空串)
+            String s = missing ? naRep : String.valueOf(v);
+            // 先转义反斜杠再转义管道符(只转义 | 的话,值里的 \| 会渲染成分隔符)
+            s = s.replace("\\", "\\\\").replace("|", "\\|");
             sb.append(pad(s, widths[c + offset], dtypes.get(c).isNumeric())).append('|');
         }
         sb.append('\n');

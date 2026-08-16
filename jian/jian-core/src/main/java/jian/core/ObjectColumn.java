@@ -64,7 +64,10 @@ public final class ObjectColumn implements Column {
     @Override public DType dtype() { return DType.OBJECT; }
     /** @return String 列名 */
     @Override public String name() { return name; }
-    /** @return Column 改名后的新实例(noCopy) */
+    /**
+     * @return Column 改名后的新实例(noCopy)
+     * @param newName String 新列名;非 null
+     */
     @Override public Column rename(String newName) { return new ObjectColumn(newName, data, true); }
     /** @return int 行数 == data.length */
     @Override public int size() { return data.length; }
@@ -89,12 +92,15 @@ public final class ObjectColumn implements Column {
     }
     /**
      * @param i int 行下标
-     * @return long 元素是 Number 时直接 longValue;否则 toString 后 parse
-     * @throws IllegalStateException 元素为 null(缺失),或非 Number 且不能 parse 为 long
+     * @return long 元素是 Number 时直接 longValue;否则 toString 后 parse;
+     *         缺失行返回 Long.MIN_VALUE(统一缺失标记,见 AGENTS.md §3.5.1)
+     * @throws IllegalStateException 非 Number 且不能 parse 为 long
      */
     @Override public long getLong(int i) {
         Object o = data[i];
-        if (o == null) throw new IllegalStateException("ObjectColumn 第 " + i + " 行为缺失,不能转 long");
+        // 缺失行返回 Long.MIN_VALUE,与其它数值列缺失语义一致
+        //(getDouble 缺失返 NaN,getLong 也须有统一缺失标记,不能同一列两套行为)
+        if (o == null) return Long.MIN_VALUE;
         if (o instanceof Number) return ((Number) o).longValue();
         try { return Long.parseLong(o.toString()); }
         catch (NumberFormatException e) {

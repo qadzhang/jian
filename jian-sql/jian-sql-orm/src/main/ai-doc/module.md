@@ -4,6 +4,7 @@
 - **library**: jian-sql
 - **entryClass**: jian.sql.orm.Session
 - **deps**: jian-sql-engine(Engine 提供连接);JDBC API;反射读注解(纯 JDK)
+- **tests**: 19
 
 ## 摘要
 轻量 ORM,对齐规范 §2.3 / SQLAlchemy Session;用 `@Table`/`@Column`/`@Id` 注解映射实体到表,Session 提供 findById/list/insert/update/delete。
@@ -14,6 +15,13 @@
 - Session:`insert(entity)` / `update(entity)` / `delete(entity)`,均用 PreparedStatement 参数化(防注入)
 - 构造:`new Session<>(engine, EntityClass.class)`,反射扫描注解建立字段↔列映射
 - 字段未标 @Column 时按字段名映射列名
+
+### 行为细节
+- update SET 跳过 @Id;mapRow 缺列跳过/基本类型 NULL fail-fast/类型容错
+
+### 行为细节(续 1)
+- insert/update/delete 全部过只读拦截(readOnly 抛 SecurityException)
+- insert 自增主键回填实体;BigDecimal/Boolean/enum/LocalDate 字段映射
 
 ## 限制
 - 轻量 ORM:不支持关系映射(一对多/多对多/延迟加载)、二级缓存、复杂级联

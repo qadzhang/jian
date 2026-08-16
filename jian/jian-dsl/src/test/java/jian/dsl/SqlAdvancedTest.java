@@ -9,9 +9,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 // ┌─ What : L3 SQL 新语法测试 —— CASE WHEN / CTE / 派生表 / 集合运算 / USING / CROSS JOIN
-// │  Why  : 阶段 E 增量扩展的回归守护(参考 JSqlParser 实现思路,自写预处理)
-// │  Who  : 阶段 E 落地
-// │  When : 2026-08-09 阶段 E
+// │  Why  : 高级语法(CASE/CTE/派生表/集合运算/USING/CROSS JOIN)的回归守护(参考 JSqlParser 实现思路,自写预处理)
+// │  Who  : jian-dsl 模块测试套件
+// │  When : mvn test(jian-dsl 模块)
 // │  Where: jian-dsl/src/test/java/jian/dsl/SqlAdvancedTest.java
 class SqlAdvancedTest {
 
@@ -25,7 +25,7 @@ class SqlAdvancedTest {
                 {"dave", "PM", 9000.0}});
     }
 
-    // ======================== CASE WHEN(L1 修复:SELECT 列表 CASE 经三元 + applyExprColumn)========================
+    // ======================== CASE WHEN(SELECT 列表 CASE 经三元 + applyExprColumn)========================
 
     @Test
     void caseWhen_SELECT列表_基本转换() {
@@ -58,7 +58,7 @@ class SqlAdvancedTest {
     @Test
     void cte_with_经df_sql实例方法可用() {
         DataFrame df = empsDf();
-        // L2 修复:df.sql() 入口放宽 CTE 占位检查(WITH 关键字触发)
+        // df.sql() 入口对 WITH 语句放宽占位检查:CTE 名是内部占位,不要求外部绑定 DataFrame
         DataFrame r = df.sql(
             "WITH rd AS (SELECT * FROM this WHERE dept == 'RD') SELECT name FROM ${rd}");
         assertThat(r.rowCount()).isEqualTo(2);  // alice + bob(RD 部门)
@@ -109,7 +109,7 @@ class SqlAdvancedTest {
         // dept 交集:RD ∩ PM = 空?
         // 实际:第一查询 dept=RD;第二查询 dept=PM;INTERSECT:RD∩PM=空
         // 注:这是 dept 列的交集,行级 INTERSECT
-        assertThat(r.rowCount()).isGreaterThanOrEqualTo(0);  // 集合语义验证,不硬编码具体数
+        assertThat(r.rowCount()).isEqualTo(0);  // RD∩PM=空(精确断言;>=0 是弱断言,会放过 INTERSECT 误返回行的 bug)
     }
 
     @Test
@@ -132,7 +132,7 @@ class SqlAdvancedTest {
         assertThat(r.rowCount()).isEqualTo(2);
     }
 
-    // ======================== USING(多列,L3 修复)========================
+    // ======================== USING(多列复合键)========================
 
     @Test
     void using_单列join() {
@@ -143,7 +143,9 @@ class SqlAdvancedTest {
             Schema.of("id", DType.LONG, "w", DType.STRING),
             new Object[][]{{1L, "x"}, {2L, "y"}});
         DataFrame r = Dsl.sql("SELECT * FROM ${l} JOIN ${r} USING (id)", left, right);
-        assertThat(r.rowCount()).isGreaterThanOrEqualTo(1);
+        // left id=[1,2] × right id=[1,2],USING(id) inner join → 2 行(id=1,2 都匹配);
+        // 精确断言(>=1 是冒烟弱断言,会放过少返回行 bug)。
+        assertThat(r.rowCount()).isEqualTo(2);
     }
 
     @Test
@@ -154,12 +156,13 @@ class SqlAdvancedTest {
         DataFrame right = DataFrame.of(
             Schema.of("a", DType.LONG, "b", DType.LONG, "w", DType.STRING),
             new Object[][]{{1L, 2L, "p"}, {1L, 3L, "q"}});
-        // USING(a, b) → ON a.a=b.a AND a.b=b.b(多列)
+        // USING(a, b) → ON a.a=b.a AND a.b=b.b(多列);若第二个等式被静默丢弃,
+        // 单列等值连接会给出 4 行(1,2)×(1,3) 全配;复合键精确等值连接 = 2 行。
         DataFrame r = Dsl.sql("SELECT * FROM ${l} JOIN ${r} USING (a, b)", left, right);
-        assertThat(r.rowCount()).isGreaterThanOrEqualTo(1);  // 验证不抛异常
+        assertThat(r.rowCount()).isEqualTo(2);
     }
 
-    // ======================== CROSS JOIN(L4 修复:笛卡尔积)========================
+    // ======================== CROSS JOIN(笛卡尔积)========================
 
     @Test
     void crossJoin_笛卡尔积完整() {

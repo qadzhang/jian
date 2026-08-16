@@ -116,24 +116,10 @@ public final class Dsl {
         if (dfs.length == 0) {
             throw new IllegalArgumentException("sql() 至少需要一个 DataFrame 参数");
         }
-        // 解析 SQL 中 ${名} 的出现顺序 → 对应 dfs[0], dfs[1]...
-        java.util.List<String> names = new java.util.ArrayList<>();
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\$\\{(\\w+)}").matcher(sql);
-        while (m.find()) {
-            String name = m.group(1);
-            if (!names.contains(name)) names.add(name);
-        }
-        Map<String, DataFrame> bindings = new java.util.LinkedHashMap<>();
-        if (!names.isEmpty() && names.size() != dfs.length) {
-            throw new IllegalArgumentException(
-                    "SQL 中有 " + names.size() + " 个 ${} 占位(" + names
-                            + "),但传入了 " + dfs.length + " 个 DataFrame;两者须一一对应");
-        }
-        for (int i = 0; i < names.size(); i++) {
-            bindings.put(names.get(i), dfs[i]);
-        }
+        // 绑定占位(CTE 宽容分支与 df.sql() 实例入口统一,见 bindPlaceholders)
+        Map<String, DataFrame> bindings = bindPlaceholders(sql, dfs);
         // 无占位 → bindings 为空,由引擎抛"静态入口无主表"的明确报错
-        // 2026-08-09 阶段 E:经 SqlEngines.current() 走可插拔引擎(默认 SqlRegexEngine)
+        // 经 SqlEngines.current() 走可插拔引擎(默认 SqlRegexEngine)
         return SqlEngines.current().execute(null, sql, bindings, SqlDialect.DEFAULT);
     }
 
@@ -150,22 +136,59 @@ public final class Dsl {
         if (dfs.length == 0) {
             throw new IllegalArgumentException("sql() 至少需要一个 DataFrame 参数");
         }
+        Map<String, DataFrame> bindings = bindPlaceholders(sql, dfs);
+        // 无占位 → bindings 为空,由 SqlEngine 抛"静态入口无主表"的明确报错(见 executeSelect)
+        return SqlEngines.current().execute(null, sql, bindings, dialect);
+    }
+
+    // ┌─ What : bindPlaceholders —— 解析 SQL 中 ${} 占位并按出现顺序绑定 DataFrame(两入口共用)
+    // │  Why  : 静态入口与实例入口的占位绑定行为必须一致:
+    // │         `Jian.sql("WITH 明细 AS (...) ... ${明细}", df)` 在 CTE 模式下占位可多于 df
+    // │         (多余占位由 CTE 预处理动态注入 binding),静态入口若不支持会误报
+    // │         "2 占位 vs 1 df"。抽公共方法收敛(§3.1.1.1 内聚)
+    // │  Who  : Dsl.sql 两个重载(静态入口)+ JianDslEngine.sql(实例入口)
+    // │  When : 每次 SQL 调用的绑定阶段
+    // │  Where: jian-dsl/Dsl.java
+    // │  How  : 数据走向:sql → 提取去重占位名(UCC,支持中文 ${表})→ hasCTE 判定 → 绑定 map。
+    // │         逻辑路线:
+    // │           路径 A(无占位)→ 返回空 map(静态入口由引擎报"无主表";实例入口主表=this);
+    // │           路径 B(WITH 开头,CTE)→ 占位数 ≥ df 数才合法,按序绑前 dfs.length 个
+    // │             (CTE 名占位由 SqlPreprocessor.expandCTE 注入,不需用户传);
+    // │           路径 C(普通 SQL)→ 占位数必须 == df 数,否则抛 IAE(防静默少绑)。
+    /**
+     * 解析 ${} 占位并绑定(包私有,JianDslEngine 共用)。
+     * @param sql String SQL 文本,非 null
+     * @param dfs DataFrame[] 按占位首次出现顺序对应
+     * @return Map&lt;String,DataFrame&gt; 占位名 → DataFrame
+     * @throws IllegalArgumentException 普通 SQL 占位数与 df 数不匹配,或 CTE 模式 df 数多于占位
+     */
+    static Map<String, DataFrame> bindPlaceholders(String sql, DataFrame... dfs) {
         java.util.List<String> names = new java.util.ArrayList<>();
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\$\\{(\\w+)}").matcher(sql);
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\$\\{(\\w+)}",
+                java.util.regex.Pattern.UNICODE_CHARACTER_CLASS).matcher(sql);
         while (m.find()) {
             String name = m.group(1);
             if (!names.contains(name)) names.add(name);
         }
         Map<String, DataFrame> bindings = new java.util.LinkedHashMap<>();
-        if (!names.isEmpty() && names.size() != dfs.length) {
-            throw new IllegalArgumentException(
-                    "SQL 中有 " + names.size() + " 个 ${} 占位(" + names
-                            + "),但传入了 " + dfs.length + " 个 DataFrame;两者须一一对应");
+        if (names.isEmpty()) return bindings;
+        // WITH 开头 = CTE:占位可多于 df(CTE 名占位由预处理注入);df 多于占位仍是用户错
+        boolean hasCTE = sql.toUpperCase().matches("(?is)^\\s*WITH\\b.*");
+        if (hasCTE) {
+            if (names.size() < dfs.length) {
+                throw new IllegalArgumentException(
+                        "SQL 中有 " + names.size() + " 个 ${} 占位(" + names
+                                + "),但传入了 " + dfs.length + " 个 DataFrame;参数过多");
+            }
+            for (int i = 0; i < dfs.length; i++) bindings.put(names.get(i), dfs[i]);
+        } else {
+            if (names.size() != dfs.length) {
+                throw new IllegalArgumentException(
+                        "SQL 中有 " + names.size() + " 个 ${} 占位(" + names
+                                + "),但传入了 " + dfs.length + " 个 DataFrame;两者须一一对应");
+            }
+            for (int i = 0; i < names.size(); i++) bindings.put(names.get(i), dfs[i]);
         }
-        for (int i = 0; i < names.size(); i++) {
-            bindings.put(names.get(i), dfs[i]);
-        }
-        // 无占位 → bindings 为空,由 SqlEngine 抛"静态入口无主表"的明确报错(见 executeSelect)
-        return SqlEngines.current().execute(null, sql, bindings, dialect);
+        return bindings;
     }
 }

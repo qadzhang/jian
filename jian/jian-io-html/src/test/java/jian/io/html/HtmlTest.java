@@ -29,7 +29,8 @@ class HtmlTest {
     }
 
     @Test
-    void match正则筛表() {
+    void match字面子串筛表() {
+        // match 是字面子串 contains 筛表(不用正则,防 ReDoS),锁定子串语义
         String html = "<table><tr><th>x</th></tr><tr><td>1</td></tr></table>"
                 + "<table><tr><th>员工表</th></tr><tr><td>alice</td></tr></table>";
         List<DataFrame> all = Html.parse(html, null);

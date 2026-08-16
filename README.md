@@ -4,7 +4,7 @@
 >
 > 以玉简之器,容数据之变;以简化之桥,渡语言之隙;以简约之道,立长久之基;以吉安之愿,佑用者之祥。
 
-闲来用GLM5.2手搓的，对标 **pandas / sqlalchemy / numpy** 子集的 JVM 数据栈。三个独立库,按需引用。
+闲来手搓的项目,对标 **pandas / sqlalchemy / numpy** 子集的 JVM 数据栈。三个独立库,按需引用。
 
 ---
 
@@ -85,7 +85,7 @@ Jian.write(r, "report.html");
 
 ---
 
-## 缺失值与 NaN 语义(2026-08-08 统一)
+## 缺失值与 NaN 语义
 
 jian 的缺失值处理遵循**"内部不失真、边界做转换"**原则:
 
@@ -94,18 +94,18 @@ jian 的缺失值处理遵循**"内部不失真、边界做转换"**原则:
 | `isNull(i)` | `true` | 权威判断,全类型一致 |
 | `getDouble(i)` | `NaN` | 数值缺失统一占位(全类型) |
 | `getLong(i)` | `Long.MIN_VALUE` | long 无 NaN,用最小值作缺失标记 |
-| `get(i)` | DoubleColumn 返 `Double.NaN`(不失真);其它返 `null` | **NaN 不再变 null** |
+| `get(i)` | DoubleColumn 返 `Double.NaN`(不失真);其它返 `null` | **NaN 不失真** |
 | `getRow(i)` | `null` | IO 边界安全网(CSV/JSON/SQL 写出) |
 
 > **为什么不用 pandas 的"NaN==null"模型**:pandas 把 NaN 和 null 在数值列等价处理是历史包袱。jian 区分:NaN=计算产生的非数(有效值的一种),null=原始缺失。两者在 `isNull` 统一,但在 `get` 层面 NaN 不失真。
 >
-> **export 层(HTML/Markdown/LaTeX/Excel)缺失行显示空**——不显示 "NaN" 或 "<NA>"。详见 `AGENTS.md §3.5`。
+> **export 层缺失行显示**:HTML 默认 `<NA>`(对齐 pandas `to_html`,naRep 可配);Markdown/LaTeX/Excel/控制台默认空字符串,均不输出裸 "NaN"。详见 `AGENTS.md §3.5`。
 
 ## SQL 跨库支持(7 库 DbType,3 库真测)
 
 jian-io-sql 的 `DbType` 枚举定义 **7 种数据库**:PostgreSQL / MySQL / Doris / SQLite / H2 / Oracle / MS Access(Doris 复用 MySQL 协议)。
 
-> **真实库测试覆盖(2026-08-09 经源码核实)**:**3 库有集成测试**(H2 + SQLite 默认跑,PostgreSQL 经 `-Dtest.pg=true` 激活);**4 库仅 DbType 定义**(MySQL/Doris/Oracle/Access,用户引对应驱动后接口通用,但未经 CI 验证)。早前版本声称"7 库通用 + 7 库各 1 集成测试"是超前表述。
+> **真实库测试覆盖**:**3 库有集成测试**(H2 + SQLite 默认跑,PostgreSQL 经 `-Dtest.pg=true` 激活);**4 库仅 DbType 定义**(MySQL/Doris/Oracle/Access,用户引对应驱动后接口通用,但未经 CI 验证)。
 
 **类型映射自适应**(`Sql.java` 按 `DatabaseMetaData` 探测方言):
 
@@ -124,12 +124,12 @@ jian-io-sql 的 `DbType` 枚举定义 **7 种数据库**:PostgreSQL / MySQL / Do
 
 ## Web 环境安全(Tomcat/Spring Boot)
 
-jian 可安全用于 Web 服务器环境。2026-08-08 安全审查修复了 4 个问题:
+jian 可安全用于 Web 服务器环境,现行防护:
 
-| 问题 | 风险 | 修复 |
+| 防护点 | 威胁 | 做法 |
 |---|---|---|
 | ServiceLoader 缓存导致 Tomcat redeploy 内存泄漏 | 🔴 高 | 每次 `current()` 新建 ServiceLoader,不缓存 |
-| `Engine.checkReadOnly` 只读拦截是死代码(从不调用) | 🟠 中 | `engine.sql()` 入口强制调用 checkReadOnly |
+| 只读模式形同虚设 | 🟠 中 | `engine.sql()` 入口强制调用 `checkReadOnly`(剥注释/字符串后整词、大小写不敏感匹配) |
 | Excel 写出无公式注入防护(CSV 有) | 🟠 中 | Excel 加 `= + - @` 单引号前缀(同 CSV) |
 | Clipboard 子进程流未关闭 + 无超时 | 🟡 低 | try-with-resources + `waitFor(5s)` + `destroyForcibly()` |
 
@@ -138,7 +138,7 @@ jian 可安全用于 Web 服务器环境。2026-08-08 安全审查修复了 4 �
 - SQL 参数化:全 PreparedStatement + ? 占位符
 - Connection/文件流:全 try-with-resources
 - DataFrame 不可变:构造后无 mutator;Web 场景用 `ofColumnArraysSafe`(防御性 clone)替代 `ofColumnArrays`(零拷贝)
-- 无 ThreadLocal / 无静态可变状态
+- ThreadLocal 仅一处(`jian.dsl.SqlEngines` 多请求引擎隔离,须 try-finally reset,见 `AGENTS.md §3.7.7`);其余无静态可变状态
 
 详见 `AGENTS.md §3.7`。
 
@@ -230,8 +230,8 @@ df = df.astype("v", DType.LONG);  // 原 DataFrame 如无人引用,GC 自动回�
 ## 测试方法学(给 AI 协作项目用)
 
 > 本项目大量代码由 AI 辅助生成,采用一套**针对 AI 代码弱点设计的系统化测试方法**。
-> 该方法同时装备**人类审查者**和 **AI 审查者(AI agent 1 等)**,两边都按同一份 checklist 工作。
-> 详细论述见 `doc/00-overview.md §10.8-10.9`;此处是大纲与使用指南。
+> 该方法同时装备**人类审查者**和 **AI 审查者**,两边按同一份 checklist 工作。
+> 详细论述见 `doc/00-overview.md §10.8`;此处是大纲与使用指南。
 
 ### 为什么 AI 代码需要特殊测试方法
 
@@ -251,26 +251,26 @@ AI 生成代码有个核心难题叫 **oracle problem(预言机难题)**:很难�
 
 - **变异测试(Mutation Testing)**:用 PITest 主动改坏代码,看测试能否抓到——**测测试本身是否有效**
 - **静态分析**:SpotBugs / PMD / `-Xlint` 抓编译期问题
-- **多轮 AI 对抗审查**:多个 AI 实例(或同实例多轮)互相找茬,**但 AI 审查不能替代机器化差分/蜕变测试**(见下"实战"案例)
+- **多智能体交叉审查**:多个独立 AI 实例(不同模型/视角)互相找茬,**但 AI 审查不能替代机器化差分/蜕变测试**
 
 ### 已落地的测试代码
 
 | 测试类 | 数量 | 方法 | 覆盖 |
 |---|---|---|---|
-| `MetamorphicTest` | 50 断言 / 27 方法 | 蜕变 | sortBy/filter/merge/concat/groupBy/astype/head/tail/slice/agg 等,`@RepeatedTest` 多轮 |
-| `PropertyBasedTest`(jqwik 1.9.3) | 22 | PBT | sortBy/filter/head/concat/dropDuplicates/merge/groupBy/fillna/dropna/ffill/astype/select/drop/slice/nlargest/nsmallest/colAdd/colMul/assign,`tries=100` 自动随机输入 |
+| `MetamorphicTest` | 99 断言 / 31 方法 | 蜕变 | sortBy/filter/merge/concat/groupBy/astype/head/tail/slice/agg 等,`@RepeatedTest` 多轮(surefire 展开后 99,源码 24 @Test + 7 @RepeatedTest) |
+| `PropertyBasedTest`(jqwik 1.9.3) | 25 | PBT | sortBy/filter/head/concat/dropDuplicates/merge/groupBy/fillna/dropna/ffill/astype/select/drop/slice/nlargest/nsmallest/colAdd/colMul/assign,`tries=100` 自动随机输入 |
 | `DifferentialTest` | 38 断言 | 差分 | long/int/double key fast vs generic path 等价 + INT×LONG 混合 + DATE 保留 + ofColumnsDirect vs ofColumnArrays + getIntColumn LONG→INT |
 | `NullNaNPropagationTest` | 9 | 蜕变 | **NaN/缺失值全链路不失真**:get 不失真 + getDouble 返 NaN + getLong 返 MIN_VALUE + getRow 边界转 null + ffill/bfill + merge 补 null + 排序 + 算术传播 |
-| `ColumnarPerfTest` | 27 | 单元 + BUG 回归 | 每个修复点都有"重现代码"防止回归 |
+| `ColumnarPerfTest` | 27 | 单元 + 回归 | 边界与回退路径的"重现代码"防回归 |
 | `tests-pbt/properties/test_jian_properties.py`(Python Hypothesis) | 24 | PBT 同行评议 | 与 jqwik 同样性质 + colSub/colDiv 双语言交叉验证(**v 含 NaN 边界注入**) |
-| `tests-pbt/properties/test_pandas_diff.py`(pandas 1.5.3) | 38 | pandas 对照(d1-d38) | 以 pandas 为 oracle,覆盖 head/tail/sortBy/filter/dropDuplicates/merge/concat/nlargest/nsmallest/select/drop/slice/colSub/colDiv/colLt/fillna/dropna/ffill/astype/groupBy/idxmax/idxmin/duplicated/sample/isin/where/mask/cumsum/diff/pct_change/clip/quantile/rank/round/prod/pivot/explode/merge_asof |
+| `tests-pbt/properties/test_pandas_diff.py`(pandas 1.5.3) | 73 | pandas 对照(d1-d73) | 以 pandas 为 oracle,覆盖 head/tail/sortBy/filter/dropDuplicates/merge/concat/nlargest/nsmallest/select/drop/slice/colSub/colDiv/colLt/fillna/dropna/ffill/astype/groupBy/idxmax/idxmin/duplicated/sample/isin/where/mask/cumsum/diff/pct_change/clip/quantile/rank/round/prod/pivot/explode/merge_asof/resample/统计/Window 等算子(完整清单以该文件 test_d* 函数为准) |
 | `SqlPostgresTest`(PostgreSQL 18) | 14 | 真实 PG | 全 dtype 往返 / 参数化 / 4 种写入模式 / 缺失值 / **VARCHAR 自适应** / **大文本不截断** / **PG 小写列名** / 万行 / SQL 注入防护 |
 | 其它既有测试 | ~157 | 单元 | 模块正常功能(dsl/export/io/num/sql/viz/facade 各子模块) |
-| **合计 jian-core** | **412**(见 [doc/api-counts.md](doc/api-counts.md)) | | 阶段 A-F 新增 60+ DataFrame 方法(idxmax/sample/isin/where/mask/pivot/explode/join/merge_asof/corr/cov/skew/kurt/cumsum/diff/quantile/rank/clip/interpolate/astype 8种/Resampler/DatetimeIndex/Frequency/MultiIndex N级 等) |
-| **合计 jian 全量(Java)** | **637** | 22 模块 | 实测 @Test 数(口径见 doc/api-counts.md);另有 @RepeatedTest/@Property 展开 + PG skip 14 |
-| **合计 jian-io-sql** | **33** | H2+SQLite+PG | 10(H2,含 SQL 注入防护) + 9(SQLite) + 14(PG,`-Dtest.pg=true` 激活) |
-| **合计 jian-export** | **23** | | 含缺失值显示(空 vs "NaN")验证 |
-| **合计 Python 端** | **62** | Hypothesis+pandas | 24(PBT 同行评议) + 38(pandas 对照 d1-d38,2026-08-09 阶段 A-D 补 d21-d38),`pytest tests-pbt/` |
+| **合计 jian-core** | **545**(见 [doc/api-counts.md](doc/api-counts.md)) | | 60+ 扩展 DataFrame 方法(idxmax/sample/isin/where/mask/pivot/explode/join/merge_asof/corr/cov/skew/kurt/cumsum/diff/quantile/rank/clip/interpolate/astype 8种/Resampler/DatetimeIndex/Frequency/MultiIndex N级 等) |
+| **合计 Java 全量(22 模块)** | **1159**(@Test 方法数;surefire 执行 1285) | 22 模块 | 实测 @Test 数,两口径以 @Test 方法数为准(见 doc/api-counts.md);另有 jqwik @Property 展开 + PG skip 14 |
+| **合计 jian-io-sql** | **45** | H2+SQLite+PG | 3 库真测(H2/SQLite 默认跑;PG `-Dtest.pg=true` 激活,含 SQL 注入防护) |
+| **合计 jian-export** | **33** | | 含缺失值显示(空 vs "NaN")验证 |
+| **合计 Python 端** | **117** | Hypothesis+pandas | 24(PBT 同行评议) + 73(pandas 对照 d1-d73) + 16(fuzz) + 4(robustness),`pytest tests-pbt -q` |
 
 ### 变异测试(PITest)已落地——测"测试本身是否有效"
 
@@ -282,30 +282,30 @@ mvn -pl jian/jian-core -o test-compile org.pitest:pitest-maven:mutationCoverage
 # 报告:jian/jian-core/target/pit-reports/<时间戳>/index.html
 ```
 
-**最近一次变异分数(2026-08-08)**:
+**变异分数**:
 
 | 类 | 行覆盖 | 变异杀死率 | 测试强度 |
 |---|---|---|---|
 | ColumnarHashMap | 92% | 75% | 80% |
 | DataFrame | 81% | 61% | 78% |
 | DataFrameMerge | 91% | 68% | 79% |
-| GroupBy | 92% | **72%(从 50% 提升)** | 78% |
+| GroupBy | 92% | **72%** | 78% |
 
-变异测试**真的发现了测试盲点**:GroupBy 一开始只有 50% 变异杀死率(很多聚合分支没测),根据报告补 6 个聚合性质测试后提升到 72%。这就是变异测试的价值——它**客观量化测试质量**,不像 AI 审查会"自判收敛"。
+变异测试能客观量化测试盲点:如 GroupBy 的大量聚合分支曾被测试遗漏,按报告补齐聚合性质测试后其杀死率从 50% 提升到 72%。这是它相对人工/AI 审查的核心价值——不会"自判收敛"。
 
 ### 双语言交叉 PBT(jqwik 1.9.3 + Python Hypothesis)
 
-本项目同时用两套独立的 PBT 实现验证同样 22 条核心性质,形成"**同行评议**"——任一方出错都能被另一方对出。
+本项目同时用两套独立的 PBT 实现验证核心性质(jqwik 端 25 条),形成"**同行评议**"——任一方出错都能被另一方对出。
 
 **Java 端(jqwik 1.9.3)**:`jian/jian-core/src/test/java/jian/core/PropertyBasedTest.java`
 ```bash
-mvn -pl jian/jian-core test -Dtest=PropertyBasedTest    # 22 性质各 tries=100
+mvn -pl jian/jian-core test -Dtest=PropertyBasedTest    # 25 性质各 tries=100
 ```
 
 **Python 端(Hypothesis 6.165.2)**:`tests-pbt/properties/test_jian_properties.py`
 ```bash
 python3 -m pytest tests-pbt/properties/test_jian_properties.py  # 24 性质各 max_examples=100-200
-# 通过 tests-pbt/harness/JianPbtBridge.java 用 subprocess 跨语言调 jian jar
+# 通过 tests-pbt/harness/jian_client.py(JPype 直调 JianJpypeBridge)跨语言调 jian jar
 ```
 
 ### pandas 对照测试(pandas 1.5.3 oracle,红线)
@@ -314,10 +314,10 @@ python3 -m pytest tests-pbt/properties/test_jian_properties.py  # 24 性质各 m
 
 **测试位置**:`tests-pbt/properties/test_pandas_diff.py`
 ```bash
-python3 -m pytest tests-pbt/properties/test_pandas_diff.py   # 38 个对照测试(d1-d38)
+python3 -m pytest tests-pbt/properties/test_pandas_diff.py   # 73 个对照测试(d1-d73)
 ```
 
-**当前覆盖**:head/tail/sortBy/filter/dropDuplicates/merge/concat/nlargest/nsmallest/select/drop/slice/colSub/colDiv/colLt + **fillna/dropna/ffill/astype/groupBy**(2026-08-09 补 d16-d20,落实 AI agent2 G1 红线要求)共 **20 个算子**。每次 jian 新增/修改对标 pandas 的算子,对应的 pandas 对照测试**必须同步增加**(AGENTS.md 红线)。
+**当前覆盖**:head/tail/sortBy/filter/dropDuplicates/merge/concat/nlargest/nsmallest/select/drop/slice/colSub/colDiv/colLt/fillna/dropna/ffill/astype/groupBy/统计/Window/Resample 等,完整算子清单以该文件 `test_d*` 函数清单为准(d1-d73)。每次 jian 新增/修改对标 pandas 的算子,对应的 pandas 对照测试**必须同步增加**(AGENTS.md 红线)。
 
 **发现并处理的差异**:sortBy 稳定性——pandas `sort_values()` 默认 `kind='quicksort'`(不稳定),jian 用 TimSort(稳定);两者对相同键的行序可能不同。**判定:jian 的稳定排序是更优语义,不视为 BUG**,测试用多重集断言对齐(D3)。详见 `doc/00-overview.md §10.12`。
 
@@ -327,29 +327,23 @@ python3 -m pytest tests-pbt/properties/test_pandas_diff.py   # 38 个对照测�
 >
 > **本项目用 1.9.3**(投毒前最后稳定版,已 strings 校验投毒字符串 0 命中)。jar 需自行放到共享仓库(默认 `~/tools/jar`,可用 `-Djar.home=/path` 覆盖),pom 用 `scope=system` 引用(避免 Maven 解析到 1.10.x)。详见 jian-core/pom.xml 注释。
 
-#### 双语言交叉 PBT 的实战价值
+#### 双语言交叉 PBT 的互补价值
 
-阶段 2 写 Python Hypothesis 时**当场抓到 2 个真实 bug**:① harness 路径错;② Java bridge 空表 dtype 处理不一致。阶段 3 让 AI agent 1 + AI agent 2 复审**双 AI 都独立抓到 P10 是死测试**(Java 端和 Python 端都漏调 `df.groupBy()`),还各自抓到 `data()` 零拷贝破坏公共 API 契约、`Json.java` 漏处理 NaN/Infinity、MR7 假性质等。**任一单一方法(单语言 PBT 或单 AI 审查)都漏掉了部分 BUG,组合方法才接近完整**。详见 `doc/00-overview.md §10.11`。
+两套独立实现互相验证,任一方漏掉的性质另一方可能抓到——实战中死性质(P10 两端都漏调 `groupBy`)、`data()` 零拷贝对公共 API 契约的影响、`Json.java` 的 NaN/Infinity 处理遗漏等均由交叉验证发现。**任一单一方法(单语言 PBT 或单智能体审查)都会漏掉部分 BUG,组合方法才接近完整**。详见 `doc/00-overview.md §10.11`。
 
 辅助审查方法:
 
-- **多轮 AI 对抗审查**:多个 AI 实例(或同实例多轮)互相找茬
-- **双 AI 交叉审查**(本项目的关键发现):**单 AI 多轮收敛 ≠ 真无 BUG**。本项目 AI agent 1 跑了 4 轮"收敛"后,切换到 AI agent 2 一上来就抓到 4 个 AI agent 1 全漏的真实 BUG。**双 AI(不同模型)交叉审查 > 单 AI 多轮**——但仍不及机器化差分/蜕变测试。详见 `doc/00-overview.md §10.10`。
+- **双智能体交叉审查**:两个独立智能体(不同模型、不同视角)互相审查,能发现单一视角漏掉的问题;但**单一视角多轮收敛 ≠ 真无 BUG**,且审查结论不能替代机器化差分/蜕变测试。详见 `doc/00-overview.md §10.8`。
 
-### 实战:这套方法真的有用吗?
+### 实战教训
 
-**有,而且是关键**。本项目用本机 AI agent 1 做了 4 轮对抗审查,收敛后**自以为无 BUG**。
-但加差分测试的当晚,`dt_merge_正零负零_与DoubleEquals等价` **直接失败**——
-深入查发现 AI agent 1 在第 3 轮"修复" ±0.0 时**把概念记错了**(以为 `Double.equals` 视 ±0.0 相等,
-实际是不等),反而把原本对的 fast path 改坏了。
-
-接着又切换到 **AI agent 2** 做交叉审查——它**一上来就抓到 AI agent 1 4 轮 + 我都漏掉的 4 个真实 BUG**(INT×LONG 混合 key 跨 how 不一致、补 null 列降级 OBJECT 导致 getLong 崩溃、DATE 列类型丢失、重复 key 行序差异)。详见 `doc/00-overview.md §10.10`。
+审查方(无论人或 AI)也会把概念记错——例如把 `Double.equals` 对 ±0.0 的语义记反,曾据此把原本正确的实现改坏,而机器化差分测试(`dt_merge_正零负零_与DoubleEquals等价`)当场抓到了这个不一致。
 
 > **核心教训**:
-> 1. AI 审查者也会把概念记错。**机器化的差分/蜕变测试**不会"记错",只会如实反映输入输出关系。
-> 2. **单 AI 多轮收敛 ≠ 真无 BUG**(AI agent 1 4 轮收敛是假收敛);**双 AI 交叉审查 > 单 AI 多轮**,但仍不及机器化测试。
+> 1. 审查方也会记错概念;**机器化的差分/蜕变测试**不会"记错",只会如实反映输入输出关系——唯一可靠的守护。
+> 2. **单一视角多轮收敛 ≠ 真无 BUG**;交叉视角 + 机器化测试双保险。
 > 3. **测试断言要严**——"行序可能不同"这种宽松断言会放过真实 BUG,要尽量精确(行序、类型、nullCount 都比对)。
-> 4. **混合 dtype 是 BUG 重灾区**——所有发现的 BUG 都涉及"两种 dtype 的交互边界"。
+> 4. **混合 dtype 是 BUG 重灾区**——问题常出现在"两种 dtype 的交互边界"。
 
 ### 使用指南(给审查者,无论是人还是 AI)
 
@@ -365,7 +359,7 @@ python3 -m pytest tests-pbt/properties/test_pandas_diff.py   # 38 个对照测�
 2. **同一算子新加 fast path,必须配差分测试**——验证与 generic path 等价
 3. **修复每个 BUG 后,写"重现代码"测试**——防回归
 
-### AI 审查 checklist(给人/AI agent 1 共用)
+### AI 审查 checklist(给人/AI 共用)
 
 ```
 [ ] 是否引入了跨实现的不一致?(fast path 与 generic path 行为不等价)
@@ -375,7 +369,7 @@ python3 -m pytest tests-pbt/properties/test_pandas_diff.py   # 38 个对照测�
 [ ] 是否漏掉了某个文档化的语义?(如 Double.equals 与 Double.compare 不同)
 ```
 
-详细论述与逐轮审查记录见 `doc/00-overview.md §10.8-10.9`。
+详细论述见 `doc/00-overview.md §10.8`。
 
 ---
 

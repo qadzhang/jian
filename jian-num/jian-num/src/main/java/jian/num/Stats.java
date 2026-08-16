@@ -64,20 +64,30 @@ public final class Stats {
     /**
      * 求和(默认跳过 NaN,对齐 np.nansum)。
      * <p>使用 Kahan 补偿求和(提高大数组/大小悬殊时的精度)。
+     * <p>因为 Kahan 的补偿项在 inf 参与下是 inf-inf=NaN(会毒化累加),
+     * 所以 ±inf 域内不做补偿,让 IEEE 加法自身决定语义:
+     * inf+5=inf、(-inf)+5=-inf、inf+(-inf)=NaN(对齐 numpy)。
      *
      * @param data double[] 输入数据,约束:不能为 null;可含 NaN(默认 SKIP 跳过)
-     * @return double Kahan 补偿求和结果
+     * @return double Kahan 补偿求和结果;含异号 ±inf 时为 NaN(对齐 numpy)
      * @throws IllegalArgumentException 当 data 为 null 或 policy=ERROR 且含 NaN 时抛出
      */
     public static double sum(double[] data) {
         double[] clean = filterNaN(data, NaNPolicy.DEFAULT);
-        // Kahan 补偿求和(提高大数组/大小悬殊时的精度,AI agent2 #9)
+        // Kahan 补偿求和(提高大数组/大小悬殊时的精度)
+        // 伪代码:逐项补偿累加;t 一旦落入 ±inf 域则补偿项 c 清零(不补偿),
+        //        让 IEEE 加法自身决定 inf/NaN 语义;inf+(-inf) 自然得 NaN。
         double sum = 0.0, c = 0.0;
         for (double v : clean) {
             double y = v - c;
             double t = sum + y;
-            c = (t - sum) - y;
-            sum = t;
+            if (Double.isInfinite(t)) {
+                // ±inf 域 —— 补偿项 (t-sum)-y 是 inf-inf=NaN,会毒化后续累加,故 c=0
+                sum = t; c = 0;
+            } else {
+                c = (t - sum) - y;
+                sum = t;
+            }
         }
         return sum;
     }
@@ -184,22 +194,32 @@ public final class Stats {
     // ======================== 分位数 ========================
 
     /**
-     * 分位数(百分制,对齐 np.percentile)。
+     * 分位数(百分制,API 形式对齐 np.percentile)。
+     *
+     * <p><b>插值口径</b>:本方法返回 Commons Math
+     * {@link Percentile} 默认插值(R-6,h=(n+1)·p),与 numpy 默认 'linear'(R-7,h=(n-1)·p+1)
+     * <b>在中位数以外的分位有差异</b>(如 [1,2,3,4,5] 的 Q1:本方法 1.5,numpy 2.0)。
+     * 需 numpy/pandas 口径请用 jian-core 的 {@code DataFrameStats.percentile}(自写 R-7 线性插值)。
+     * 模块定位是 Commons Math 薄封装(规范 06 §1.3),差异取舍声明见 doc/06-jian-num.md §取舍。
      *
      * @param data double[] 输入数据,约束:不能为 null;可含 NaN(默认 SKIP 跳过)
      * @param q    double 百分位数,取值范围:[0, 100],如 25 表示 Q1
-     * @return double 第 q 百分位的值(线性插值,与 numpy 'linear' 一致)
+     * @return double 第 q 百分位的值(Commons Math 默认 R-6 线性插值;中位数与 numpy 一致)
      * @throws IllegalArgumentException 当 data 为 null、空、或全 NaN 时抛出
      */
     public static double percentile(double[] data, double q) {
+        // 百分制 [0,100] 校验(与 quantile 的 [0,1] 制各自独立,勿混用);
+        // 因为 q=NaN 时 "q<0||q>100" 双 false 放行后 Commons Math 内部裸抛
+        // ArrayIndexOutOfBoundsException(Index -1),所以显式拒 NaN(numpy percentile 抛 ValueError)
+        if (Double.isNaN(q) || q < 0 || q > 100) throw new IllegalArgumentException("percentile q 必须在 [0,100],实际=" + q);
         double[] clean = filterNaN(data, NaNPolicy.DEFAULT);
         requireNonEmpty(clean);
-        // Commons Math Percentile 默认插值方法与 numpy 'linear' 一致
+        // Commons Math Percentile 默认 R-6 插值(与 numpy 'linear'/R-7 非中位数分位有差异,见方法 javadoc)
         return new Percentile().evaluate(clean, q);
     }
 
     /**
-     * 分位数(小数制,对齐 np.quantile)。
+     * 分位数(小数制,API 形式对齐 np.quantile;插值口径同 {@link #percentile}:Commons Math 默认 R-6)。
      *
      * @param data double[] 输入数据,约束:不能为 null;可含 NaN(默认 SKIP 跳过)
      * @param q    double 分位数,取值范围:[0, 1],如 0.95 表示 95 分位
@@ -219,41 +239,88 @@ public final class Stats {
      * @throws IllegalArgumentException 当 data 为 null、空、或全 NaN 时抛出
      */
     public static double median(double[] data) {
-        return percentile(data, 50.0);
+        return median(data, NaNPolicy.DEFAULT);
+    }
+
+    /**
+     * 中位数(可指定 NaN 策略)。
+     * NaNPolicy 重载仅 mean/median 可控;var/std 等默认 SKIP 已够用,
+     * 不逐统计量加 policy(避免稀释 API)。
+     * @param data   double[] 输入数据,约束:不能为 null;可含 NaN
+     * @param policy NaNPolicy NaN 处理策略,取值范围:SKIP / ERROR / PROPAGATE
+     * @return double 中位数
+     */
+    public static double median(double[] data, NaNPolicy policy) {
+        // 因为 Commons Math Percentile 对含 ±inf 的数据返回 NaN(numpy median([inf,5,5])=5.0),
+        // 所以中位数手写排序取位 —— 精确且 inf 安全
+        // (排序比较对 ±inf 语义天然正确:inf 排末尾、-inf 排首位)
+        double[] clean = filterNaN(data, policy);
+        requireNonEmpty(clean);
+        double[] sorted = clean.clone();
+        java.util.Arrays.sort(sorted);
+        int n = sorted.length;
+        return (n & 1) == 1 ? sorted[n >> 1] : (sorted[(n >> 1) - 1] + sorted[n >> 1]) / 2.0;
     }
 
     // ======================== 形状统计 ========================
 
     /**
-     * 偏度(Skewness,对齐 pandas Series.skew / scipy.stats.skew)。
+     * 偏度(Skewness,对齐 pandas Series.skew / scipy.stats.skew,G1 口径)。
      * <p>基于 Commons Math {@link DescriptiveStatistics#getSkewness}。
+     * <p>因为 Commons Math 内部 "方差 &lt; 1e-19 返 0" 的守卫让它对常数列返回 0.0,
+     * 与 pandas/scipy(bias=False)的 NaN 分歧,所以调用前判方差为 0 直接返 NaN。
      *
      * @param data double[] 输入数据,约束:不能为 null;可含 NaN(默认 SKIP 跳过)
-     * @return double 偏度;正值右偏,负值左偏,0 对称
+     * @return double 偏度;正值右偏,负值左偏,0 对称;常数列返回 NaN
      * @throws IllegalArgumentException 当 data 为 null、空、或全 NaN 时抛出
      */
     public static double skewness(double[] data) {
         double[] clean = filterNaN(data, NaNPolicy.DEFAULT);
         requireNonEmpty(clean);
+        if (isConstantColumn(clean)) return Double.NaN;   // 常数列 → NaN(对齐 pandas/scipy)
         DescriptiveStatistics ds = new DescriptiveStatistics();
         for (double v : clean) ds.addValue(v);
         return ds.getSkewness();
     }
 
     /**
-     * 峰度(Kurtosis,对齐 pandas Series.kurt)。
+     * 峰度(Kurtosis,对齐 pandas Series.kurt,G2 超额峰度口径)。
      * <p>基于 Commons Math {@link DescriptiveStatistics#getKurtosis}(返回超额峰度,与 pandas 一致)。
+     * <p>常数列(样本方差为 0)返回 NaN(理由同 {@link #skewness})。
      *
      * @param data double[] 输入数据,约束:不能为 null;可含 NaN(默认 SKIP 跳过)
-     * @return double 超额峰度;正态分布约为 0
+     * @return double 超额峰度;正态分布约为 0;常数列返回 NaN
      * @throws IllegalArgumentException 当 data 为 null、空、或全 NaN 时抛出
      */
     public static double kurtosis(double[] data) {
         double[] clean = filterNaN(data, NaNPolicy.DEFAULT);
         requireNonEmpty(clean);
+        if (isConstantColumn(clean)) return Double.NaN;   // 常数列 → NaN(对齐 pandas/scipy)
         DescriptiveStatistics ds = new DescriptiveStatistics();
         for (double v : clean) ds.addValue(v);
         return ds.getKurtosis();
+    }
+
+    /**
+     * 是否常数列(样本方差为 0;供 skew/kurt 前置判断)。
+     * <p>n &lt; 2 视为"无方差可言"返回 true(调用方据此返 NaN,与 pandas n&lt;3 返 NaN 口径一致)。
+     *
+     * @param clean double[] 已去 NaN 的数据,约束:非 null 且非空
+     * @return boolean 所有值相等(样本二阶中心矩为 0)时 true;否则 false
+     */
+    private static boolean isConstantColumn(double[] clean) {
+        // 伪代码:n<2 → true;算均值;累加中心距平方 s2;s2==0(精确全等)→ true。
+        // 关键变量变化:m(0→均值)、s2(0→Σ(v-m)²);全等值时 d 恒 0,s2 精确为 0。
+        if (clean.length < 2) return true;
+        double m = 0.0;
+        for (double v : clean) m += v;
+        m /= clean.length;
+        double s2 = 0.0;
+        for (double v : clean) {
+            double d = v - m;
+            s2 += d * d;
+        }
+        return s2 == 0.0;
     }
 
     // ======================== 一次返回全部(describe)========================

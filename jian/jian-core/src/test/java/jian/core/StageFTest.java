@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.within;
 // ┌─ What : 阶段 F 测试 —— astype 9 种 dtype + interpolate + notna/pad/backfill 别名
 // │  Why  : §3.16 路线图"astype 部分支持 + interpolate 缺失"的最终落地
 // │  Who  : 阶段 F 回归
-// │  When : 2026-08-09 阶段 F
+// │  When : jian-core 测试套件常规执行
 // │  Where: jian-core/src/test/java/jian/core/StageFTest.java
 class StageFTest {
 

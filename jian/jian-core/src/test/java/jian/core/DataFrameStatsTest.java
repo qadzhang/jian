@@ -21,7 +21,25 @@ class DataFrameStatsTest {
     void colSum_and_count() {
         DataFrame df = df();
         assertThat(df.colSum("score")).isEqualTo(170.0);  // 90 + 80(skip NaN)
-        assertThat(df.colSum("id")).isEqualTo(6L);  // LONG 列求和经 getDouble
+        // 因为 colSum 返回 double(LONG 列求和也经 getDouble 口径),所以断言用 double 字面量 6.0
+        assertThat(df.colSum("id")).isEqualTo(6.0);
+    }
+
+    @Test
+    void colSum溢出保留Infinity不退化为NaN() {
+        // 因为 Neumaier 末步 sum+comp 在 sum 溢出为 ±Infinity 时会得 NaN(comp 取到反向
+        // Infinity)污染下游,所以溢出时放弃补偿保留 ±Infinity,对齐 pandas(sum 溢出 → inf)
+        DataFrame df = DataFrame.of(Schema.of("v", DType.DOUBLE),
+                new Object[][]{{Double.MAX_VALUE}, {Double.MAX_VALUE}});
+        assertThat(df.colSum("v")).as("溢出 sum 应为 +Infinity").isEqualTo(Double.POSITIVE_INFINITY);
+        assertThat(df.colMean("v")).as("溢出 mean 应为 +Infinity").isEqualTo(Double.POSITIVE_INFINITY);
+        DataFrame neg = DataFrame.of(Schema.of("v", DType.DOUBLE),
+                new Object[][]{{-Double.MAX_VALUE}, {-Double.MAX_VALUE}});
+        assertThat(neg.colSum("v")).as("负向溢出 sum 应为 -Infinity").isEqualTo(Double.NEGATIVE_INFINITY);
+        // 溢出守卫不得破坏正常精度路径(Neumaier 精确值,见 SeriesWindowTest.kahan精度)
+        DataFrame k = DataFrame.of(Schema.of("v", DType.DOUBLE),
+                new Object[][]{{1e16}, {1.0}, {2.0}, {-1e16}});
+        assertThat(k.colSum("v")).isEqualTo(3.0);
     }
 
     @Test

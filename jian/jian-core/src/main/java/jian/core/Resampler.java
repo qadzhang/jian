@@ -6,7 +6,7 @@ import java.util.*;
 // ┌─ What : Resampler —— 时间序列重采样器(对齐 pandas.DataFrame.resample(rule))
 // │  Why  : 时序分析核心能力(下采样:1H → 1D 求和;上采样:1D → 1H 填充);Stats/Missing 覆盖不了的新职能
 // │  Who  : 由 DataFrame.resample(rule) 创建,链式 .sum()/.mean()/.count()/... 聚合
-// │  When : 2026-08-09 阶段 D 落地
+// │  When : DataFrame.resample(tsCol, rule) 创建时
 // │  Where: jian-core/Resampler.java(独立类,与 Frequency + DatetimeIndex 配合)
 // │  How  : 数据走向:
 // │           ① 取 df 的时间索引(经 setIndexDatetime 或 from 列)
@@ -69,23 +69,37 @@ public final class Resampler {
                 idxList.add(i);
             }
         }
-        // 升序排(保持原相对顺序)
-        Integer[] order = idxList.toArray(new Integer[0]);
-        Arrays.sort(order, (a, b) -> tsList.get(idxList.indexOf(a)).compareTo(tsList.get(idxList.indexOf(b))));
-        // 简化:直接按扫到的顺序假设已升序(pandas resample 也要求升序)
-        this.ts = tsList.toArray(new LocalDateTime[0]);
-        this.origIdx = idxList.stream().mapToInt(Integer::intValue).toArray();
-        // 网格:从 ts[0] 到 ts[n-1],每 freq 步一个点
+        // 按时间升序排列(对齐 pandas:即使输入乱序,分桶也按时间索引走)
+        Integer[] pos = new Integer[idxList.size()];
+        for (int i = 0; i < pos.length; i++) pos[i] = i;
+        Arrays.sort(pos, (a, b) -> tsList.get(a).compareTo(tsList.get(b)));  // TimSort 稳定:同时刻保持原相对序
+        LocalDateTime[] sortedTs = new LocalDateTime[pos.length];
+        int[] sortedIdx = new int[pos.length];
+        for (int i = 0; i < pos.length; i++) {
+            sortedTs[i] = tsList.get(pos[i]);
+            sortedIdx[i] = idxList.get(pos[i]);
+        }
+        this.ts = sortedTs;
+        this.origIdx = sortedIdx;
+        // 网格:从 freq 锚点(alignStart)到 ts[n-1],每 freq 步一个点。
+        // 对齐锚点后,1MS 桶边界落在每月 1 日、1ME 落在每月最后一天
+        // (与 pandas 的 MonthBegin/MonthEnd 对齐一致);非月单位 alignStart 原样返回,行为不变。
         if (this.ts.length >= 1) {
-            LocalDateTime start = this.ts[0];
+            LocalDateTime start = this.freq.alignStart(this.ts[0]);
             LocalDateTime end = this.ts[this.ts.length - 1];
             List<LocalDateTime> gridList = new ArrayList<>();
             LocalDateTime cur = start;
             int safety = 0;
-            while (!cur.isAfter(end) && safety < 100000) {
+            // 因为静默截断会丢桶,所以网格超 10 万点(频率相对跨度过小,如 1ns × 多年)
+            // 抛 IAE 让用户改用更粗频率
+            while (!cur.isAfter(end)) {
                 gridList.add(cur);
                 cur = freq.plus(cur);
-                safety++;
+                if (++safety > 100000) {
+                    throw new IllegalArgumentException(
+                        "resample 网格点数超过 100000(频率 " + freq + " 相对时间跨度过小),"
+                        + "请改用更粗的频率或缩小时间范围");
+                }
             }
             // 多加一个 endpoint 用于左闭右开
             gridList.add(cur);
@@ -127,11 +141,26 @@ public final class Resampler {
 
     // ======================== 单列聚合 ========================
 
-    /** 单列 sum 聚合(返回 DataFrame 含 bucket 时间 + 该列聚合值)。 */
+    /**
+     * 单列 sum 聚合(返回 DataFrame 含 bucket 时间 + 该列聚合值)。
+     * @param col String 列名;非 null
+     */
     public DataFrame sum(String col) { return aggregateOne(col, "sum"); }
+    /**
+     * @param col String 列名;非 null
+     */
     public DataFrame mean(String col) { return aggregateOne(col, "mean"); }
+    /**
+     * @param col String 列名;非 null
+     */
     public DataFrame min(String col) { return aggregateOne(col, "min"); }
+    /**
+     * @param col String 列名;非 null
+     */
     public DataFrame max(String col) { return aggregateOne(col, "max"); }
+    /**
+     * @param col String 列名;非 null
+     */
     public DataFrame count(String col) { return aggregateOne(col, "count"); }
 
     // ======================== OHLC(K 线)========================
@@ -159,12 +188,18 @@ public final class Resampler {
             if (bucket == null || bucket.isEmpty()) {
                 row[1] = null; row[2] = null; row[3] = null; row[4] = null;
             } else {
+                // open/high/low 的初始化用 boolean initialized 标志
+                // (`k == 0` 用桶内下标判断 —— 桶首行缺失被 continue 跳过后,后续有效值
+                // 走 else 分支 Math.max(NaN, v) = NaN,high/low 会被 NaN 毒化)。
+                // 跳过缺失后首个有效值才初始化(对齐 pandas resample.ohlc 跳过 NaN);
+                // 全缺失桶四值全 null(NaN → null 输出层转换)。
                 double open = Double.NaN, high = Double.NaN, low = Double.NaN, close = Double.NaN;
+                boolean initialized = false;
                 for (int k = 0; k < bucket.size(); k++) {
                     int rowIdx = bucket.get(k);
                     if (c.isNull(rowIdx) || Double.isNaN(c.getDouble(rowIdx))) continue;
                     double v = c.getDouble(rowIdx);
-                    if (k == 0) { open = v; high = v; low = v; }
+                    if (!initialized) { open = v; high = v; low = v; initialized = true; }
                     else { high = Math.max(high, v); low = Math.min(low, v); }
                     close = v;
                 }
@@ -240,13 +275,13 @@ public final class Resampler {
         return bins;
     }
 
-    /** 全数值列聚合。 */
+    /** 全数值列聚合;BOOL 列也参与聚合(静默排除会让结果少列无提示)。 */
     private DataFrame aggregateAll(String fn) {
         Map<Integer, List<Integer>> bins = computeBins();
         List<String> numCols = new ArrayList<>();
         for (String c : df.columnNames()) {
             DType dt = df.getColumn(c).dtype();
-            if (dt == DType.DOUBLE || dt == DType.LONG || dt == DType.INT) numCols.add(c);
+            if (dt == DType.DOUBLE || dt == DType.LONG || dt == DType.INT || dt == DType.BOOL) numCols.add(c);
         }
         Object[] schParts = new Object[(1 + numCols.size()) * 2];
         schParts[0] = "_bucket_"; schParts[1] = DType.DATETIME;
@@ -282,7 +317,13 @@ public final class Resampler {
         return DataFrame.of(sch, rows.toArray(new Object[0][]));
     }
 
-    /** 在 bucket 上应用聚合 fn 到 Column c。 */
+    /**
+     * 在 bucket 上应用聚合 fn 到 Column c。
+     * 空桶/全缺失桶统一返回 null(表示"该桶无观测,记缺失")。
+     * 这是 jian 的<b>有意设计差异</b>,并非 pandas 行为:
+     * pandas resample().sum()/.count() 空桶默认 min_count=0 返回 0(仅 mean/min/max 为 NaN)。
+     * 该差异已在 doc/00-overview.md §10.16 显式声明;空桶语义由回归测试锁定。
+     */
     private Double bucketAggregate(Column c, List<Integer> bucket, String fn) {
         if (bucket == null || bucket.isEmpty()) return null;
         double[] vals = new double[bucket.size()];

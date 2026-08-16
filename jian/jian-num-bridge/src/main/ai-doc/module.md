@@ -4,6 +4,7 @@
 - **library**: jian
 - **entryClass**: jian.num.bridge.NumStatsProvider
 - **deps**: jian-core(StatsProvider SPI);jian-num(Stats / Correlation,基于 Commons Math 3.6.1)
+- **tests**: 11
 
 ## 摘要
 jian-num → jian-core 的 StatsProvider SPI 桥接实现;引此 jar 后,core 的相关统计从内置简单实现自动升级为 Commons Math 精确实现。
@@ -15,6 +16,7 @@ jian-num → jian-core 的 StatsProvider SPI 桥接实现;引此 jar 后,core �
 - percentile:委托 `Stats.percentile`(Commons Math)
 - skewness / kurtosis:委托 `Stats`(Commons Math 矩法)
 - 引擎名 `jian-num-commons-math`
+- percentile 对齐 SPI 契约的 **R-7** 插值(与 pandas/numpy 'linear' 同口径)
 
 ## 限制
 - 仅升级 core 已定义的 SPI 方法集;新增统计能力请直接用 jian-num

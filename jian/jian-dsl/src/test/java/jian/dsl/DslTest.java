@@ -91,6 +91,24 @@ class DslTest {
     }
 
     @Test
+    void 字符串单引号翻倍转义() {
+        // 转义语义为 ANSI SQL 标准 '' 翻倍
+        // (写入端 \\'、读取端反斜杠吞字符的旧语义在 MySQL 8+ NO_BACKSLASH_ESCAPES 下可注入)
+        DataFrame d2 = DataFrame.of(
+                Schema.of("name", DType.STRING, "age", DType.INT),
+                new Object[][]{{"it's", 30}, {"alice", 25}});
+        // 读取端:'' 解析为字面量单引号
+        assertThat(Dsl.query(d2, "name == 'it''s'").rowCount()).isEqualTo(1);
+        // 写入端:参数绑定含单引号,经 expandParams 转 '' 后能正确匹配
+        assertThat(Dsl.query(d2, "name == ${who}", Params.of("who", "it's")).rowCount()).isEqualTo(1);
+        // 反斜杠保留字面值:'\q' 按两字符 \q 解析,不吞反斜杠
+        DataFrame d3 = DataFrame.of(
+                Schema.of("s", DType.STRING),
+                new Object[][]{{"a\\qb"}});
+        assertThat(Dsl.query(d3, "s == 'a\\qb'").rowCount()).isEqualTo(1);
+    }
+
+    @Test
     void L3_selectWhere() {
         DataFrame df = df();
         DataFrame r = Dsl.sql("SELECT * FROM ${t} WHERE age > 28", df);
@@ -102,9 +120,9 @@ class DslTest {
         DataFrame df = DataFrame.of(
                 Schema.of("dept", DType.STRING, "salary", DType.DOUBLE),
                 new Object[][]{{"RD", 10000.0}, {"PM", 8000.0}, {"RD", 12000.0}, {"PM", 9000.0}});
-        // 注:ORDER BY 用底层列名 salary_mean(groupBy.agg 输出格式);AS alias 仅作注释
-        // v2 会把 alias 应用到结果列名(本 M6 简化实现)
-        DataFrame r = Dsl.sql("SELECT dept, mean(salary) AS avg_sal FROM ${t} GROUP BY dept ORDER BY salary_mean DESC LIMIT 1", df);
+        // AS 别名真重命名(聚合输出 salary_mean → avg_sal),
+        // ORDER BY/HAVING 均可引用别名;旧写法 ORDER BY salary_mean 是 v1 简化期的约定,已废弃
+        DataFrame r = Dsl.sql("SELECT dept, mean(salary) AS avg_sal FROM ${t} GROUP BY dept ORDER BY avg_sal DESC LIMIT 1", df);
         assertThat(r.rowCount()).isEqualTo(1);  // RD 平均 11000 > PM 平均 8500
         assertThat(r.getStringColumn("dept").get(0)).isEqualTo("RD");
     }
@@ -264,7 +282,7 @@ class DslTest {
         assertThat(r.rowCount()).isEqualTo(2);  // v=1, 2
     }
 
-    // ======================== 安全与健壮性修复回归(2026-08-02 审查)========================
+    // ======================== 安全与健壮性回归 =========================
 
     @Test
     void L1_空值函数nvl() {
@@ -292,7 +310,7 @@ class DslTest {
         // 安全回归:like 模式除 % _ 外全部按字面量匹配(防正则注入)
         DataFrame df = DataFrame.of(Schema.of("s", DType.STRING),
                 new Object[][]{{"a.b"}, {"axb"}, {"abc"}});
-        // "a.b" 字面量只匹配 a.b,不匹配 axb(旧实现会被正则 . 通配)
+        // "a.b" 字面量只匹配 a.b,不匹配 axb(字面点不当正则通配符)
         assertThat(Dsl.query(df, "s like 'a.b'").rowCount()).isEqualTo(1);
         // 元字符 ( ) [ ] 等也按字面量
         DataFrame df2 = DataFrame.of(Schema.of("s", DType.STRING),
@@ -340,7 +358,7 @@ class DslTest {
 
     @Test
     void L3_未知数据源报错() {
-        // 子查询里的数据源名无法识别 → 明确报错(不再静默当 this)
+        // 子查询里的数据源名无法识别 → 明确报错(不静默当 this)
         DataFrame df = df();
         assertThatThrownBy(() -> Dsl.sql("SELECT * FROM ${t} WHERE age IN (SELECT age FROM nope)", df))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -350,7 +368,7 @@ class DslTest {
     @Test
     void L3_方言重载占位数校验() {
         DataFrame df = df();
-        // 2 个占位但只给 1 个 df,必须报错(旧实现静默少绑)
+        // 2 个占位但只给 1 个 df,必须报错(不静默少绑)
         assertThatThrownBy(() -> Dsl.sql("SELECT * FROM ${a} JOIN ${b} ON a.id = b.id",
                 SqlDialect.DEFAULT, df))
                 .isInstanceOf(IllegalArgumentException.class)

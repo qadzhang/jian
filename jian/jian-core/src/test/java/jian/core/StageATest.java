@@ -10,7 +10,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 // ┌─ What : 阶段 A 高频实用方法测试 —— 验证 idxmax/idxmin/duplicated/reset/set_index/sample/pipe/applyRow/isin/where/mask/info/selectDtypes
 // │  Why  : 这些方法是 §3.16 路线图移过来的"已实现"项,需要 A 级断言(精确值 + 边界)守护
 // │  Who  : 阶段 A 落地的回归测试
-// │  When : 2026-08-09 阶段 A
+// │  When : jian-core 测试套件常规执行
 // │  Where: jian-core/src/test/java/jian/core/StageATest.java
 class StageATest {
 

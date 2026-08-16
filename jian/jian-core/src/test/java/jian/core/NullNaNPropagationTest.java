@@ -5,12 +5,12 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 // ┌─ What : NullNaNPropagationTest —— NaN/缺失值在全链路传递时不失真的蜕变测试
-// │  Why  : 2026-08-08 改造了 DoubleColumn.get(NaN→不再返回 null)+ 全 Column 子类缺失值统一;
+// │  Why  : DoubleColumn.get 对 NaN 返回 Double.NaN(不是 null)+ 全 Column 子类缺失值统一,
 // │         必须验证:① 内部计算(getDouble 路径)NaN 正确传播 ② get() 返回 NaN 不失真
 // │         ③ getRow/iterRows(IO 边界)缺失行返回 null ④ ffill/bfill 正确识别 NaN 为缺失
 // │         ⑤ merge left join 补 null 保留缺失语义
-// │  Who  : 阶段 NaN-4(蜕变测试验证全链路)
-// │  When : 2026-08-08
+// │  Who  : jian-core 测试套件(surefire)
+// │  When : jian-core 测试套件常规执行
 // │  Where: jian-core/NullNaNPropagationTest.java
 class NullNaNPropagationTest {
 

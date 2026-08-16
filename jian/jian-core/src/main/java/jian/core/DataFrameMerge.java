@@ -18,7 +18,7 @@ import java.util.Set;
 // │         probeSide 逐行查 hash,按 how 决定产出 → 拼接列 + 行 → 新 DataFrame。
 // │         关键变量变化:
 // │           - buildMap:HashMap<key值, 行下标List>;key 多列时拼成 List<Object>;
-// │           - 重名列:左右同名列(非 on)用 suffixes 区分(_x/_y)。
+// │           - 重名列:左右同名列(非 on)**两边都**用 suffixes 区分(_x/_y,对齐 pandas)。
 // │         逻辑路线(四条 how):
 // │           路径 A(inner)→ 仅匹配行产出;
 // │           路径 B(left)→ 左表全保留 + 右表匹配;右不匹配补 null;
@@ -34,6 +34,51 @@ public final class DataFrameMerge {
     private DataFrameMerge() {}
 
     /**
+     * 合并输出列名对(左/右各自的重名处理后列表),由 {@link #mergedNames} 产出。
+     */
+    private record MergedNames(List<String> leftOut, List<String> rightOut) {}
+
+    /**
+     * 计算合并输出的左右列名(因为对齐 pandas,所以重名列两边都加后缀;异名键右键列保留)。
+     *
+     * <p>规则(与 pandas merge 一致):左表列与右表任一列重名且非 join key → {@code name+sx};
+     * 右表列与左表**原名**重名 → {@code name+sy};其余保持原名。
+     * 右表键列仅当与左表键列**同名**时跳过(并入左表键列);异名键(leftOn=k1/rightOn=k2)
+     * 保留输出(pandas 输出 ['k1','k2'] 两列)。
+     * 因为 pandas 输出 [id, v_x, v_y](左右重名列各自加后缀),所以按"以 pandas 为准"统一口径。
+     *
+     * @param leftNames  List 左表列名(有序);非 null
+     * @param rightNames List 右表列名(有序);非 null
+     * @param leftKeys   Set 左表 join key 列名(不参与后缀);非 null
+     * @param rightKeys  Set 右表 join key 列名(与左键同名时整列不输出,异名时保留);非 null
+     * @param suffixes   String[] 后缀对,null/缺省用 ["_x","_y"]
+     * @return MergedNames 左/右处理后的输出列名(右侧已剔除同名键列)
+     */
+    private static MergedNames mergedNames(List<String> leftNames, List<String> rightNames,
+                                           Set<String> leftKeys, Set<String> rightKeys, String[] suffixes) {
+        // 伪代码:
+        //   1. sx/sy 取入参后缀,null/缺省回退 _x/_y
+        //   2. 左侧:非 key 且在右表名集合中 → name+sx,否则原名
+        //   3. 右侧:先剔除 key 列;与左表原名重名 → name+sy,否则原名
+        String sx = (suffixes == null || suffixes.length < 1) ? "_x" : suffixes[0];
+        String sy = (suffixes == null || suffixes.length < 2) ? "_y" : suffixes[1];
+        Set<String> rightNameSet = new HashSet<>(rightNames);
+        Set<String> leftNameSet = new HashSet<>(leftNames);
+        List<String> leftOut = new ArrayList<>(leftNames.size());
+        for (String n : leftNames) {
+            leftOut.add(!leftKeys.contains(n) && rightNameSet.contains(n) ? n + sx : n);
+        }
+        List<String> rightOut = new ArrayList<>();
+        for (String n : rightNames) {
+            // 因为对齐 pandas,所以右键列仅当与左键**同名**时跳过(并入左表键列);
+            // 异名键(leftOn=k1/rightOn=k2)必须保留输出(pandas 输出 ['k1','k2'] 两列)。
+            if (rightKeys.contains(n) && leftKeys.contains(n)) continue;
+            rightOut.add(leftNameSet.contains(n) ? n + sy : n);
+        }
+        return new MergedNames(leftOut, rightOut);
+    }
+
+    /**
      * 关系 join(对齐 pandas.merge)。
      *
      * @param left     DataFrame 左表,非 null
@@ -42,6 +87,9 @@ public final class DataFrameMerge {
      * @param on       String 单列 join 键名(左右同名);非 null;左右不同名请用 5 参版本
      * @param suffixes String[] 重名列后缀,null 用默认 ["_x","_y"]
      * @return DataFrame JOIN 结果:inner=交集;left=左全+右匹配(未匹配补 null);right=右全+左匹配;outer=全并集
+     * @throws OutOfMemoryError 当结果行数 = Σ(左行数×右行数/键基数) 过大时(pandas 同语义同量级:
+     *         自合并 1M 行万键基数可产出 1 亿行 ≈ 10GB;预估内存 ≈ 预期行数 × ~100B,
+     *         超堆请先降低键基数或分段 join)
      */
     public static DataFrame merge(DataFrame left, DataFrame right, String how, String on, String[] suffixes) {
         return merge(left, right, how, new String[]{on}, new String[]{on}, suffixes);
@@ -61,7 +109,8 @@ public final class DataFrameMerge {
      */
     public static DataFrame merge(DataFrame left, DataFrame right, String how,
                                   String[] leftOn, String[] rightOn, String[] suffixes) {
-        // BUG #9 修复:列存在性友好校验(替代 dtypes().get(-1) 的 IOOBE)
+        // 列存在性友好校验:因为入口处报"哪张表缺哪列"比走到底层 dtypes().get(-1)
+        // 的 IOOBE 更可定位,所以 join 前先逐列校验
         for (String c : leftOn) {
             if (left.columnIndex(c) < 0)
                 throw new IllegalArgumentException("左表无此列:" + c + ",左表列:" + left.columnNames());
@@ -72,12 +121,13 @@ public final class DataFrameMerge {
         }
 
         // ── fast path:单列数值 key 的特化路径(覆盖 80%+ 实际 JOIN,提速 9-17 倍) ──
-        // BUG #2 修复:必须同时满足"key 列无 null"(null 在 fast path 会错误匹配 0L/NaN,
-        //   通用路径用 "<NA>" 字符串作 key 正确归组,见规范 §9)
-        // AI agent2 BUG 1 修复:fast path 要求左右 key **完全同 dtype**。
-        //   原条件允许 INT×LONG 混合走 fast path(inner/left 按数值匹配对),
-        //   但 right/outer 落回 generic 后 Integer.equals(Long)==false 全部不匹配
-        //   ——同一对表换 how 参数结果天差地别。强制同 dtype 让所有 how 都走同一路径。
+        // 因为 key 列含 null 时,null 在 fast path 会错误匹配 0L/NaN
+        //   (通用路径用私有哨兵 NA_KEY 归组,防 "<NA>" 字面量撞车),
+        //   所以 fast path 必须同时满足"key 列无 null"。
+        // 因为 fast path 要求左右 key **完全同 dtype**:INT×LONG 混合走 fast path 时
+        //   inner/left 按数值匹配对,但 right/outer 落回 generic 后
+        //   Integer.equals(Long)==false 全部不匹配——同一对表换 how 参数结果天差地别,
+        //   所以强制同 dtype 让所有 how 都走同一路径。
         if (leftOn.length == 1 && rightOn.length == 1) {
             Column lKeyCol = left.getColumn(leftOn[0]);
             Column rKeyCol = right.getColumn(rightOn[0]);
@@ -111,8 +161,8 @@ public final class DataFrameMerge {
             return mergeGeneric(left, right, how, new String[]{leftKeyCol}, new String[]{rightKeyCol}, suffixes);
         }
         // 取 primitive key 数组(int 升位为 long)
-        long[] lKeys = toLongArray(left.getColumn(leftKeyCol));
-        long[] rKeys = toLongArray(right.getColumn(rightKeyCol));
+        long[] lKeys = DataFrameTypes.columnToLongArray(left.getColumn(leftKeyCol));
+        long[] rKeys = DataFrameTypes.columnToLongArray(right.getColumn(rightKeyCol));
 
         // 右表入桶
         ColumnarHashMap map = ColumnarHashMap.buildFromLong(rKeys);
@@ -122,25 +172,21 @@ public final class DataFrameMerge {
                 ? Math.min(left.rowCount(), right.rowCount()) * 2 + 16
                 : left.rowCount() + 16;
 
-        // 输出列:左表全部 + 右表(去 rightKeyCol)的重名加 _y 后缀
-        String sy = (suffixes == null || suffixes.length < 2) ? "_y" : suffixes[1];
-        java.util.List<String> rightOutNames = new ArrayList<>();
-        java.util.Set<String> leftNameSet = new HashSet<>(left.columnNames());
-        for (String n : right.columnNames()) {
-            if (n.equals(rightKeyCol)) continue;  // 跳过 join key
-            rightOutNames.add(leftNameSet.contains(n) ? n + sy : n);
-        }
-        java.util.List<String> outNames = new ArrayList<>(left.columnNames());
-        outNames.addAll(rightOutNames);
+        // 输出列名(以 pandas 为准:重名列**两边都加**后缀 v_x/v_y)
+        MergedNames names = mergedNames(left.columnNames(), right.columnNames(),
+                java.util.Set.of(leftKeyCol), java.util.Set.of(rightKeyCol), suffixes);
+        java.util.List<String> outNames = new ArrayList<>(names.leftOut());
+        outNames.addAll(names.rightOut());
         int nLeftCols = left.columnCount();
-        int nRightOutCols = rightOutNames.size();
+        int nRightOutCols = names.rightOut().size();
         int nOutCols = nLeftCols + nRightOutCols;
 
-        // 收右表"非 key 列"的列下标(用于取数)
+        // 收右表输出列下标(用于取数);同名键跳过、异名键保留(与 mergedNames 条件一致)
+        boolean sameKeyName = leftKeyCol.equals(rightKeyCol);
         int[] rightOutIdx = new int[nRightOutCols];
         int rc = 0;
         for (int c = 0; c < right.columnCount(); c++) {
-            if (right.columnNames().get(c).equals(rightKeyCol)) continue;
+            if (sameKeyName && right.columnNames().get(c).equals(rightKeyCol)) continue;
             rightOutIdx[rc++] = c;
         }
 
@@ -170,12 +216,12 @@ public final class DataFrameMerge {
             }
         }
 
-        // 计算每输出列的源 dtype(BUG #1 修复:按源 dtype 决定输出 primitive 类型)
+        // 计算每输出列的源 dtype(按源 dtype 决定输出 primitive 类型)
         DType[] outDtypes = new DType[nOutCols];
         for (int c = 0; c < nLeftCols; c++) outDtypes[c] = left.dtypes().get(c);
         for (int c = 0; c < nRightOutCols; c++) outDtypes[nLeftCols + c] = right.dtypes().get(rightOutIdx[c]);
 
-        // AI agent2 BUG 3 修复:用 toColumn 保留 dtype + nullMask(不再降级 OBJECT)
+        // 用 toColumn 保留 dtype + nullMask(不降级 OBJECT)
         java.util.List<Column> outCols = new ArrayList<>(nOutCols);
         for (int c = 0; c < nOutCols; c++) {
             outCols.add(toColumn(outNames.get(c), colBuilders[c], outDtypes[c]));
@@ -193,22 +239,19 @@ public final class DataFrameMerge {
         double[] rKeys = ((DoubleColumn) right.getColumn(rightKeyCol)).dataInPlace();
         ColumnarHashMap map = ColumnarHashMap.buildFromDouble(rKeys);
 
-        String sy = (suffixes == null || suffixes.length < 2) ? "_y" : suffixes[1];
-        java.util.List<String> rightOutNames = new ArrayList<>();
-        java.util.Set<String> leftNameSet = new HashSet<>(left.columnNames());
-        for (String n : right.columnNames()) {
-            if (n.equals(rightKeyCol)) continue;
-            rightOutNames.add(leftNameSet.contains(n) ? n + sy : n);
-        }
-        java.util.List<String> outNames = new ArrayList<>(left.columnNames());
-        outNames.addAll(rightOutNames);
+        MergedNames names = mergedNames(left.columnNames(), right.columnNames(),
+                java.util.Set.of(leftKeyCol), java.util.Set.of(rightKeyCol), suffixes);
+        java.util.List<String> outNames = new ArrayList<>(names.leftOut());
+        outNames.addAll(names.rightOut());
         int nLeftCols = left.columnCount();
-        int nRightOutCols = rightOutNames.size();
+        int nRightOutCols = names.rightOut().size();
         int nOutCols = nLeftCols + nRightOutCols;
+        // 同名键跳过、异名键保留(与 mergedNames 条件一致)
+        boolean sameKeyName2 = leftKeyCol.equals(rightKeyCol);
         int[] rightOutIdx = new int[nRightOutCols];
         int rc = 0;
         for (int c = 0; c < right.columnCount(); c++) {
-            if (right.columnNames().get(c).equals(rightKeyCol)) continue;
+            if (sameKeyName2 && right.columnNames().get(c).equals(rightKeyCol)) continue;
             rightOutIdx[rc++] = c;
         }
         int estimated = how.equals("inner")
@@ -235,12 +278,12 @@ public final class DataFrameMerge {
             }
         }
 
-        // 计算每输出列的源 dtype(BUG #1 修复)
+        // 计算每输出列的源 dtype(按源 dtype 决定输出 primitive 类型)
         DType[] outDtypes = new DType[nOutCols];
         for (int c = 0; c < nLeftCols; c++) outDtypes[c] = left.dtypes().get(c);
         for (int c = 0; c < nRightOutCols; c++) outDtypes[nLeftCols + c] = right.dtypes().get(rightOutIdx[c]);
 
-        // AI agent2 BUG 3 修复:用 toColumn 保留 dtype + nullMask
+        // 用 toColumn 保留 dtype + nullMask(不降级 OBJECT)
         java.util.List<Column> outCols = new ArrayList<>(nOutCols);
         for (int c = 0; c < nOutCols; c++) {
             outCols.add(toColumn(outNames.get(c), colBuilders[c], outDtypes[c]));
@@ -249,25 +292,14 @@ public final class DataFrameMerge {
     }
 
     /** 取 long 或 int 列的 long[](int 升位)。 */
-    private static long[] toLongArray(Column col) {
-        if (col instanceof LongColumn lc) return lc.dataInPlace();
-        if (col instanceof IntColumn ic) {
-            int[] src = ic.dataInPlace();
-            long[] out = new long[src.length];
-            for (int i = 0; i < src.length; i++) out[i] = src[i];
-            return out;
-        }
-        throw new IllegalStateException("toLongArray 仅支持 LONG/INT,实际 " + col.dtype());
-    }
 
 
     /**
      * 把 List<Object> 转为 Column(按源列 dtype 派发),正确处理 null:
      * 数值/布尔列带 null 时,**保留 dtype 并附 nullMask**(不降级 OBJECT)。
      *
-     * <p>这是 AI agent2 审查发现的 BUG 3 的修复:原 toPrimitiveArray 在 hasNull 时
-     * 直接退化为 Object[],导致下游 getLong 等抛 ClassCastException。
-     * 正确做法是返回带 nullMask 的 LongColumn/DoubleColumn/IntColumn/BoolColumn。
+     * <p>因为把带 null 的数值/布尔列直接退化为 Object[] 会导致下游 getLong 等抛
+     * ClassCastException,所以返回带 nullMask 的 LongColumn/DoubleColumn/IntColumn/BoolColumn。
      *
      * <p>伪代码:
      *   1. 扫一遍找 null,记录 nullMask;
@@ -325,7 +357,7 @@ public final class DataFrameMerge {
                 return StringColumn.wrapNoCopy(name, arr);
             }
             case DATE: {
-                // AI agent2 BUG A 修复:保留 DATE 类型,不走 default 降级 OBJECT
+                // 保留 DATE 类型,不走 default 降级 OBJECT
                 java.time.LocalDate[] arr = new java.time.LocalDate[n];
                 for (int i = 0; i < n; i++) arr[i] = (java.time.LocalDate) list.get(i);
                 return DateColumn.wrapNoCopy(name, arr);
@@ -336,12 +368,20 @@ public final class DataFrameMerge {
                 return DateTimeColumn.wrapNoCopy(name, arr);
             }
             case CATEGORY: {
-                // Category 重构成 String 列(简化:不再保留 category 编码;若需严格保留,需额外 API)
-                // 之所以这样选:CategoryColumn 的 codes/categories 不易从 List<Object> 反推;
-                // 而把它降级为 STRING 比 OBJECT 更接近原语义,且不丢值
-                String[] arr = new String[n];
-                for (int i = 0; i < n; i++) arr[i] = list.get(i) == null ? null : String.valueOf(list.get(i));
-                return StringColumn.wrapNoCopy(name, arr);
+                // 因为降级 STRING 会丢类别元数据,所以从 list 重建 CategoryColumn。
+                // 从 list 唯一值建 categories,codes 按下标;缺失行码 -1
+                java.util.LinkedHashMap<Object, Integer> catIdx = new java.util.LinkedHashMap<>();
+                for (Object v : list) if (v != null && !catIdx.containsKey(v)) catIdx.put(v, catIdx.size());
+                String[] categories = new String[catIdx.size()];
+                for (java.util.Map.Entry<Object, Integer> e : catIdx.entrySet()) {
+                    categories[e.getValue()] = String.valueOf(e.getKey());
+                }
+                int[] codes = new int[n];
+                for (int i = 0; i < n; i++) {
+                    Object v = list.get(i);
+                    codes[i] = v == null ? -1 : catIdx.get(v);
+                }
+                return CategoryColumn.wrapNoCopy(name, codes, categories);
             }
             default: {
                 Object[] arr = list.toArray();
@@ -352,105 +392,227 @@ public final class DataFrameMerge {
 
     // ======================== 通用路径(多列 key / 字符串 / right / outer)========================
 
+    /**
+     * null 键的<b>私有哨兵对象</b>。
+     * 因为用字符串 {@code "<NA>"} 作 null 键时,键列里恰有字面量 {@code "<NA>"}
+     * 会与 null 键合并匹配(pandas 中两者是不同的键),所以用外界拿不到的单例,
+     * 任何用户字符串都不可能与 null 键相撞。仅作 map 键使用,不进入输出数据。
+     */
+    private static final Object NA_KEY = new Object();
+
+    // ┌─ What : mergeGeneric —— merge 通用路径(多列 key / 字符串 / right / outer)
+    // │  Why  : fast path 只覆盖单列同 dtype 数值键的 inner/left,其余全走这里
+    // │  Who  : DataFrameMerge.merge 分发;fast path(mergeSingleLongKey/DoubleKey)对 right/outer 委托
+    // │  When : 任意 merge 调用(fast 条件不满足时)
+    // │  Where: jian-core/DataFrameMerge.java
+    // │  How  : 数据走向:左右表 → 按 how 选行驱动策略产出 (lIdx, rIdx) 配对 → buildRow 拼行
+    // │           → 按源列 dtype 构造输出列 → DataFrame。
+    // │         关键变量变化:
+    // │           - outRows:List<Object[]> 输出行(lIdx/rIdx=-1 表示该侧补 null);
+    // │           - rightMap/leftGroups/rightGroups:归一键元组 → 行下标列表。
+    // │         逻辑路线(按 pandas 1.5.3 实测对齐行序):
+    // │           路径 A(inner/left)→ 左表驱动,pandas 文档"preserve the order of the left keys";
+    // │           路径 B(right)→ 右表序驱动(等价 pandas 的 swap 后 left join):每个右行,
+    // │             命中则按左行序展开配对,未命中补左 null —— 例 left k=[2,1]/right k=[1,2]
+    // │             输出键序 [1,2];
+    // │           路径 C(outer)→ 按键分组输出,键序 = 首次出现序(先扫左表键、再扫右表未见的键),
+    // │             组内两表都有的键 → 左行×右行笛卡尔(左行序优先)。
+    // │             实测锚点:pandas 1.5.3(sort=False 默认)left k=[3,1]/right k=[2,1] → [3,1,2];
+    // │             users/depts outer → [RD,RD,PM,ENG,MGT](非字典序,是首现键序)。
     private static DataFrame mergeGeneric(DataFrame left, DataFrame right, String how,
                                           String[] leftOn, String[] rightOn, String[] suffixes) {
         if (leftOn.length != rightOn.length) {
             throw new IllegalArgumentException("leftOn 长度 " + leftOn.length + " != rightOn 长度 " + rightOn.length);
         }
-        String sx = (suffixes == null || suffixes.length < 1) ? "_x" : suffixes[0];
-        String sy = (suffixes == null || suffixes.length < 2) ? "_y" : suffixes[1];
 
-        // 1. 构造输出列名:左表全部 + 右表(去 on 列)的重名处理
-        List<String> outNames = new ArrayList<>();
-        outNames.addAll(left.columnNames());
-        Set<String> leftNameSet = new HashSet<>(left.columnNames());
-        Set<String> leftOnSet = new HashSet<>(Arrays.asList(leftOn));
-        List<String> rightExtraNames = new ArrayList<>();
-        for (String name : right.columnNames()) {
-            // 右表的 rightOn 对应列不重复输出(与左表 leftOn 已对齐)
-            int idxInRightOn = indexOf(rightOn, name);
-            if (idxInRightOn >= 0) continue;  // join 键列跳过(用左表的 leftOn)
-            String finalName = leftNameSet.contains(name) ? name + sy : name;
-            rightExtraNames.add(finalName);
-            outNames.add(finalName);
-        }
-        // 左表重名列加 _x 后缀(对齐 pandas:左右都重名时,两边都改)
-        // 简化:仅给右表加后缀(左表保持原名),M2 够用
+        // 1. 构造输出列名(以 pandas 为准:重名列两边都加后缀)
+        MergedNames names = mergedNames(left.columnNames(), right.columnNames(),
+                new HashSet<>(Arrays.asList(leftOn)), new HashSet<>(Arrays.asList(rightOn)), suffixes);
+        List<String> outNames = new ArrayList<>(names.leftOut());
+        List<String> rightExtraNames = names.rightOut();
+        outNames.addAll(rightExtraNames);
 
-        // 2. 在右表建 hash:rightKeyTuple → 行下标列表(buildSide=right)
-        Map<List<Object>, List<Integer>> rightMap = new HashMap<>();
-        for (int r = 0; r < right.rowCount(); r++) {
-            List<Object> key = new ArrayList<>(rightOn.length);
-            for (String col : rightOn) key.add(normKey(right.get(r, col)));
-            rightMap.computeIfAbsent(key, k -> new ArrayList<>()).add(r);
-        }
-
-        // 3. 遍历左表,inner/left 产出;记录右表哪些行被命中(供 right/outer 末尾补)
-        Set<Integer> rightHit = new HashSet<>();
+        // 2. 行配对(按 how 选驱动策略,行序语义见方法头 How 的三条路径)
         List<Object[]> outRows = new ArrayList<>();
-        for (int l = 0; l < left.rowCount(); l++) {
-            List<Object> lkey = new ArrayList<>(leftOn.length);
-            for (String col : leftOn) lkey.add(normKey(left.get(l, col)));
-            List<Integer> matches = rightMap.get(lkey);
-            if (matches == null || matches.isEmpty()) {
-                if (how.equals("left") || how.equals("outer")) {
-                    outRows.add(buildRow(left, right, l, -1, rightExtraNames, leftOn, rightOn));
-                }
-            } else {
-                for (int rIdx : matches) {
-                    rightHit.add(rIdx);
-                    outRows.add(buildRow(left, right, l, rIdx, rightExtraNames, leftOn, rightOn));
+        if (how.equals("right")) {
+            // 路径 B(right):右表序驱动 —— 对每个右行,左表命中(按左行序)展开,未命中补左 null
+            Map<List<Object>, List<Integer>> leftMap = new HashMap<>();
+            for (int l = 0; l < left.rowCount(); l++) {
+                leftMap.computeIfAbsent(keyTuple(left, l, leftOn), k -> new ArrayList<>()).add(l);
+            }
+            for (int r = 0; r < right.rowCount(); r++) {
+                List<Integer> matches = leftMap.get(keyTuple(right, r, rightOn));
+                if (matches == null || matches.isEmpty()) {
+                    outRows.add(buildRow(left, right, -1, r, rightExtraNames, leftOn, rightOn));
+                } else {
+                    for (int lIdx : matches) {
+                        outRows.add(buildRow(left, right, lIdx, r, rightExtraNames, leftOn, rightOn));
+                    }
                 }
             }
-        }
-        // 4. right/outer:补右表未匹配行
-        if (how.equals("right") || how.equals("outer")) {
+        } else if (how.equals("outer")) {
+            // 路径 C(outer):按键分组、首现键序(先左后右)输出
+            LinkedHashMap<List<Object>, List<Integer>> leftGroups = new LinkedHashMap<>();
+            for (int l = 0; l < left.rowCount(); l++) {
+                leftGroups.computeIfAbsent(keyTuple(left, l, leftOn), k -> new ArrayList<>()).add(l);
+            }
+            LinkedHashMap<List<Object>, List<Integer>> rightGroups = new LinkedHashMap<>();
             for (int r = 0; r < right.rowCount(); r++) {
-                if (rightHit.contains(r)) continue;
-                outRows.add(buildRow(left, right, -1, r, rightExtraNames, leftOn, rightOn));
+                rightGroups.computeIfAbsent(keyTuple(right, r, rightOn), k -> new ArrayList<>()).add(r);
+            }
+            // 左表键序优先:命中的键出左×右笛卡尔(左行序优先),仅左表的键出左行
+            for (Map.Entry<List<Object>, List<Integer>> le : leftGroups.entrySet()) {
+                List<Integer> rs = rightGroups.get(le.getKey());
+                if (rs == null) {
+                    for (int l : le.getValue()) {
+                        outRows.add(buildRow(left, right, l, -1, rightExtraNames, leftOn, rightOn));
+                    }
+                } else {
+                    for (int l : le.getValue()) {
+                        for (int r : rs) {
+                            outRows.add(buildRow(left, right, l, r, rightExtraNames, leftOn, rightOn));
+                        }
+                    }
+                }
+            }
+            // 仅右表的键(首现序)追加在后
+            for (Map.Entry<List<Object>, List<Integer>> re : rightGroups.entrySet()) {
+                if (!leftGroups.containsKey(re.getKey())) {
+                    for (int r : re.getValue()) {
+                        outRows.add(buildRow(left, right, -1, r, rightExtraNames, leftOn, rightOn));
+                    }
+                }
+            }
+        } else {
+            // 路径 A(inner/left):左表驱动(pandas 同序)
+            Map<List<Object>, List<Integer>> rightMap = new HashMap<>();
+            for (int r = 0; r < right.rowCount(); r++) {
+                rightMap.computeIfAbsent(keyTuple(right, r, rightOn), k -> new ArrayList<>()).add(r);
+            }
+            for (int l = 0; l < left.rowCount(); l++) {
+                List<Integer> matches = rightMap.get(keyTuple(left, l, leftOn));
+                if (matches == null || matches.isEmpty()) {
+                    if (how.equals("left")) {
+                        outRows.add(buildRow(left, right, l, -1, rightExtraNames, leftOn, rightOn));
+                    }
+                } else {
+                    for (int rIdx : matches) {
+                        outRows.add(buildRow(left, right, l, rIdx, rightExtraNames, leftOn, rightOn));
+                    }
+                }
             }
         }
 
-        // 5. 推断 schema(用 left+right 全部数据推断)
-        Object[][] data = outRows.toArray(new Object[0][]);
-        Schema schema = Schema.infer(outNames, data);
-        return DataFrame.of(schema, data);
+        // 3. 因为 Schema.infer 对空数据(0 行)与全 null 列一律给 STRING,会导致
+        //    "字符串键 inner 零匹配 → 全列 STRING""left join 右表全 null 列 → STRING",
+        //    与 fast path 的 toColumn 口径不一致(pandas 两种情况都保留原 dtype),
+        //    所以输出列按源列 dtype 构造、不用 Schema.infer;空结果也保留 dtype。
+        return buildOutputDtyped(outNames, left, right, leftOn, rightOn, outRows);
     }
 
-    /** 构造输出行:左表 l 行 + 右表 r 行(rIdx=-1 表示右表补 null,lIdx=-1 反之)。 */
+    /** 归一键元组:df 第 r 行各 on 列的值经 {@link #normKey} 归一(供 mergeGeneric 分组/查找)。 */
+    private static List<Object> keyTuple(DataFrame df, int r, String[] on) {
+        List<Object> key = new ArrayList<>(on.length);
+        for (String col : on) key.add(normKey(df.get(r, col)));
+        return key;
+    }
+
+    // ┌─ What : buildOutputDtyped —— generic merge 的输出列构造(按源列 dtype)
+    // │  Why  : Schema.infer 会把 0 行/全 null 列推成 STRING,同输入走 fast path 却保 dtype,
+    // │         fast/generic 口径分裂;复用 fast path 的 toColumn(LONG/INT/BOOL 带 nullMask,
+    // │         DOUBLE 用 NaN,DATE/DATETIME/CATEGORY 保留,OBJECT 兜底)统一两路径行为
+    // │  Who  : mergeGeneric 收尾调用
+    // │  How  : 数据走向:outRows(行式)→ 逐输出列转 List<Object>(列式)→ toColumn(name, vals, 源dtype)
+    // │           → DataFrame.ofColumnsDirect。
+    // │         逻辑路线:左段 nLeftCols 列按 left.dtypes;右段(同名键已跳过)按 right.dtypes
+    // │           对应列(右段列下标回算规则与 mergedNames/buildRow 一致)。
+    private static DataFrame buildOutputDtyped(List<String> outNames, DataFrame left, DataFrame right,
+                                               String[] leftOn, String[] rightOn, List<Object[]> outRows) {
+        int n = outRows.size();
+        int nLeftCols = left.columnCount();
+        int nRightOutCols = outNames.size() - nLeftCols;
+        // 右表输出列下标回算(同名键跳过、异名键保留,与 mergedNames/buildRow 一致)
+        Set<String> rightOnSet = new HashSet<>(Arrays.asList(rightOn));
+        Set<String> leftOnSet = new HashSet<>(Arrays.asList(leftOn));
+        int[] rightOutIdx = new int[nRightOutCols];
+        int rc = 0;
+        for (int c = 0; c < right.columnCount(); c++) {
+            String name = right.columnNames().get(c);
+            if (rightOnSet.contains(name) && leftOnSet.contains(name)) continue;
+            rightOutIdx[rc++] = c;
+        }
+        // 逐输出列:行式 → 列式 List → toColumn(保留源 dtype + nullMask)
+        List<Column> outCols = new ArrayList<>(outNames.size());
+        for (int c = 0; c < nLeftCols; c++) {
+            List<Object> vals = new ArrayList<>(n);
+            for (Object[] row : outRows) vals.add(row[c]);
+            outCols.add(toColumn(outNames.get(c), vals, left.dtypes().get(c)));
+        }
+        for (int j = 0; j < nRightOutCols; j++) {
+            List<Object> vals = new ArrayList<>(n);
+            for (Object[] row : outRows) vals.add(row[nLeftCols + j]);
+            outCols.add(toColumn(outNames.get(nLeftCols + j), vals, right.dtypes().get(rightOutIdx[j])));
+        }
+        return DataFrame.ofColumnsDirect(outCols);
+    }
+
+    /**
+     * 构造输出行:左表 l 行 + 右表 r 行(rIdx=-1 表示右表补 null,lIdx=-1 反之)。
+     *
+     * <p>因为 right/outer join 中右表独有行(lIdx&lt;0)的 <b>join 键列</b> 若填 null
+     * 会丢失右表 key(pandas merge(right) 对右表独有行输出右表的 key,
+     * pandas merge(outer) 输出两表 key 并集),所以必须保留右表 rightOn 的值,不能填 null。
+     * 例如:左表 id∈{1,2,3},右表 id∈{2,3,4},merge(right) 应输出 id=4 行(键列=4)。
+     */
     private static Object[] buildRow(DataFrame left, DataFrame right, int lIdx, int rIdx,
                                      List<String> rightExtraNames, String[] leftOn, String[] rightOn) {
         Object[] row = new Object[left.columnCount() + rightExtraNames.size()];
         // 左表部分
         for (int c = 0; c < left.columnCount(); c++) {
-            row[c] = lIdx < 0 ? null : left.get(lIdx, c);
+            if (lIdx < 0) {
+                // 右表独有行(right/outer):若该列是 join 键列,取右表 rightOn 对应值(对齐 pandas)。
+                // 因为键列合一仅发生在**同名键**(唯一输出列取右表 key),所以该回填仅适用同名键;
+                // 异名键(k1/k2)左右键各自成列,右表独有行的左键列按 pandas 置 null
+                //(pandas outer 实测 k1=NaN/k2=4,不回填),右键值由右侧部分自行输出。
+                String colName = left.columnNames().get(c);
+                int onPos = indexOf(leftOn, colName);
+                row[c] = (onPos >= 0 && rightOn[onPos].equals(colName))
+                        ? right.get(rIdx, rightOn[onPos]) : null;
+            } else {
+                row[c] = left.get(lIdx, c);
+            }
         }
-        // 右表部分(跳过 rightOn 列,因为已在左表 leftOn 对齐)
+        // 右表部分:同名键跳过(已在左表 leftOn 对齐)、异名键保留(对齐 pandas 输出 ['k1','k2'])
         Set<String> rightOnSet = new HashSet<>(Arrays.asList(rightOn));
+        Set<String> leftOnSet = new HashSet<>(Arrays.asList(leftOn));
         int cursor = left.columnCount();
         for (String name : right.columnNames()) {
-            if (rightOnSet.contains(name)) continue;
+            if (rightOnSet.contains(name) && leftOnSet.contains(name)) continue;
             row[cursor++] = rIdx < 0 ? null : right.get(rIdx, name);
         }
         return row;
     }
 
     /**
-     * null 统一成 "<NA>" 作 key,避免 null key 漏匹配。
+     * 键归一:null → 私有哨兵 {@link #NA_KEY}(因为 "<NA>" 字符串会与键列里
+     * 真实的 "&lt;NA&gt;" 字面量合并);数值按数值等价规范化;±0.0 归一为 +0.0。
      *
-     * <p>AI agent2 BUG 1 修复:数值类型按数值等价规范化(Integer/Long/Short/Byte 统一成 Long,
-     * Float/Double 统一成 Double)。否则 INT×LONG 混合 key 会因 Integer.equals(Long)=false
-     * 全部不匹配,违背 pandas 数值等价语义。
+     * <p>因为 INT×LONG 混合 key 会因 Integer.equals(Long)=false 全部不匹配
+     * (违背 pandas 数值等价语义),所以数值类型按数值等价规范化
+     * (Integer/Long/Short/Byte 统一成 Long,Float/Double 统一成 Double)。
      */
     private static Object normKey(Object v) {
-        if (v == null) return "<NA>";
+        if (v == null) return NA_KEY;   // 私有哨兵,防 "<NA>" 字面量撞车
         if (v instanceof Number n) {
             // 整数家族统一 Long,浮点家族统一 Double,避免 Integer.equals(Long)=false
             if (v instanceof Long || v instanceof Integer || v instanceof Short || v instanceof Byte) {
                 return n.longValue();
             }
             if (v instanceof Double || v instanceof Float) {
-                return n.doubleValue();
+                // Float → doubleValue 无损(Float 本身 7 位有效数字,double 完全容纳)。
+                // ±0.0 归一到 +0.0(对齐 pandas merge 的数值等价语义)
+                double d = n.doubleValue();
+                return d == 0.0 ? 0.0 : d;
             }
         }
         return v;
@@ -479,18 +641,31 @@ public final class DataFrameMerge {
             List<String> names = df.columnNames();
             List<DType> dtypes = df.dtypes();
             for (int i = 0; i < names.size(); i++) {
-                nameDtype.putIfAbsent(names.get(i), dtypes.get(i));
+                DType prev = nameDtype.putIfAbsent(names.get(i), dtypes.get(i));
+                // 因为同名列 dtype 冲突(如 INT vs STRING)时若首见 dtype 胜出,
+                // 另一侧字符串值进数值列会触发裸 NFE(pandas concat 保 object),
+                // 所以 dtype 冲突 → 升 OBJECT
+                if (prev != null && prev != dtypes.get(i)) {
+                    nameDtype.put(names.get(i), DType.OBJECT);
+                }
             }
         }
         // 收集所有行,按列名取值(缺失补 null)
+        // 因为**每行每列**都调 df.columnIndex(name)(字符串哈希查找)时,
+        // 1M 行 × 列数 次查找会成为 concat 的主要热点,所以按 df 预计算
+        // "并集列位 → 该 df 列下标" 映射,行循环内纯数组访问。
+        List<String> union = new ArrayList<>(nameDtype.keySet());
         List<Object[]> rows = new ArrayList<>();
         for (DataFrame df : dfs) {
+            int[] colMap = new int[union.size()];
+            for (int c = 0; c < union.size(); c++) {
+                colMap[c] = df.columnIndex(union.get(c));
+            }
             for (int r = 0; r < df.rowCount(); r++) {
-                Object[] row = new Object[nameDtype.size()];
-                int c = 0;
-                for (String name : nameDtype.keySet()) {
-                    int idx = df.columnIndex(name);
-                    row[c++] = idx < 0 ? null : df.get(r, idx);
+                Object[] row = new Object[union.size()];
+                for (int c = 0; c < union.size(); c++) {
+                    int idx = colMap[c];
+                    row[c] = idx < 0 ? null : df.get(r, idx);
                 }
                 rows.add(row);
             }
@@ -536,7 +711,7 @@ public final class DataFrameMerge {
         return -1;
     }
 
-    // ======================== 阶段 C 合并扩展(2026-08-09;按 §3.1.1.1 内聚到此类)========================
+    // ======================== 合并扩展(按 §3.1.1.1 内聚到此类)========================
 
     /**
      * 索引 join(对齐 pandas DataFrame.join)。简化实现:委托 merge(how,left,on)。
@@ -551,7 +726,12 @@ public final class DataFrameMerge {
         return merge(left, right, how == null ? "left" : how, on, new String[]{"_x", "_y"});
     }
 
-    /** join 便捷重载:how=left。 */
+    /**
+     * join 便捷重载:how=left。
+     * @param left DataFrame 左表;非 null
+     * @param right DataFrame 右表;非 null
+     * @param on String 连接键列名;非 null
+     */
     public static DataFrame join(DataFrame left, DataFrame right, String on) {
         return join(left, right, on, "left");
     }
@@ -568,7 +748,7 @@ public final class DataFrameMerge {
         int nl = left.rowCount(), nr = right.rowCount();
         left.getColumn(on);
         right.getColumn(on);
-        // 审查修复(2026-08-09):过滤 right 表中 on 列为 null 的行(不参与 asof 匹配)
+        // 过滤 right 表中 on 列为 null 的行(不参与 asof 匹配)
         java.util.List<Integer> validRightIdx = new java.util.ArrayList<>();
         for (int i = 0; i < nr; i++) {
             if (right.get(i, on) != null) validRightIdx.add(i);
@@ -614,22 +794,25 @@ public final class DataFrameMerge {
 
     /** merge_asof 比较器:Number / LocalDateTime / String。
      *
-     * <p>L8 修复(2026-08-09,与 AI agent2 第二轮审查共识):
-     * 原 {@code if (a instanceof Comparable ca) return ca.compareTo(b);} 在 a/b 跨类型时
-     * (如 String vs Number)抛 {@link ClassCastException}(String.compareTo(Number) 不合法)。
-     * 现改为三段式:① 同型 Number → 数值比;② 严格同型且 Comparable → compareTo(b 必同型,不 CCE);
-     * ③ 混型/不可比 → String 字典序兜底(确定性,不抛)。
-     * 不全降 String 字典序的原因:LocalDateTime / BigDecimal 等的语义比较需保留 compareTo。
+     * <p>因为直接 {@code if (a instanceof Comparable ca) return ca.compareTo(b);} 在 a/b 跨类型时
+     * (如 String vs Number)会抛 {@link ClassCastException}(String.compareTo(Number) 不合法),
+     * 所以采用三段式:① 同型 Number → 数值比;② 严格同型且 Comparable → compareTo(b 必同型,不 CCE);
+     * ③ 混型/不可比 → <b>抛 IllegalArgumentException</b>(对齐 pandas:merge_asof 的 on 键必须同型,
+     * 且与 DataFrame.cmp 混型口径统一)。null 当作"极小值"在前面已处理(不进③)。
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static int compareAsf(Object a, Object b) {
-        // 审查修复(2026-08-09):null 当作"极小值"——null key 行的 right 永远 ≤ left(跳过,不匹配)
-        // 原因:merge_asof 的 right 含 null 时间点时,compareAsf(null, lv) 走 Comparable.compareTo → NPE
+        // 因为 merge_asof 的 right 含 null 时间点时,compareAsf(null, lv) 走 Comparable.compareTo
+        // 会 NPE,所以 null 当作"极小值"——null key 行的 right 永远 ≤ left(跳过,不匹配)
         if (a == null && b == null) return 0;
         if (a == null) return -1;  // null ≤ 任何值(推进 rp 但不取该行的 rv)
         if (b == null) return 1;
         // ① 同型且都是 Number → 数值比较(避免 BigDecimal/Double 混用走字典序出错;
         //   BigDecimal(1) 与 BigDecimal(1.0) 的 compareTo 等、String 化不等,必须走 compareTo 而非 String)
+        // BigDecimal 特化:走 compareTo 保精确(doubleValue 会丢精度)。
+        if (a instanceof java.math.BigDecimal ba && b instanceof java.math.BigDecimal bb) {
+            return ba.compareTo(bb);
+        }
         if (a instanceof Number na && b instanceof Number nb) {
             return Double.compare(na.doubleValue(), nb.doubleValue());
         }
@@ -638,7 +821,10 @@ public final class DataFrameMerge {
         if (a.getClass() == b.getClass() && a instanceof Comparable ca) {
             return ((Comparable<Object>) ca).compareTo(b);
         }
-        // ③ 混型 / 不可比 → 走 String 字典序(确定性,不抛 CCE)
-        return String.valueOf(a).compareTo(String.valueOf(b));
+        // ③ 混型 / 不可比 → 抛 IAE(对齐 pandas:merge_asof 的 on 键必须同型,混型=输入错误;
+        //   与 DataFrame.cmp 混型口径一致)。
+        throw new IllegalArgumentException(
+            "merge_asof 的 on 列出现混型比较(" + a.getClass().getSimpleName()
+            + " vs " + b.getClass().getSimpleName() + ");on 键必须同型(数值或时间)");
     }
 }

@@ -23,7 +23,9 @@ class DataFrameQueryTest {
         // alice(30SH)? bob(25BJ)? carol(40SZ)
         // age<30: bob(25); age>35 && SZ: carol(40SZ) → 共 2
         assertThat(r.rowCount()).isEqualTo(2);
-        assertThat(r.getStringColumn("name").data()).containsExactlyInAnyOrder("bob", "carol");
+        // 因为 pandas 的 query/布尔索引保持原行序,所以这里用精确序断言(AnyOrder 弱断言会放过乱序)。
+        // sample 行序 alice/bob/carol → 命中 bob(行1)、carol(行2),保序应为 [bob, carol]。
+        assertThat(r.getStringColumn("name").data()).containsExactly("bob", "carol");
     }
 
     @Test
@@ -31,7 +33,8 @@ class DataFrameQueryTest {
         DataFrame df = sample();
         DataFrame r = df.query("age between 26 and 40");
         assertThat(r.rowCount()).isEqualTo(2);  // alice(30), carol(40)
-        assertThat(r.getStringColumn("name").data()).containsExactlyInAnyOrder("alice", "carol");
+        // 对齐 pandas保序:命中 alice(行0)、carol(行2),应为 [alice, carol]。
+        assertThat(r.getStringColumn("name").data()).containsExactly("alice", "carol");
     }
 
     @Test
@@ -132,20 +135,39 @@ class DataFrameQueryTest {
     }
 
     @Test
+    void astype_DOUBLE含NaN转LONG用哨兵且isNull为真() {
+        // 契约(§3.5 + §10.16 #1/#2):
+        //   DOUBLE 列含 NaN/缺失 → LONG 时,NaN 行转 Long.MIN_VALUE 哨兵 + isNull 为真
+        //   (对齐 jian 缺失值语义;区别于 pandas 的 IntCastingNaNError——jian 选择不失真而非报错)。
+        DataFrame df = DataFrame.of(
+                Schema.of("v", DType.DOUBLE),
+                new Object[][]{{1.0}, {null}, {3.0}});
+        DataFrame r = df.astype("v", DType.LONG);
+        assertThat(r.dtypes()).containsExactly(DType.LONG);
+        // 正常行
+        assertThat(r.getLongColumn("v").getLong(0)).isEqualTo(1L);
+        assertThat(r.getLongColumn("v").getLong(2)).isEqualTo(3L);
+        // 缺失行:isNull 真(权威判断)+ getLong 哨兵(§3.5 LONG 列缺失标记)
+        assertThat(r.getLongColumn("v").isNull(1)).isTrue();
+        assertThat(r.getLongColumn("v").getLong(1)).isEqualTo(Long.MIN_VALUE);
+    }
+
+    @Test
     void query_链式filter后取head() {
         DataFrame df = sample();
         DataFrame r = df.query("age >= 25").head(2);
         assertThat(r.rowCount()).isEqualTo(2);
     }
 
-    // ======================== 2026-08-02 审查修复回归:in 谓词 / like 防注入 / df.sql 兜底 ========================
+    // ======================== 扩展回归:in 谓词 / like 防注入 / df.sql 兜底 ========================
 
     @Test
     void query_in谓词() {
         DataFrame df = sample();
         DataFrame r = df.query("city in ('SH', 'BJ')");
         assertThat(r.rowCount()).isEqualTo(2);
-        assertThat(r.getStringColumn("name").data()).containsExactlyInAnyOrder("alice", "bob");
+        // 对齐 pandas 保序:sample 行序 alice/bob/carol,命中 alice(行0)、bob(行1)
+        assertThat(r.getStringColumn("name").data()).containsExactly("alice", "bob");
 
         // not in
         DataFrame r2 = df.query("city not in ('SH', 'BJ')");
@@ -169,7 +191,7 @@ class DataFrameQueryTest {
         DataFrame df = DataFrame.of(
                 Schema.of("s", DType.STRING),
                 new Object[][]{{"a.b"}, {"axb"}});
-        // 安全回归:like 模式除 % _ 外全按字面量(旧实现 "a.b" 会被正则 . 通配到 axb)
+        // 因为 like 走字面量匹配(仅 % _ 是通配符,不按正则解释),所以 "a.b" 不会命中 "axb"
         DataFrame r = df.query("s like 'a.b'");
         assertThat(r.rowCount()).isEqualTo(1);
         assertThat(r.getStringColumn("s").get(0)).isEqualTo("a.b");
@@ -182,6 +204,33 @@ class DataFrameQueryTest {
         assertThatThrownBy(() -> df.sql("SELECT * FROM this"))
                 .isInstanceOf(ModuleNotLoadedException.class)
                 .hasMessageContaining("jian-dsl");
+    }
+
+    @Test
+    void astype_DATETIME空格分隔默认格式解析() {
+        // What:YYYY-MM-DD HH:MM:SS(空格)是 DATETIME 默认格式;ISO T 兼容;
+        //      错误消息必须说明两种格式(只说 ISO T 会误导 —— 实际空格一直支持)。
+        DataFrame df = DataFrame.of(Schema.of("ts", DType.STRING),
+                new Object[][]{{"2026-01-01 12:00:00"}, {"2026-01-01T08:30:00"}});
+        DataFrame r = df.astype("ts", DType.DATETIME);
+        assertThat(r.getColumn("ts").get(0)).isEqualTo(java.time.LocalDateTime.of(2026, 1, 1, 12, 0, 0));
+        assertThat(r.getColumn("ts").get(1)).isEqualTo(java.time.LocalDateTime.of(2026, 1, 1, 8, 30, 0));
+        // 非法值 → IAE 且消息含 YYYY-MM-DD HH:MM:SS(默认格式说明)
+        DataFrame bad = DataFrame.of(Schema.of("ts", DType.STRING), new Object[][]{{"not a date"}});
+        assertThatThrownBy(() -> bad.astype("ts", DType.DATETIME))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("YYYY-MM-DD HH:MM:SS");
+    }
+
+    @Test
+    void toString_DATETIME列显示空格分隔格式() {
+        // What:DATETIME 显示用 YYYY-MM-DD HH:MM:SS(空格,对齐 pandas)。
+        // Why :LocalDateTime.toString() 输出 ISO T 分隔且整分省略秒("12:00"),不符合默认格式约定。
+        DataFrame df = DataFrame.of(Schema.of("ts", DType.DATETIME),
+                new Object[][]{{java.time.LocalDateTime.of(2026, 1, 1, 12, 0, 0)}});
+        String s = df.toString();
+        assertThat(s).contains("2026-01-01 12:00:00");   // 空格分隔 + 完整秒
+        assertThat(s).doesNotContain("2026-01-01T12");   // 不是 ISO T、不是省略秒
     }
 
     private DataFrame sample() {

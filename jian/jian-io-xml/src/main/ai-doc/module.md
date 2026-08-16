@@ -4,6 +4,7 @@
 - **library**: jian
 - **entryClass**: jian.io.xml.Xml
 - **deps**: jian-core;Jackson `XmlMapper`(jackson-dataformat-xml)
+- **tests**: 12
 
 ## 摘要
 XML 读写,对齐 pandas.read_xml / to_xml;基于 Jackson XmlMapper,可配置 rootName/rowName,从 `<root><row>...</row></root>` 结构读写表格。
@@ -13,6 +14,7 @@ XML 读写,对齐 pandas.read_xml / to_xml;基于 Jackson XmlMapper,可配置 ro
 - 读:XmlMapper readTree → 找 rowName 子元素 → 每个元素取列 → 推断类型 → DataFrame
 - 写 Xml.write(df, path):builder + `.rootName(name).rowName(name)` + `.go()`;输出 `<root><row>col=val</row>...</root>`
 - 默认 rootName="rows"、rowName="row",均可配置
+- 0 行表写出时 cols 属性转义(列名含引号/逗号往返安全)
 
 ## 限制
 - 默认列作为子元素(attributeMode=M4 暂为子元素,不支持列作 XML 属性)

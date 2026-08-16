@@ -100,7 +100,9 @@ public final class LatexRenderer {
             sb.append(escape(cols.get(c)));
             sb.append(c == cols.size() - 1 ? " \\\\\n" : " & ");
         }
+        // booktabs=false 时表头下补 \hline(无任何横线的表格不可读)
         if (booktabs) sb.append("\\midrule\n");
+        else sb.append("\\hline\n");
         // 数据行
         for (int r = 0; r < df.rowCount(); r++) {
             if (index) {
@@ -121,15 +123,24 @@ public final class LatexRenderer {
     /** LaTeX 转义:特殊字符前加反斜杠(对齐规范 04 §5)。 */
     private static String escape(String s) {
         if (s == null) return "";
-        return s.replace("\\", "\\textbackslash{}")
-                .replace("&", "\\&")
-                .replace("%", "\\%")
-                .replace("$", "\\$")
-                .replace("#", "\\#")
-                .replace("_", "\\_")
-                .replace("{", "\\{")
-                .replace("}", "\\}")
-                .replace("~", "\\textasciitilde{}")
-                .replace("^", "\\textasciicircum{}");
+            // 占位符三阶段替换:因为先 replace 反斜杠为 textbackslash{} 再替换 { 的话,
+            // 前者产物里的 {} 会被二次转义,渲染错;所以先全部换成不可冲突控制字符占位符,最后统一还原。
+            // 两处同根因实现(LatexIo / LatexRenderer)互指,修改须同步。
+            char P_BS='\u0001',P_AMP='\u0002',P_PCT='\u0003',P_DOL='\u0004',P_HSH='\u0005',P_USC='\u0006',P_LBR='\u0007',P_RBR='\u0008',P_TLD='\u000B',P_CRT='\u000C';
+            return s.replace("\\",String.valueOf(P_BS)).replace("&",String.valueOf(P_AMP))
+                    .replace("%",String.valueOf(P_PCT)).replace("$",String.valueOf(P_DOL))
+                    .replace("#",String.valueOf(P_HSH)).replace("_",String.valueOf(P_USC))
+                    .replace("{",String.valueOf(P_LBR)).replace("}",String.valueOf(P_RBR))
+                    .replace("~",String.valueOf(P_TLD)).replace("^",String.valueOf(P_CRT))
+                    .replace(String.valueOf(P_BS),"\\textbackslash{}")
+                    .replace(String.valueOf(P_AMP),"\\&")
+                    .replace(String.valueOf(P_PCT),"\\%")
+                    .replace(String.valueOf(P_DOL),"\\$")
+                    .replace(String.valueOf(P_HSH),"\\#")
+                    .replace(String.valueOf(P_USC),"\\_")
+                    .replace(String.valueOf(P_LBR),"\\{")
+                    .replace(String.valueOf(P_RBR),"\\}")
+                    .replace(String.valueOf(P_TLD),"\\textasciitilde{}")
+                    .replace(String.valueOf(P_CRT),"\\textasciicircum{}");
     }
 }

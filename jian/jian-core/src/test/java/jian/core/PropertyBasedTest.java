@@ -35,7 +35,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 public class PropertyBasedTest {
 
     // ======================== 生成器 ========================
-    // 边界注入策略(2026-08-09 修复 B-3):v 列混合普通值与边界值(NaN/±0.0/MAX/MIN),
+    // 边界注入策略:v 列混合普通值与边界值(NaN/±0.0/MAX/MIN),
     // 让性质在边界条件下也被检验。jqwik 会自动把这些边界值纳入 edge cases。
 
     /**
@@ -109,8 +109,8 @@ public class PropertyBasedTest {
 
     /**
      * P2: sortBy(asc=true) 后 v 列确实单调不减。
-     * <p>2026-08-09 边界注入修复后:v 列含 NaN。NaN 与任何值的 >= 比较都返回 false
-     * (IEEE 754),所以断言跳过含 NaN 的相邻对(与 MR4 同款修复)。
+     * <p>v 列含 NaN(边界注入)。NaN 与任何值的 >= 比较都返回 false
+     * (IEEE 754),所以断言跳过含 NaN 的相邻对。
      */
     @Property(tries = 200)
     void p_sortBy_升序后单调不减(@ForAll("dataFrames") DataFrame df) {
@@ -151,7 +151,7 @@ public class PropertyBasedTest {
 
     /**
      * P5: head(n) 的行数 = min(n, rowCount)。
-     * 修复:@IntRange 上限从 100 提到 200(覆盖到 df.rowCount 边界 50 之上,让 n > rowCount 的情况被测到)。
+     * 关键:@IntRange 上限须超过 df.rowCount 上限(取 200 > 50),让 n > rowCount 的情况被测到。
      */
     @Property(tries = 200)
     void p_head_行数等于minN(@ForAll("dataFrames") DataFrame df, @ForAll @IntRange(min = 0, max = 200) int n) {
@@ -205,15 +205,14 @@ public class PropertyBasedTest {
     // ======================== 性质 10:groupBy(真正调用 GroupBy.agg) ========================
 
     /**
-     * P10(修复):真正调 df.groupBy("id").agg({"id":"count"}),
+     * P10:真正调 df.groupBy("id").agg({"id":"count"}),
      * 断言两条真蜕变关系(不是恒真):
      *   ① 各组 count 之和 == 原表行数(每行恰被分到一组);
      *   ② 组数 == 原表 id 列的唯一值数。
-     * 修复原因:AI agent1 与 AI agent2 双 AI 独立发现原 P10 是"死测试"——
-     *   原代码用 LinkedHashMap 手算分组,**完全没调 df.groupBy()**,任何 GroupBy 实现都过。
-     * <p>2026-08-09 边界注入修复后:v 列含 NaN。count 聚合是"非空值计数"(pandas 语义),
-     * 所以 count 必须改用 **id 列**(id 列无 NaN,count == 组内行数),才能与
-     * "各组 count 之和 == 原表行数"的覆盖性断言兼容(与 MR12 同款修复)。
+     * 注意:不能用手算分组替代调用(那样任何 GroupBy 实现都过,是死测试)。
+     * <p>v 列含 NaN(边界注入)。count 聚合是"非空值计数"(pandas 语义),
+     * 所以 count 用 **id 列**(id 列无 NaN,count == 组内行数),才能与
+     * "各组 count 之和 == 原表行数"的覆盖性断言兼容。
      */
     @Property(tries = 100)
     void p_groupBy_countSum等于原表行数(@ForAll("dataFrames") DataFrame df) {
@@ -269,8 +268,10 @@ public class PropertyBasedTest {
     void p11_fillna后v列无缺失(@ForAll("dataFramesWithNaN") DataFrame df) {
         DataFrame r = df.fillna(0.0);
         double[] vs = ((DoubleColumn) r.getColumn("v")).data();
+        // 因为 NaN != NaN(IEEE 语义,断言 isNotEqualTo(NaN) 恒真是死测试),
+        // 所以用 Double.isNaN 判定,fillna 未生效时立即红
         for (double v : vs) {
-            assertThat(v).as("fillna 后不应有 NaN").isNotEqualTo(Double.NaN);
+            assertThat(Double.isNaN(v)).as("fillna 后不应有 NaN").isFalse();
         }
     }
 
@@ -278,14 +279,15 @@ public class PropertyBasedTest {
     void p12_dropna后无NaN行(@ForAll("dataFramesWithNaN") DataFrame df) {
         DataFrame r = df.dropna();
         double[] vs = ((DoubleColumn) r.getColumn("v")).data();
+        // 同 p11,用 Double.isNaN 判定(isNotEqualTo(NaN) 恒真)
         for (double v : vs) {
-            assertThat(v).as("dropna 后不应有 NaN 行").isNotEqualTo(Double.NaN);
+            assertThat(Double.isNaN(v)).as("dropna 后不应有 NaN 行").isFalse();
         }
     }
 
     /**
-     * P13(AI agent1 / AI agent2 都建议加强断言):ffill 后,每个填充值应等于前一个有效值。
-     * 原 P13 只验"首个有效值后无 NaN"——太弱(fillna(0)/bfill/填错值都过)。
+     * P13(强断言版):ffill 后,每个填充值应等于前一个有效值。
+     * 只验"首个有效值后无 NaN"太弱(fillna(0)/bfill/填错值都过)。
      * 加强:断言"每个非 NaN 行的值,要么是原值,要么等于最近的前驱有效值"。
      */
     @Property(tries = 100)
@@ -312,9 +314,8 @@ public class PropertyBasedTest {
 
     /**
      * P15: astype(LONG → DOUBLE → LONG) 来回保值(在 long 范围内)。
-     * <p>2026-08-09 修复 C-2:去掉 assumeTrue 空表跳过(与 Python 端同步)。
-     * 此前因 P23 assign 空表未修而临时加 assumeTrue 跳过,P23 修好后空表 astype 也应正常。
-     * 现在真测空表:空表 astype 应返回空表,before/after 都是 long[0],assertThat 通过。
+     * <p>空表也测(不跳过):空表 astype 应返回空表,before/after 都是 long[0],断言通过
+     * (与 Python 端口径同步)。
      */
     @Property(tries = 200)
     void p15_astype_LONG经过DOUBLE来回保值(@ForAll("dataFrames") DataFrame df) {
@@ -365,6 +366,8 @@ public class PropertyBasedTest {
     /**
      * P19: nlargest(n, col) 等价于 sortBy(col, desc).head(n)。
      * 关键:两种 API 路径应给出一致结果(差分思想,但用 PBT 表达)。
+     * nlargest 的堆排实现必须精确复刻 sortBy(desc).head(n) 的语义
+     * (含 NaN 排最后、n 超过非缺失行数时补 NaN 行)——oracle 不变,实现对齐。
      */
     @Property(tries = 100)
     void p19_nlargest_等价于sortBy降序head(@ForAll("dataFrames") DataFrame df,
@@ -410,7 +413,7 @@ public class PropertyBasedTest {
 
     /**
      * P22: colMul(new, src, k) 后,每行 new == src × k。
-     * 修复(AI agent2 抓的):k 加范围限制 [-100, 100],避免 k=1e308 时 v*k=Inf,断言 flaky。
+     * 关键:k 限定范围 [-100, 100](k=1e308 时 v*k=Inf 会让断言 flaky)。
      */
     @Property(tries = 100)
     void p22_colMul标量_等于逐行乘(@ForAll("dataFrames") DataFrame df,
@@ -420,7 +423,7 @@ public class PropertyBasedTest {
         for (int i = 0; i < df.rowCount(); i++) {
             double expected = vs[i] * k;
             double actual = ((Number) r.get(i, "scaled")).doubleValue();
-            // 2026-08-09 边界注入修复:NaN 与任何值的运算结果都是 NaN,
+            // NaN 与任何值的运算结果都是 NaN(边界注入),
             // NaN == NaN 在 AssertJ 的 isCloseTo 里特殊(NaN 视为相等),
             // 但 tol 计算需保证非负:Math.max(1e-9, NaN) 在 Java 返回 NaN(非 1e-9),
             // 所以遇到 NaN 时直接跳过(与 P2 sortBy 同款 NaN 处理)。
@@ -432,8 +435,7 @@ public class PropertyBasedTest {
 
     /**
      * P23: assign(name, fn) 加列后,行数不变 + 列数+1 + 新列名存在。
-     * 修复(双 AI 共识):Schema.inferColumn 加空表守卫,assign 空表现已正常。
-     * 去掉之前的 assumeTrue 跳过,空表也测。
+     * 空表也测(Schema.inferColumn 有空表守卫,assign 空表正常,不跳过)。
      */
     @Property(tries = 200)
     void p23_assign_加列不改行数(@ForAll("dataFrames") DataFrame df) {

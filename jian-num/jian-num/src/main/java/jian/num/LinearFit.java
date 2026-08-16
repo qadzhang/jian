@@ -74,6 +74,6 @@ public record LinearFit(double slope, double intercept, double rSquared) {
 
     @Override
     public String toString() {
-        return String.format("LinearFit{y = %.6f·x + %.6f, R² = %.6f}", slope, intercept, rSquared);
+        return String.format(java.util.Locale.ROOT, "LinearFit{y = %.6f·x + %.6f, R² = %.6f}", slope, intercept, rSquared);
     }
 }

@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 // ┌─ What : Window —— Rolling / Expanding / EWM / Resampler(对齐 pandas 窗口族)
-// │  Why  : 规范 01 §6;时间序列 / 滚动统计是数据分析核心;AI agent2 #10 要求实现
+// │  Why  : 规范 01 §6;时间序列 / 滚动统计是数据分析核心
 // │  Who  : 用户经 df.getSeries(col).rolling(n) / df.rolling(n) 创建
 // │  When : 滚动窗口统计、累积统计、指数加权、重采样
 // │  Where: jian-core/Window.java
@@ -44,11 +44,14 @@ public final class Window {
 
         /**
          * 从 Series 创建 Rolling。
+         * window/minPeriods < 1 抛 IAE(window=0 会全 NaN 无报错)。
          * @param s          Series 数据源,非 null;转 double[](缺失→NaN)
          * @param window     int 窗口大小,≥ 1
          * @param minPeriods int 窗口内最少有效值数,≥ 1(不足则该位结果 NaN)
          */
         public Rolling(Series s, int window, int minPeriods) {
+            if (window < 1) throw new IllegalArgumentException("Rolling window 必须 ≥ 1,实际:" + window);
+            if (minPeriods < 1) throw new IllegalArgumentException("Rolling minPeriods 必须 ≥ 1,实际:" + minPeriods);
             this.data = toDoubleArray(s);
             this.window = window;
             this.minPeriods = minPeriods;
@@ -138,14 +141,23 @@ public final class Window {
             return r;
         }
 
-        /** @return double[] 窗口内非 NaN 个数(整数以 double 返回) */
+        /**
+         * 滚动非空计数(对齐 pandas rolling.count)。
+         * <p>含 minPeriods 门控 —— 因为从第 0 行就给 1、2、3… 会违反类头
+         * "前 window-1 个位置为 NaN"承诺与 pandas 行为(rolling(3).count() 前 2 个为 NaN),
+         * 所以双重门控:① 位置不足(i+1 &lt; minPeriods)→ NaN;② 窗口内有效值不足
+         * (c &lt; minPeriods)→ NaN(pandas min_periods 语义,默认 == window)。
+         * @return double[] 与 data 等长;窗口内非 NaN 个数(整数以 double 返回);
+         *         不足 minPeriods 的位置为 NaN
+         */
         public double[] count() {
             double[] r = new double[data.length];
             for (int i = 0; i < data.length; i++) {
+                if (i + 1 < minPeriods) { r[i] = Double.NaN; continue; }   // 位置门控
                 int start = Math.max(0, i - window + 1);
                 int c = 0;
                 for (int j = start; j <= i; j++) if (!Double.isNaN(data[j])) c++;
-                r[i] = c;
+                r[i] = c >= minPeriods ? c : Double.NaN;                    // 有效值门控
             }
             return r;
         }
@@ -254,18 +266,28 @@ public final class Window {
         }
 
         /**
-         * 指数加权方差(简化版)。
-         * @return double[] 与 data 等长;prevVar = (1-alpha)*prevVar + alpha*(data[i]-mean[i])²
+         * 指数加权方差(**无偏估计**,方案 B 声明见 §10.16 第 14 条)。
+         * <p>公式:resid = x - ewma;ewm_resid2 递推;var = ewm_resid2 / (1-(1-α)^nobs);
+         * 有效观测 &lt; 2 时返回 NaN。
+         * <p>设计差异(显式声明):pandas 自 0.18 起已移除 bias 参数,其 adjust=False 的 var
+         * 等价旧版 bias=True(除以 nobs,有偏),与本实现的无偏公式数值不同
+         * (实测 [1,2,3],α=0.5:本实现 [NaN,0.1667,0.3929] vs pandas [NaN,0.5,1.1])。
+         * 本实现保留统计学无偏公式(等价 pandas 旧版 bias=False / R 与 numpy 的无偏 EWM 方差),
+         * 作为**显式声明的设计差异**;ewm.mean 仍与 pandas 完全对齐(d52 对照锁定)。
+         * @return double[] 与 data 等长
          */
         public double[] var() {
             double[] m = mean();
             double[] r = new double[data.length];
             double prevVar = 0;
+            int nobs = 0;
             for (int i = 0; i < data.length; i++) {
-                if (Double.isNaN(data[i]) || Double.isNaN(m[i])) { r[i] = prevVar; continue; }
+                if (Double.isNaN(data[i])) { r[i] = Double.NaN; continue; }  // 缺失传播 NaN(对齐 pandas)
+                nobs++;
                 double d = data[i] - m[i];
                 prevVar = (1 - alpha) * prevVar + alpha * d * d;
-                r[i] = prevVar;
+                if (nobs < 2) { r[i] = Double.NaN; continue; }   // bias=False:需 ≥ 2 个观测
+                r[i] = prevVar / (1 - Math.pow(1 - alpha, nobs));
             }
             return r;
         }
@@ -282,10 +304,15 @@ public final class Window {
 
     /**
      * Series → double[](NaN 表缺失)。
+     * 非数值列(STRING/OBJECT 等)抛 IAE 带提示
+     * (直接调 getDouble 会让 STRING 列抛难排查的 ISE)。
      * @param s Series 数据源
      * @return double[] 等长数组;缺失位为 NaN,其余为 s.getDouble(i)
      */
     private static double[] toDoubleArray(Series s) {
+        if (!s.dtype().isNumeric()) {
+            throw new IllegalArgumentException("窗口算子要求数值列,实际 dtype:" + s.dtype());
+        }
         int n = s.size();
         double[] d = new double[n];
         for (int i = 0; i < n; i++) {

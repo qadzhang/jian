@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-// ┌─ What : 边界用例测试 —— 空 DataFrame / 单行 / 全缺失 / 大数(补 AI agent2 第二轮发现的测试盲区)
+// ┌─ What : 边界用例测试 —— 空 DataFrame / 单行 / 全缺失 / 大数 / NaN 分组键 / astype 边界
 class EdgeCaseTest {
 
     @Test
@@ -114,9 +114,8 @@ class EdgeCaseTest {
     }
 
     // ┌─ What : NaN 分组键语义测试 —— DOUBLE 列含 NaN 时,所有 NaN 行应归入同一组
-    // │  Why  : 2026-08-09 AI agent2 报告 B1 指出"NaN 分组键行为未声明";经核实代码 fast path
-    // │         在 nullCount>0 时 fall back generic,generic 用 Double.equals(NaN,NaN)==true
-    // │         归组,行为与 pandas groupby(dropna=False) 一致;现固化为契约。
+    // │  Why  : fast path 在 nullCount>0 时 fall back generic,generic 用 Double.equals(NaN,NaN)==true
+    // │         归组,行为与 pandas groupby(dropna=False) 一致;固化为契约。
     // │  Who  : GroupBy.buildGroups generic 路径
     // │  When : 此测试作为回归守护,防止后续优化 fast path 时破坏 NaN 语义
     // │  Where: EdgeCaseTest.java
@@ -175,22 +174,22 @@ class EdgeCaseTest {
         assertThat(countCol.getLong(1)).as("每组 count 应为 2").isEqualTo(2L);
     }
 
-    // ┌─ What : astype 部分支持 —— 7 种 dtype(2026-08-09 阶段 F 扩展),仅 CATEGORY 抛 IAE
-    // │  Why  : 阶段 F 把 BOOL/DATE/DATETIME 加进支持清单(原仅 5 种);
-    //         仅 CATEGORY 仍不支持(jian v1 未实现完整 CATEGORY dtype 语义)
+    // ┌─ What : astype 部分支持 —— 7 种 dtype,仅 CATEGORY 抛 IAE
+    // │  Why  : BOOL/DATE/DATETIME 在支持清单中(CATEGORY 不在);
+    //         仅 CATEGORY 不支持(jian v1 未实现完整 CATEGORY dtype 语义)
     // │  How  : ① 7 种支持的 dtype 不抛 ② CATEGORY 抛 IAE ③ 验证 BOOL 转换正确性
     @Test
     void astype支持7种dtype仅CATEGORY抛IAE() {
         DataFrame df = DataFrame.of(
                 Schema.of("v", DType.DOUBLE),
                 new Object[][]{{1.0}, {2.0}});
-        // 支持的 7 种 —— 不抛(阶段 F 新增 BOOL/DATETIME/DATE)
+        // 支持的 7 种 —— 不抛(含 BOOL/DATETIME/DATE)
         df.astype("v", DType.STRING);
         df.astype("v", DType.LONG);
         df.astype("v", DType.INT);
         df.astype("v", DType.DOUBLE);
         df.astype("v", DType.OBJECT);
-        df.astype("v", DType.BOOL);  // 阶段 F 新增(数值 1.0→true,2.0→true)
+        df.astype("v", DType.BOOL);  // 数值 1.0→true,2.0→true
         // 不支持的 —— 抛 IAE(仅 CATEGORY)
         assertThatThrownBy(() -> df.astype("v", DType.CATEGORY))
                 .as("CATEGORY 应抛 IAE")

@@ -60,6 +60,8 @@ public final class Engine implements AutoCloseable {
                             + " jar(版本见 doc/00-overview.md §2.3),或将驱动 jar 加入 classpath");
         }
         hc.setDriverClassName(dbType.driverClassName());
+        // 因为 JDBC 层只读是第二道防线(H2 强制拦截 DML;PG/MySQL 为 hint,主防线仍是入口拦截),所以 readOnly 时同步设连接只读
+        if (readOnly) hc.setReadOnly(true);
         this.ds = new HikariDataSource(hc);
     }
 
@@ -105,13 +107,21 @@ public final class Engine implements AutoCloseable {
      * @throws IllegalArgumentException 当 URL 格式非法或 scheme 不支持时抛出
      */
     public static ParsedUrl parseUrl(String sqlalchemyUrl) {
+        // 因为 indexOf 取不到 "://" 时 substring(2) 会取错位置,所以 URL 无 "://" 直接抛 IAE
+        int schemeEnd = sqlalchemyUrl.indexOf("://");
+        if (schemeEnd < 0) {
+            // 因为畸形 URL 可能整段回显给调用方,不得泄露其中的密码段,所以异常消息过 sanitize
+            throw new IllegalArgumentException("URL 缺少 scheme://,形如 postgresql://user:pass@host:5432/db,实际:"
+                    + JianSqlException.sanitize(sqlalchemyUrl));
+        }
         DbType dbType = DbType.fromUrl(sqlalchemyUrl);
-        String body = sqlalchemyUrl.substring(sqlalchemyUrl.indexOf("://") + 3);
+        String body = sqlalchemyUrl.substring(schemeEnd + 3);
         String user = "";
         String password = "";
         String hostDb = body;
-        // 无 @ 段(未带用户密码)也允许:整段都算 host/db(修复原 substring(0,-1) 崩溃)
-        int atIdx = body.indexOf('@');
+        // 无 @ 段(未带用户密码)也允许:整段都算 host/db
+        // 因为密码可含 @ 而 host/db 不含(如 user:p@ss@host),所以取最后一个 @(与 host/db 切分口径一致)
+        int atIdx = body.lastIndexOf('@');
         if (atIdx >= 0) {
             String userPass = body.substring(0, atIdx);
             hostDb = body.substring(atIdx + 1);
@@ -228,7 +238,13 @@ public final class Engine implements AutoCloseable {
      * @return SqlBuilder 类型安全查询构建器(已绑定本引擎的 DataSource 与方言)
      */
     public jian.sql.expr.SqlBuilder dsl() {
-        return jian.sql.expr.SqlBuilder.create(ds, toExprDialect(dbType));
+        // 因为 SqlBuilder 是通用构建器(可 executeDDL/DML),入口无法逐语句 checkReadOnly,
+        // 所以只读模式下必须拒绝 dsl() 入口,与 sql() 入口的拦截对齐(只读引擎的所有写入口都必须拦截)
+        if (readOnly) {
+            throw new SecurityException("只读模式(readOnly=true)禁用 dsl() 构建器入口;"
+                    + "请用 engine.sql(只读 SELECT) 查询;JDBC 层已同步设连接只读(第二道防线)");
+        }
+        return dslUnchecked();
     }
 
     /**
@@ -237,8 +253,8 @@ public final class Engine implements AutoCloseable {
      * Result<Record> r = engine.sql("SELECT * FROM users WHERE age &gt; ?", 18).fetch();
      * }</pre>
      * 值一律走 ? 占位符参数化绑定(防注入)。
-     * <p><b>Web 安全修复(2026-08-08)</b>:只读模式(readOnly=true)下,拦截写操作(DROP/DELETE/INSERT/UPDATE 等)。
-     * 之前 checkReadOnly 是死代码(写了但没调用);现在 sql() 入口强制调用。
+     * <p><b>Web 安全</b>:只读模式(readOnly=true)下,拦截写操作(DROP/DELETE/INSERT/UPDATE 等),
+     * sql() 入口强制调用 checkReadOnly。
      *
      * @param sql    String SQL 模板,约束:不能为 null;值用 ? 占位;只读模式下拦截 DROP/DELETE/INSERT/UPDATE 等写操作
      * @param params Object... 绑定到 ? 的参数值,顺序与 SQL 中的 ? 一致;可省略
@@ -246,8 +262,15 @@ public final class Engine implements AutoCloseable {
      * @throws SecurityException 当 readOnly=true 且 SQL 为写操作时抛出
      */
     public jian.sql.expr.SqlBuilder sql(String sql, Object... params) {
-        checkReadOnly(sql);   // Web 安全:只读模式拦截写操作(2026-08-08 修复死代码)
-        return dsl().query(sql, params);
+        checkReadOnly(sql);   // Web 安全:只读模式拦截写操作
+        // 因为 sql() 已过 checkReadOnly,所以走无守卫内部路径(不能经 dsl() 公开入口,
+        // 否则只读守卫误伤本合法的 sql() 查询)
+        return dslUnchecked().query(sql, params);
+    }
+
+    /** dsl() 的无只读守卫内部路径(仅供已自行 checkReadOnly 的入口复用)。 */
+    private jian.sql.expr.SqlBuilder dslUnchecked() {
+        return jian.sql.expr.SqlBuilder.create(ds, toExprDialect(dbType));
     }
 
     /** DbType → SqlBuilder.Dialect(DORIS 与 MySQL 同协议)。 */
@@ -279,37 +302,101 @@ public final class Engine implements AutoCloseable {
 
     /**
      * 校验 SQL 是否允许在只读模式下执行(规范 §3.2 安全)。
-     * 只读模式拦截 DROP/DELETE/TRUNCATE/ALTER/CREATE/GRANT/INSERT/UPDATE。
+     * 只读模式拦截 DROP/DELETE/TRUNCATE/ALTER/CREATE/GRANT/INSERT/UPDATE/MERGE/REVOKE
+     * + REPLACE/CALL/COPY/LOAD(readOnly=false 时本方法为空操作)。
      *
-     * <p>安全:先剥掉 SQL 前导空白、行注释(-- ...)与块注释,再按整词匹配危险关键字,
-     * 防 "块注释 + DROP TABLE" 这类绕过。
+     * <p>安全:先全局剥掉行注释(-- ... 与 MySQL 的 # ...)、块注释(斜杠星号 ... 星号斜杠)、
+     * 字符串字面量('...'、"..."、PG $$...$$)与 MySQL 反引号标识符(整段剥除)
+     * (内容替换为等长空格,防"拼接出新 token"),再整词匹配危险关键字,
+     * 防 "SELECT 1; DROP TABLE x"(多语句注入,须全局扫描而非只查第一条语句)
+     * 与 "块注释 + DROP TABLE" 这类绕过;同时字符串/注释里的 DROP 不误报,
+     * "SELECT `delete` FROM t"(反引号列名)这类合法 SELECT 也不误报。
      *
      * @param sql String 待校验的 SQL,约束:不能为 null
      * @throws SecurityException 当 readOnly=true 且 SQL 为写操作时抛出
      */
     public void checkReadOnly(String sql) {
         if (!readOnly) return;
-        // 剥前导空白与注释(循环剥,直到开头不再是注释)
-        String s = sql;
-        boolean changed = true;
-        while (changed && !s.isBlank()) {
-            changed = false;
-            String t = s.stripLeading();
-            if (t.startsWith("--")) {
-                int nl = t.indexOf('\n');
-                s = (nl >= 0 ? t.substring(nl + 1) : "").stripLeading();
-                changed = true;
-            } else if (t.startsWith("/*")) {
-                int end = t.indexOf("*/");
-                s = (end >= 0 ? t.substring(end + 2) : "").stripLeading();
-                changed = true;
-            }
-        }
-        String upper = s.toUpperCase().stripLeading();
-        // 整词匹配:避免 "DROPX" 误拦,也避免 "SELECT drop_col" 漏网(后者以 SELECT 开头,天然放行)
-        if (java.util.regex.Pattern.matches("(?s)(DROP|DELETE|TRUNCATE|ALTER|CREATE|GRANT|INSERT|UPDATE)\\b.*", upper)) {
+        // 全局剥注释 + 字符串字面量(不是只剥前导注释):"SELECT 1; DROP TABLE x" 的多语句绕过
+        String scrubbed = scrubSqlLiterals(sql);
+        // 整词匹配:避免 "DROPX" 误拦,\b 词边界保证 DROP_COL 不误报
+        if (WRITE_KW_PATTERN.matcher(scrubbed).find()) {
             throw new SecurityException("只读模式禁止写操作:" + sql.substring(0, Math.min(50, sql.length())) + "...");
         }
+    }
+
+    /**
+     * 写操作关键字整词匹配(只读模式拦截集合)。
+     * <p>因为在 DROP/DELETE/TRUNCATE/ALTER/CREATE/GRANT/INSERT/UPDATE/MERGE/REVOKE 之外,
+     * MySQL/Doris 的 {@code REPLACE INTO}、H2/MySQL 的 {@code CALL write_proc()}、PG 的
+     * {@code COPY t FROM '/f'}、MySQL 的 {@code LOAD DATA INFILE} 也都是写操作而整词不命中,
+     * 所以拦截集合补上 REPLACE|CALL|COPY|LOAD。
+     * 已知取舍:SELECT 里的 REPLACE('a','b','c') 函数 / COPY 函数(如有)会被一并拦截 ——
+     * 只读安全面优先,误杀的读函数请换等价写法(IFNULL/COALESCE 等)。
+     */
+    // 因为只匹配大写时小写 "drop table" 可绕过只读拦截,所以加 (?i) 大小写不敏感
+    private static final Pattern WRITE_KW_PATTERN =
+            Pattern.compile("(?si)\\b(DROP|DELETE|TRUNCATE|ALTER|CREATE|GRANT|INSERT|UPDATE|MERGE|REVOKE"
+                    + "|REPLACE|CALL|COPY|LOAD)\\b");
+
+    // ┌─ What : 全局剥除 SQL 的注释与字符串字面量(替换为等长空格)
+    // │  Why  : checkReadOnly 要"注释/字符串里的写关键字不误报 + 注释外的写关键字不漏报"。
+    // │         逐字符扫描替换为等长空格,保证 "SELECT 'DROP'" 安全、"; DROP" 保留。
+    // │  Who  : checkReadOnly
+    // │  When : readOnly=true 时每次 sql() 调用
+    // │  Where: jian-sql-engine/Engine.java
+    // │  How  : 关键变量变化:i(扫描游标 0→len)、sb(逐字符构建,注释/字符串区替换为空格)。
+    // │         逻辑路线(七种状态):
+    // │           路径 A(-- 行注释)→ 剥到行尾或串尾;
+    // │           路径 B(/* */ 块注释)→ 剥到 */;
+    // │           路径 C(' 或 " 字符串)→ 剥到配对引号(SQL '' 翻倍转义:两个连续引号是字面量,不结束);
+    // │           路径 D(# 行注释,MySQL)→ 剥到行尾 —— "# 备注\nDROP" 的 DROP 保留待匹配;
+    // │           路径 E(`反引号标识符,MySQL)→ 剥到配对反引号 —— SELECT `delete` FROM t 放行
+    // │               (反引号内文本按字面量剥掉,不参与整词匹配);
+    // │           路径 F($$ 美元引号字符串,PG)→ 剥到下一个 $$ —— $$...$$ 里的写关键字不误报;
+    // │           路径 G(普通字符)→ 原样保留。
+    // │         数据走向:sql(原始输入)→ scrubSqlLiterals → scrubbed(仅剩代码骨架)→ 整词匹配。
+    private static String scrubSqlLiterals(String sql) {
+        StringBuilder sb = new StringBuilder(sql.length());
+        int i = 0, n = sql.length();
+        while (i < n) {
+            char c = sql.charAt(i);
+            if (c == '-' && i + 1 < n && sql.charAt(i + 1) == '-') {
+                while (i < n && sql.charAt(i) != '\n') { sb.append(' '); i++; }
+            } else if (c == '/' && i + 1 < n && sql.charAt(i + 1) == '*') {
+                sb.append("  "); i += 2;
+                while (i + 1 < n && !(sql.charAt(i) == '*' && sql.charAt(i + 1) == '/')) { sb.append(' '); i++; }
+                if (i + 1 < n) { sb.append("  "); i += 2; }
+            } else if (c == '\'' || c == '"') {
+                char q = c;
+                sb.append(' '); i++;
+                while (i < n) {
+                    if (sql.charAt(i) == q) {
+                        if (i + 1 < n && sql.charAt(i + 1) == q) { sb.append("  "); i += 2; continue; }
+                        sb.append(' '); i++;
+                        break;
+                    }
+                    sb.append(' '); i++;
+                }
+            } else if (c == '#') {
+                // MySQL `#` 行注释(等长空格剥到行尾,与 "--" 同款)
+                while (i < n && sql.charAt(i) != '\n') { sb.append(' '); i++; }
+            } else if (c == '`') {
+                // MySQL 反引号标识符 —— 整段(含反引号)剥为空格:
+                // `delete` 是列名不是关键字,SELECT `delete` FROM t 必须放行
+                sb.append(' '); i++;
+                while (i < n && sql.charAt(i) != '`') { sb.append(' '); i++; }
+                if (i < n) { sb.append(' '); i++; }
+            } else if (c == '$' && i + 1 < n && sql.charAt(i + 1) == '$') {
+                // PG $$...$$ 美元引号字符串(函数体常用)—— 剥到下一个 $$,内容不当代码
+                sb.append("  "); i += 2;
+                while (i + 1 < n && !(sql.charAt(i) == '$' && sql.charAt(i + 1) == '$')) { sb.append(' '); i++; }
+                if (i + 1 < n) { sb.append("  "); i += 2; }
+            } else {
+                sb.append(c); i++;
+            }
+        }
+        return sb.toString();
     }
 
     @Override public void close() {

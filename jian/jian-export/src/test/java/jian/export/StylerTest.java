@@ -131,4 +131,71 @@ class StylerTest {
             assertThat(wb.getSheetName(0).length()).isLessThanOrEqualTo(31);
         }
     }
+
+    // ┌─ What : 字体颜色/加粗/自动列宽/原生数字格式 的回归测试
+    // │  Why  : 补齐 pandas Styler.applymap 等价能力;HTML 断言内联样式,Excel 用 POI 读回断言
+    // │  How  : ①toHtml:fontColor/bold → color:/font-weight: 内联;②toExcel 读回:
+    //          Font.getColor/getBold、setColumnWidth 生效、数值单元格仍为 NUMERIC(可求和)+
+    //          DataFormatString 为原生格式串(透传)
+    @Test
+    void 字体颜色与加粗_HTML() {
+        String html = Styler.of(styled())
+                .fontColor("姓名", "#ff0000")
+                .fontColorIf("金额", "#cc0000", v -> ((Number) v).doubleValue() < 0)
+                .bold("姓名")
+                .boldIf("金额", v -> ((Number) v).doubleValue() > 0)
+                .toHtml();
+        assertThat(html).contains("color: #ff0000");
+        assertThat(html).contains("font-weight: bold");
+        assertThat(html).contains("color: #cc0000");   // 条件字色命中负值
+    }
+
+    @Test
+    void 字体与加粗与列宽_Excel读回() throws Exception {
+        java.io.File f = java.io.File.createTempFile("exp020", ".xlsx");
+        Styler.of(styled())
+                .bold("姓名")
+                .fontColorIf("金额", "#ff0000", v -> ((Number) v).doubleValue() < 0)
+                .format("#,##0.00", "金额")
+                .toExcel(f);
+        try (org.apache.poi.ss.usermodel.Workbook wb = org.apache.poi.ss.usermodel.WorkbookFactory.create(f)) {
+            org.apache.poi.ss.usermodel.Sheet sheet = wb.getSheetAt(0);
+            // 自动列宽生效(金额列内容 "1,234.50" 7 字符 → 宽 9×256 > 默认 8×256;只放宽不缩窄)
+            assertThat(sheet.getColumnWidth(2)).isGreaterThan(8 * 256);
+            // 表头行数据行存在
+            assertThat(sheet.getRow(0)).isNotNull();
+            assertThat(sheet.getRow(1).getCell(1).getStringCellValue()).isEqualTo("张三");
+            // 数值单元格保持 NUMERIC(可求和)+ 原生数字格式透传
+            org.apache.poi.ss.usermodel.Cell num = sheet.getRow(1).getCell(2);
+            assertThat(num.getCellType())
+                    .isEqualTo(org.apache.poi.ss.usermodel.CellType.NUMERIC);
+            assertThat(num.getCellStyle().getDataFormatString()).isEqualTo("#,##0.00");
+        }
+        f.delete();
+    }
+
+    @Test
+    void 行列背景_HTML与Excel() throws Exception {
+        // 整行:金额为负 → 整行红底;整列:备注列固定灰底
+        String html = Styler.of(styled())
+                .rowBackgroundIf("金额", "#ffcccc", v -> ((Number) v).doubleValue() < 0)
+                .toHtml();
+        assertThat(html.split("</tr>")[2]).contains("background-color: #ffcccc");   // 李四(-50)行每格都染
+        assertThat(html.split("</tr>")[1]).doesNotContain("#ffcccc");                // 张三(1234.5)行不染
+
+        java.io.File f = java.io.File.createTempFile("exp021", ".xlsx");
+        Styler.of(styled()).columnBackground("姓名", "#cccccc").toExcel(f);
+        try (org.apache.poi.ss.usermodel.Workbook wb = org.apache.poi.ss.usermodel.WorkbookFactory.create(f)) {
+            var cell = wb.getSheetAt(0).getRow(1).getCell(1);
+            assertThat(cell.getCellStyle().getFillForegroundColorColor()).isNotNull();
+        }
+        f.delete();
+    }
+
+    /** 样式样本:含负值(触发条件字色/加粗)。 */
+    private static jian.core.DataFrame styled() {
+        return jian.core.DataFrame.of(
+                jian.core.Schema.of("姓名", jian.core.DType.STRING, "金额", jian.core.DType.DOUBLE),
+                new Object[][]{{"张三", 1234.5}, {"李四", -50.0}});
+    }
 }

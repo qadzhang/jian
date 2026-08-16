@@ -10,7 +10,7 @@
 
 jian-core **大面对齐 pandas 3.x 的 DataFrame/Series/GroupBy/窗口 核心数据操作能力**——**DataFrame 主体实测 ~180 unique public 方法名(含重载共 195 处,15 大类),Series 52,GroupBy 9 个,Window 7 个**(口径见 [`doc/api-counts.md`](api-counts.md))。是 jian 所有子模块(io / viz / export)的基石,**零外部依赖**(仅 JDK 17)。
 
-> **诚实标注(2026-08-09 经源码核实)**:本节早前版本曾声称"200+ 方法"或"85 方法",均与实测不符。经核实 `DataFrame.java` 实测 195 个 public 方法(含重载)/ ~180 unique 名;pandas 进阶能力(resample/tz_convert/stack/unstack/interpolate/explode/reindex/merge_asof 等)**已实现**(见 §3.16)。本分册以下按"已实现 / 规划"二分,不把规划写成已实现。**所有 API/测试数字以 [`doc/api-counts.md`](api-counts.md) 为唯一事实来源**。
+> **口径标注(经源码核实)**:`DataFrame.java` 实测 195 个 public 方法(含重载)/ ~180 unique 名;pandas 进阶能力(resample/tz_convert/stack/unstack/interpolate/explode/reindex/merge_asof 等)**已实现**(见 §3.16)。本分册以下按"已实现 / 规划"二分,不把规划写成已实现。**所有 API/测试数字以 [`doc/api-counts.md`](api-counts.md) 为唯一事实来源**。
 
 ### 1.2 范围说明
 
@@ -86,7 +86,7 @@ DataFrame
 
 ## 3. DataFrame 方法全清单(15 大类,对齐 pandas)
 
-> **2026-08-09 重要修正**:本节早期版本按 pandas 全清单列出"15 大类、各小节 5-35 个方法、合计 200+",经源码核实**严重超前**。现按"已实现 / 规划"二分重写:已实现 = `DataFrame.java` 实测存在;规划 = 列入 §3.16 路线图。各小节括号内数字为**实测已实现数**(经 grep 核实,2026-08-09)。
+> **口径**:本节按"已实现 / 规划"二分:已实现 = `DataFrame.java` 实测存在;规划 = 列入 §3.16 路线图。各小节括号内数字为**实测已实现数**(经 grep 核实)。
 
 ### 3.1 属性与底层数据(已实现 5)
 
@@ -106,7 +106,7 @@ DataFrame
 - 标量/区域:`get(row,col)` / `getRow(i)` / `loc(labels...)`(标签选择)/ `iloc(indices...)`(位置选择)/ `takeRows(int[])`。
 - 头尾:`head(n)` / `tail(n)` / `slice(start, end)`。
 - 迭代:`iterRows()`(返回 `Iterable<Object[]>`)。
-- 条件:`query(expr)`(解析 `and/or/>/</>=/<=/=/!=/in/not in/is null/is not null`)。
+- 条件:`query(expr)`(解析 `and/or/not/>/</>=/<=/==/!=/in/not in/notin/算术 + - * / %/between/like/is null/is true/is false`;反引号标识符 `` `col with space` ``;字符串 `''`/双引号/反斜杠三种转义等价)。core 兜底(SimpleQueryParser)与 jian-dsl 主路径(PrattEngine)语法矩阵由 `EngineConformanceTest` 锁定一致;数值不再隐式当布尔(§10.16 第 10 条)。
 - 列过滤:`select(cols...)` / `drop(cols...)` / `filter(items/like/regex)`。
 
 **规划**:`at/iat/isetitem`(单单元格)/ `xs(key,axis,level)` / `insert/pop` / `iteritems/itertuples/keys` / `isin/where/mask` / `add_prefix/add_suffix`。
@@ -116,7 +116,11 @@ DataFrame
 **已实现**(列级二元运算,生成新列,API 形如 `colAdd(newCol, srcA, srcB)`):
 - 算术:`colAdd` / `colSub` / `colMul` / `colDiv`(标量版 `colMulScalar` 经 `assign`)。
 - 比较:`colLt` / `colGt` / `colLe` / `colGe` / `colNe` / `colEq`(返回 BOOLEAN 掩码列)。
+  缺失行语义:`==` 与顺序比较为 **false**、`!=` 为 **true**(对齐 pandas `NaN != x → True`,与 query 双引擎口径一致)。
 - 极值:`colMax(cols...)` / `colMin(cols...)`(行向 max/min)。
+
+**语义注记**:`colRound` 为 half-even 银行家舍入(对齐 pandas,大数不饱和);
+nunique/valueCounts/is_unique 中 ±0.0 数值等价计 1(§10.16 第 6 条延伸);isin 的 values 含 NaN 时 NaN 行命中。
 
 **规划**:`add/sub/mul/div/mod/pow` 全套反向运算 / `dot`(矩阵)/ `combine/combine_first` / `fill_value` / `axis` 参数。
 
@@ -132,7 +136,7 @@ DataFrame
 ### 3.6 计算 / 描述统计(已实现:colXxx 列统计 + 行式聚合 + describe)
 
 **已实现**(列级统计,返回标量,API 形如 `colSum(colName)`):
-- `colSum` / `colMean` / `colMedian` / `colMin` / `colMax` / `colStd` / `colPercentile(colName, q)` / `colVar`(经 StatsProvider SPI,需要 jian-num-bridge)。
+- `colSum` / `colMean` / `colMedian` / `colMin` / `colMax` / `colStd` / `colPercentile(colName, q)` / `colVar`(经 StatsProvider SPI,需要 jian-num-bridge)。sum/mean 内核为 Neumaier 补偿求和(误差项独立累加、末步 sum+comp 修正,极端量级混合下比经典 Kahan 更精确,复杂度同 O(n);溢出时保留 ±Infinity 不退化为 NaN)。
 - 行式聚合:`sum()` / `mean()` / `min()` / `max()` / `median()` / `std()`(数值列聚合)。
 - 描述:`describe()`(返回 8 行统计表 count/mean/std/min/25%/50%/75%/max)。
 
@@ -140,7 +144,7 @@ DataFrame
 
 ### 3.7 重索引 / 选择 / 标签操作(已实现 13+)
 
-> **L8 修正(2026-08-09 经 AI agent2 + AI agent1 第二轮审查源码核实)**:早前版本在此处罗列了 `rename(mapper)` / `filter(items/like/regex)` / `equals(other)` / `take(indices)` / `truncate(before,after)` 等**根本不存在的方法**(代码实测仅 `renameAxis(String)` / `filter(boolean[])` / `takeRows(int[])`),与 §3.16 路线图矛盾。现已按代码实际重写。
+> **口径**:本节以代码实测为准(`renameAxis(String)` / `filter(boolean[])` / `takeRows(int[])` 等);`rename(mapper)` / `filter(items/like/regex)` / `equals(other)` / `take(indices)` / `truncate(before,after)` 等未实现,列入下方"规划"。
 
 **已实现(源码实测)**:
 - 选择:`drop(cols...)` / `dropDuplicates(subset)` / `filter(boolean[] mask)` / `select(cols...)` / `takeRows(int[])` / `head(n)` / `tail(n)` / `slice(from,to)` / `sample(n, replace, seed)` / `pop(name)`
@@ -151,7 +155,7 @@ DataFrame
 
 ### 3.8 缺失值处理(已实现 11+)
 
-**已实现**:`isna()`(返回掩码 DataFrame)/ `notna()` / `isnull()` / `notnull()` / `dropna(how)` / `fillna(value)` / `ffill()` / `bfill()` / `pad()`(ffill 别名)/ `backfill()`(bfill 别名)/ `interpolate(method=linear)` / `where(cond)` / `mask(cond)` / `isin(values)` / `replace(toReplace, value)`。
+**已实现**:`isna()`(返回掩码 DataFrame)/ `notna()` / `isnull()` / `notnull()` / `dropna(how)` / `fillna(value)` / **`fillna(Map<列名,值>)`**(按列填充,对齐 pandas fillna(dict))/ `ffill()` / `bfill()` / `pad()`(ffill 别名)/ `backfill()`(bfill 别名)/ `interpolate(method=linear)` / `where(cond)` / `mask(cond)` / `isin(values)` / `replace(toReplace, value)` / **`renameColumns(Map<旧,新>)`**(列重命名,对齐 pandas df.rename(columns=...))。
 
 **规划**:`interpolate(method=time/index/spline)` / `fillna(method/limit/downcast)`。详见 §3.16。
 
@@ -173,7 +177,7 @@ DataFrame
 
 ### 3.11 时间序列(已实现 6+ DatetimeIndex/Frequency 基础设施)
 
-> **L8 修正(2026-08-09)**:早前标题写"已实现 0;全部规划",但代码实测 `shift` / `resample` / `atTime` / `betweenTime` / `asof` 全实现,§3.16 也已列出 —— 方向性矛盾。现按代码实际重写。
+> **口径**:`shift` / `resample` / `atTime` / `betweenTime` / `asof` 经代码实测均已实现(§3.16 已列出),按代码实际描述。
 
 **已实现(源码实测)**:
 - DataFrame 级:`shift(colName, periods)` / `shift(colName, periods, newColName)` / `resample(tsCol, rule)`(返回 Resampler,含 18 方法 sum/mean/count/min/max/median/std/var/ohlc/agg/first/last 等)/ `atTime(tsCol, time)` / `betweenTime(tsCol, start, end)` / `asof(label)`
@@ -202,9 +206,9 @@ DataFrame
 
 所有 `to_xxx` / `read_xxx` 委托 io 子模块(12 格式,见 02 分册)。
 
-### 3.16 路线图(2026-08-09 全部实现完毕 —— §3.16 原"规划项"已全部落地)
+### 3.16 路线图(原"规划项"已全部落地)
 
-> 本节原是"规划集中列表",经 2026-08-09 大规模实现(DataFrame 现 ~195 public 方法 / Series 52,口径见 [`api-counts.md`](api-counts.md)),**§3.16 原"仍规划"项已全部落地**。
+> 本节原是"规划集中列表";DataFrame 现 ~195 public 方法 / Series 52(口径见 [`api-counts.md`](api-counts.md)),**原"仍规划"项已全部落地**。
 > 现仅保留 3 项**真正不做的**(设计决策性排除,非"来不及做")。
 
 #### ✅ 已实现(共 120+ 方法)
@@ -215,7 +219,8 @@ DataFrame
 | 类型转换(§3.2)| `astype` 8 种 dtype(仅 CATEGORY 抛异常)/ `inferObjects` / `convertDtypes` / `toNumpy` |
 | 索引(§3.3)| `idxmax/idxmin` / `duplicated` / `resetIndex/setIndex` / `at/iat/isetitem` / `insert/pop` / `iterrows/itertuples/items/keys` / `addPrefix/addSuffix` |
 | 二元(§3.4)| `add/sub/mul/div ScalarAllColumns` / `dot` / `abs` / `combineFirst` |
-| 函数应用(§3.5)| `applyRow` / `pipe` |
+| 函数应用(§3.5)| `applyRow` / `pipe` / `selectBy`(谓词选列) |
+| record 桥(借鉴 Kotlin DataFrame convertTo)| `toRecords(Class)` 每行转 record / `DataFrame.fromRecords(List)` record 列表建表(组件名↔列名,DType 精确映射) |
 | 统计(§3.6)| `colSkew/colKurt/colMad/colSem/colQuantile/colVar/colProd/colNunique/colAll/colAny/colCorr/colCov/colRank/colCumsum/colCummax/colCummin/colCumprod/colDiff/colPctChange/colClip/colRound/corrMatrix/covMatrix/colMode/colValueCounts` |
 | 重索引(§3.7)| `sample` / `reindex` / `reindexLike` / `squeeze` / `renameAxis` / `setAxis` / `firstValidIndex/lastValidIndex` |
 | 缺失值(§3.8)| `interpolate` / `isin/colIsin` / `where/mask` / `notna/notnull` / `pad/backfill` |
@@ -238,11 +243,11 @@ DataFrame
 
 ## 4. Series 与 accessor
 
-### 4.1 Series 方法(对齐 pandas Series;实测 52 个 public 方法,2026-08-09 补 9 个 pandas 同名方法 + isna/isnull;口径见 api-counts.md)
+### 4.1 Series 方法(对齐 pandas Series;实测 52 个 public 方法;口径见 api-counts.md)
 
 DataFrame 单列即 Series(`df.getSeries(colName)`)。
 
-> **2026-08-09 经源码核实**:`Series.java` 实测 52 个 public 方法(详见下表,口径见 [`api-counts.md`](api-counts.md))。早期版本曾列出"100+ 方法"或"40 方法",均与实测不符;`tolist/to_dict/to_numpy/argmax/argmin/between/isna/isnull/is_unique/hasnans/is_monotonic_increasing` 等**已实现**(见下表)。
+> **口径**:`Series.java` 实测 52 个 public 方法(详见下表,口径见 [`api-counts.md`](api-counts.md));`tolist/to_dict/to_numpy/argmax/argmin/between/isna/isnull/is_unique/hasnans/is_monotonic_increasing` 等**已实现**(见下表)。
 
 **已实现**:
 - 构造:`Series.of(data, name)`(经 DoubleColumn/LongColumn/StringColumn 等具体列类型)。
@@ -254,7 +259,7 @@ DataFrame 单列即 Series(`df.getSeries(colName)`)。
 - 排序:`sortIndicesAscending()` / `sortIndicesDescending()`。
 - accessor:`str()`(返回 StrAccessor,见 §4.2)/ `dt()`(返回 DtAccessor,见 §4.3)。
 
-**2026-08-09 新增(9 个 pandas 同名方法)**:`tolist()` / `to_dict()` / `to_numpy()` / `argmax()` / `argmin()` / `between(left, right)` / `is_monotonic_increasing()` / `is_unique()` / `hasnans()`。
+**pandas 同名方法(9 个)**:`tolist()` / `to_dict()` / `to_numpy()` / `argmax()` / `argmin()` / `between(left, right)` / `is_monotonic_increasing()` / `is_unique()` / `hasnans()`。
 
 **规划(列 §3.16)**:`nsmallest/nlargest`(DataFrame 上已有) / `case_when` / `shape` / `squeeze`。
 
@@ -282,7 +287,7 @@ DataFrame 单列即 Series(`df.getSeries(colName)`)。
 
 ## 5. GroupBy 对象(对齐 pandas.core.groupby;实测 9 个 public 方法)
 
-`df.groupBy("dept","level")` 返回 `GroupBy`。**2026-08-09 经源码核实**,实际支持:
+`df.groupBy("dept","level")` 返回 `GroupBy`,实际支持:
 
 **已实现**:
 - 聚合:`agg(colName, fn)` / `agg(Map<colName, fn>)`(fn 支持 **11 种**:`count/nunique/sum/mean/min/max/first/last/median/std/var`)。
@@ -290,15 +295,15 @@ DataFrame 单列即 Series(`df.getSeries(colName)`)。
 - 过滤:`filter(colName, fn, predicate)`(组级谓词)。
 - 元信息:`size()`(组大小)/ `groupCount()` / `iterGroups()`(返回 `GroupEntry(key, int[] idx)` 迭代器)。
 
-> **NaN/缺失值分组语义(2026-08-09 经测试固定)**:DOUBLE 列含 NaN 时走 generic 路径,所有 NaN 归入同一组(等价 pandas `dropna=False`);LONG 列 null 归一为字符串 `"<NA>"`。pandas 默认 `dropna=True`(丢弃缺失组),若需该语义,链式调 `df.filter(...)`。详见 `GroupBy.buildGroups` javadoc 与 `EdgeCaseTest.NaN分组键归一组`。
+> **NaN/缺失值分组语义**:DOUBLE 列含 NaN 时走 generic 路径,所有 NaN 归入同一组(等价 pandas `dropna=False`);LONG 列 null 归一为字符串 `"<NA>"`。pandas 默认 `dropna=True`(丢弃缺失组),若需该语义,链式调 `df.filter(...)`。详见 `GroupBy.buildGroups` javadoc 与 `EdgeCaseTest.NaN分组键归一组`。
 
-**2026-08-09 更新**:原标"规划"的 resample/stack/unstack/tz_* 等已全部在 §3.16 "已实现"区。GroupBy 本身的 transform/agg/filter/iterGroups 已够用;未实现的 nth/sem/ohlc/prod 聚合是低频,用户可用 DataFrame 级 colCumsum/colDiff/colClip + Resampler.ohlc 替代。
+resample/stack/unstack/tz_* 等在 §3.16 "已实现"区。GroupBy 本身的 transform/agg/filter/iterGroups 已够用;未实现的 nth/sem/ohlc/prod 聚合是低频,用户可用 DataFrame 级 colCumsum/colDiff/colClip + Resampler.ohlc 替代。
 
 ---
 
 ## 6. 窗口与重采样(对齐 pandas 窗口族;实测 7 个聚合)
 
-> **2026-08-09 修正**:`Window.java` 实现 7 个聚合方法;Resampler(17 方法)**已实现**。原"17+ 未实现"措辞已过期。
+> `Window.java` 实现 7 个聚合方法;Resampler(17 方法)**已实现**。
 
 ### 6.1 Rolling(`Series.rolling(window)`)
 **已实现**(7):`mean` / `sum` / `std` / `min` / `max` / `count` / `var`(全部返回 `double[]`)。
@@ -317,13 +322,13 @@ DataFrame 单列即 Series(`df.getSeries(colName)`)。
 
 ### 6.4 Resampler(`df.resample(rule)` —— 全部规划)
 
-> **2026-08-09 修正**:Resampler **已实现**(17 方法:sum/mean/count/min/max/median/std/var/ohlc/agg/first/last);DatetimeIndex + Frequency 基础设施也已落地。
+> Resampler **已实现**(17 方法:sum/mean/count/min/max/median/std/var/ohlc/agg/first/last);DatetimeIndex + Frequency 基础设施已落地。
 
 ---
 
 ## 7. 核心 API 风格示例
 
-> **2026-08-09 修正**:早前版本使用了未实现的 API(`sortValues/groupby/Agg.MEAN/resetIndex/df.resample/df.ewm/cat.categories` 等)。现按 jian 实际 API 重写。所有方法均经源码核实可用。
+> 本节示例按 jian 实际 API 编写,所有方法均经源码核实可用。
 
 ```java
 // 链式(不可变优先,每步返回新 DataFrame)
@@ -374,8 +379,17 @@ double[] ema = df.getSeries("price").ewm(0.3).mean();
 //   2. 遍历 buildSide 建 HashMap<key, List<rowIdx>>
 //   3. 遍历 probeSide 每行查 hash:
 //        INNER 仅匹配产出;LEFT probe 未匹配补 null;RIGHT/OUTER 末尾补 buildSide 未匹配
-//   4. suffixes 处理重名列
+//   4. suffixes 处理重名列:重名列两边都加后缀(左 _x / 右 _y,对齐 pandas,
+//      三条路径 long/double/generic 统一走 mergedNames())
 ```
+
+> merge 重命名示例:`df1.merge(df2, "inner", "id")` 当两表都有非键列 `v` 时,
+> 输出列为 `[id, v_x, v_y]`(与 pandas 完全一致),对照测试 `test_d63` 双锁定(列名 + 值)。
+>
+> 异名键(leftOn≠rightOn):右表键列**保留输出**
+> (`merge(l, r, how, ["k1"], ["k2"], null)` 输出 `[k1, x_x, k2, x_y]`,对齐 pandas);
+> outer/right 右表独有行的左键列为 null(pandas 不把右键回填进左键列;同名键仍回填)。
+> 回归:`DataFrameMergeTest.异名键merge_右表键列保留_对齐pandas` + `test_d64`。
 
 ### 8.3 pivot_table
 
@@ -406,7 +420,7 @@ double[] ema = df.getSeries("price").ewm(0.3).mean();
 | 列名重复 + allows_duplicate_labels=false | 抛 `IllegalArgumentException` |
 | 列不存在 | `IllegalArgumentException`(消息带现有列提示;独立异常类 v2 规划) |
 | 类型不匹配 | `IllegalStateException`(消息带期望/实际;独立异常类 v2 规划) |
-| 按需加载缺失(df.sql 未引 jian-dsl 等) | `ModuleNotLoadedException`(带"请引 xxx jar"提示,已实现 2026-08-02) |
+| 按需加载缺失(df.sql 未引 jian-dsl 等) | `ModuleNotLoadedException`(带"请引 xxx jar"提示) |
 | 行数不一致(二维数组构建) | 抛异常,不静默填 null |
 | groupby key 含 null | 归到 `<NA>` 组 |
 | merge key 两侧类型不同 | 向上转型对齐;不行抛异常 |
@@ -429,9 +443,9 @@ double[] ema = df.getSeries("price").ewm(0.3).mean();
 
 ## 11. 工作量与测试
 
-- **代码量**(2026-08-09 经源码核实):jian-core main 共 ~10,600 行(DataFrame 1800+ + Series 480 + GroupBy 340 + Window 310 + Resampler 280 + DatetimeIndex 200 + Frequency 180 + MultiIndex 170 + 9 种 Column + DataFrameSort/Missing/Reshape/Merge/Stats/Arith/Filter 伴生类 + DType/Schema/Stats SPI 等);测试 ~6,000 行。早前版本声称"自写 14000 行 + 测试 8000 行"是估算偏高。
-- **测试规模**:jian-core 共 **412 测试全过**(2026-08-09 实测,口径见 [`api-counts.md`](api-counts.md))。覆盖:9 种 dtype 列、query(含 in/not in)、groupBy(含 NaN 分组语义,EdgeCaseTest 固化)、merge、pivotTable、melt、sortBy、缺失值、统计、eval、sql、astype 支持 8 种 dtype(仅 CATEGORY 抛异常)。
-- **基准对照**:用 pandas 生成同输入的期望输出,作为 Java 实现的回归基准(浮点容差 1e-10)。pandas 对照差分见 `tests-pbt/properties/test_pandas_diff.py`(20 个对照算子 d1-d20)。
+- **代码量**(经源码核实):jian-core main 共 ~10,600 行(DataFrame 1800+ + Series 480 + GroupBy 340 + Window 310 + Resampler 280 + DatetimeIndex 200 + Frequency 180 + MultiIndex 170 + 9 种 Column + DataFrameSort/Missing/Reshape/Merge/Stats/Arith/Filter 伴生类 + DType/Schema/Stats SPI 等);测试 ~6,000 行。
+- **测试规模**:jian-core 共 **545 测试全过**(口径见 [`api-counts.md`](api-counts.md))。覆盖:9 种 dtype 列、query(含 in/not in)、groupBy(含 NaN 分组语义,EdgeCaseTest 固化)、merge、pivotTable、melt、sortBy、缺失值、统计、eval、sql、astype 支持 8 种 dtype(仅 CATEGORY 抛异常)。
+- **基准对照**:用 pandas 生成同输入的期望输出,作为 Java 实现的回归基准(浮点容差 1e-10)。pandas 对照差分见 `tests-pbt/properties/test_pandas_diff.py`(73 个对照算子 d1-d73)。
 
 ---
 
@@ -444,11 +458,11 @@ double[] ema = df.getSeries("price").ewm(0.3).mean();
 5. 时间序列 DataFrame 级 resample/shift/asfreq/tz_localize/tz_convert/atTime/betweenTime/asof **已实现**;Series 级 diff/shift/pctChange 已实现。
 6. 缺失值按 §2.2 统一处理(DOUBLE 内部 NaN,IO 边界 null)。
 7. **不引任何外部 jar**,仅 JDK 17 编译运行。
-8. 与 pandas 同输入下,数值结果差异 < 1e-10(经 `test_pandas_diff.py` d1-d20 验证)。
+8. 与 pandas 同输入下,数值结果差异 < 1e-10(经 `test_pandas_diff.py` d1-d73 验证)。
 
 ---
 
-## 13. 实现说明(M1 基础已实现,2026-08-01)
+## 13. 实现说明
 
 > 本节是 M1+M2+v2 全部实现后的回填(groupby/merge/pivot/window/Series/Rolling/EWM/MultiIndex/transform/str/dt accessor 全部已落地)。
 
@@ -467,9 +481,9 @@ double[] ema = df.getSeries("price").ewm(0.3).mean();
 | `SimpleQueryParser.java` | df.query 的 L1 子集解析器(递归下降) | ~340 |
 | `DataFrameStats.java` | 描述统计 companion(mean/std/min/max/median/percentile/describe/apply) | ~225 |
 | `DataFrameMissing.java` | 缺失值 companion(isna/dropna/fillna/ffill/bfill) | ~205 |
-| 测试 9 个测试类(DataFrameBasic/Query/Stats/Merge/Reshape/Advanced/EdgeCase/SeriesWindow/TransformAccessor) | 107 用例 | ~2,100 |
+| 测试套件(基础/查询/统计/合并/重塑/边界/窗口/accessor + 蜕变/差分/PBT 等专项) | 数量以 api-counts.md 为准 | ~6,000 |
 
-**编译/测试状态**:`mvn -pl jian/jian-core test` → 107/107 全过,BUILD SUCCESS。
+**编译/测试状态**:`mvn -pl jian/jian-core test` 全过,BUILD SUCCESS(@Test 数以 [api-counts.md](api-counts.md) 为准)。
 
 ### 13.2 与需求的偏差(已实现部分)
 
@@ -506,14 +520,51 @@ double[] ema = df.getSeries("price").ewm(0.3).mean();
 ---
 
 *本分册独立,与 02-06 无耦合。core 单独打包可跑(纯内存变换)。覆盖 pandas DataFrame/Series/GroupBy/Window 全套数据操作。*
-### 13.5 2026-08-02 全项目审查修复
+### 13.5 查询解析与 SPI 能力
 
-- **`in` / `not in` 谓词补全**:`df.query("city in ('SH', 'BJ')")`(core 兜底解析器此前 javadoc 声称支持但实际未实现,会误报"列 in 不存在");数值跨类型相等(Long 30 == Double 30.0)。
-- **LIKE 正则注入修复**:`like` 模式除 `%` `_` 外全部按字面量匹配(防正则注入)。
+- **`in` / `not in` 谓词**:`df.query("city in ('SH', 'BJ')")`;数值跨类型相等(Long 30 == Double 30.0)。
+- **LIKE 字面量匹配**:`like` 模式除 `%` `_` 外全部按字面量匹配(防正则注入)。
 - **`ModuleNotLoadedException` 新增**(`jian.core`):按需加载缺失时抛带安装提示的友好异常(规范 §9),`df.sql()` 在未引 jian-dsl 时即抛此类。
 - **`df.eval()` / `df.sql()` 新增**(规范 07 §2.2):经 `DslEngine` SPI 路由,引 jian-dsl 后自动升级。
-- **StatsProvider SPI 接线**:`DataFrameStats.percentile/describe` 经 `StatsProvider.current()` 计算,引 jian-num-bridge 自动升级为 Commons Math 实现(此前 SPI 无生产消费方,处于休眠状态)。
+- **StatsProvider SPI 接线**:`DataFrameStats.percentile/describe` 经 `StatsProvider.current()` 计算,引 jian-num-bridge 自动升级为 Commons Math 实现。
 
 ---
 
-*M1 基础 + M2 高级(groupby/merge/pivot/reshape/sort)实现完成于 2026-08-01;2026-08-02 全项目审查后 107 测试全过。*
+### 13.6 record 桥与列选择器(借鉴 Kotlin DataFrame)
+
+> 背景:对比分析 JetBrains Kotlin DataFrame(类型安全 DSL)后移植其三点优点(编译器插件级类型追踪/层级列两项**不移植**,理由:Java 无对应机制且 jian 的字符串表达式/SQL 路线对 AI 更友好;嵌套列模型复杂度与 pandas 定位不符)。
+
+| 新 API | 对应 KDF 概念 | 语义要点 |
+|---|---|---|
+| `df.toRecords(Class<T>)` | `convertTo<T>()` / @DataSchema | record 组件名 ↔ 列名精确匹配;df 多余列忽略(投影),组件缺列报错;类型跨族不隐式转换(先 astype);缺失值语义对齐 §3.5(非 DOUBLE 缺失→null 需包装类型组件,DOUBLE 缺失→NaN 不失真) |
+| `DataFrame.fromRecords(List)` | data class → DataFrame | 组件声明类型**精确**定 DType(不推断):String→STRING/int→INT/long→LONG/double→DOUBLE/boolean→BOOL/LocalDate→DATE/LocalDateTime→DATETIME/其它→OBJECT;列表须非空且元素同型 |
+| `df.selectBy(Predicate<String>)` | 列选择器 cols(startsWith(..)) | 谓词作用于列名,命中列保持原列序;无命中返回 0 列表(与 `select()` 空参一致) |
+| `Jian.generateColumnsSource(df, className)`(facade)| schema 常量化 | 生成列名常量类源码(仅返回不落盘),业务代码引用常量防拼写错;非法标识符列名以注释说明 |
+
+- 实现:`jian.core.RecordBridge`(单一职责,零依赖纯反射);测试 `RecordBridgeTest` 9 例(回环蜕变 df→records→df 形状值不变 + 异常路径)+ `JianTest.generateColumnsSource生成常量类`。
+
+### 13.7 共享工具内聚
+
+> 同一语义保持单一定义(否则 core 兜底与 dsl 完整引擎会漂移),共享工具集中如下:
+
+| 共享工具 | 覆盖语义 | 位置 |
+|---|---|---|
+| likeToRegex(LIKE 模式 → 正则,单一定义) | SimpleQueryParser 与 PrattEngine 共用 | `jian.core.LikePattern.toRegex()` |
+| valueEquals / isCmpOp | 同上两处共用 | `DataFrameCompare` |
+| isIntegralNumber | DataFrameCompare 与 PrattEngine 共用 | `DataFrameCompare` |
+| toLongArr / toLongArray | GroupBy 与 DataFrameMerge 共用 | `DataFrameTypes.columnToLongArray()` |
+
+- 有意不动:jian-dsl 内 7 处引号感知扫描(括号深度/词边界/`''`转义组合各异,参数化风险大于收益);core 兜底与 dsl 完整引擎双实现(SPI 设计,差分测试覆盖)。
+
+---
+
+*实现完成;当前测试与 API 数字以 [api-counts.md](api-counts.md) 为准。*
+
+---
+
+### 13.8 对齐 pandas 的算子语义细节(现行)
+
+- `setIndex` 多列时构建 MultiIndex;`pivotTable` 对缺失键行按 pandas `dropna` 语义丢弃。
+- merge `right` 按右表行序、`outer` 按键首现序输出;输出列保留源 dtype(0 行/全 null 不降级)。
+- `spearman` 并列取平均秩;`interpolate` 对无缺失的整型列直通(不降级);`sortBy` 混型键抛 IAE(doc/00 §10.16 第 4 条五入口,对齐 pandas `sort_values` 抛 TypeError);`ohlc` 跳过桶首缺失;`resample("1ME")` 跨短月正确分桶。
+- 测试:jian-core @Test **545**(口径见 [api-counts.md](api-counts.md))。

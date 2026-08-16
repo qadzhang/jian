@@ -83,6 +83,7 @@ public final class Csv {
         private Charset encoding = StandardCharsets.UTF_8;
         private Schema schema = null;
         private boolean allString = false;
+        private boolean warnExtraCols = true;  // 多字段截断警告开关(默认开)
 
         CsvReader(String p) { this.path = Path.of(p); }
         CsvReader(Path p) { this.path = p; }
@@ -130,45 +131,81 @@ public final class Csv {
         public CsvReader allString(boolean v) { this.allString = v; return this; }
 
         /**
+         * 数据行字段数多于列数时是否输出 stderr 警告。
+         * 多余字段始终截断保留(宽容语义不破 ETL);警告一次性汇总(首现行号+累计行数),默认 true。
+         * @param v boolean true=输出警告(默认);false=静默(批量 ETL 降噪用)
+         * @return CsvReader 当前配置器,便于链式调用
+         */
+        public CsvReader warnExtraCols(boolean v) { this.warnExtraCols = v; return this; }
+
+        /**
          * 执行读取。线程安全。自动剥离 UTF-8 BOM(如有)。
+         * <p>行为要点:
+         * ① 空文件 —— 因为预读字符在 EOF(-1)时不回推,所以空文件读出 0 列 0 行的空 DataFrame
+         * (而非带 U+FFFF 幽灵列名的帧);预读流整体纳入 try-with-resources,防 fd 泄漏。
+         * ② 多字段 —— 因为宽容语义要求不破 ETL,所以数据行字段多于列数时保留截断,
+         * 但 stderr 输出一次性汇总警告(首次行号 + 累计行数),可用 {@link #warnExtraCols(boolean)} 关闭。
          * @return DataFrame 解析出的数据帧(列名、行数据、列类型按配置/推断确定)
          * @throws IOException 文件不存在、不可读或解析过程发生 IO 错误时抛出
          */
         public DataFrame go() throws IOException {
             CSVFormat fmt = CSVFormat.DEFAULT.builder().setDelimiter(delimiter).build();
-            // 读第一个字符判断 BOM,有则跳过
-            java.io.PushbackReader pbr = new java.io.PushbackReader(
-                Files.newBufferedReader(path, encoding), 3);
-            int ch = pbr.read();
-            if (ch != '\uFEFF') pbr.unread(ch);  // 不是 BOM,退回
-            try (BufferedReader reader = new BufferedReader(pbr);
-                 CSVParser parser = fmt.parse(reader)) {
-                List<String> names = new ArrayList<>();
-                List<CSVRecord> records = parser.getRecords();
-                if (records.isEmpty()) return DataFrame.of(new Schema(List.of(), List.of()), new Object[0][]);
-                int colCount = records.get(0).size();
-                if (header) {
-                    for (int c = 0; c < colCount; c++) names.add(records.get(0).get(c));
-                    records = records.subList(1, records.size());
-                } else {
-                    for (int c = 0; c < colCount; c++) names.add("_" + c);
-                }
-                Object[][] rows = new Object[records.size()][colCount];
-                for (int r = 0; r < records.size(); r++) {
-                    CSVRecord rec = records.get(r);
-                    for (int c = 0; c < colCount; c++) {
-                        String v = c < rec.size() ? rec.get(c) : null;
-                        rows[r][c] = (v == null || v.isEmpty()) ? null : v;
+            try (java.io.PushbackReader pbr = new java.io.PushbackReader(
+                    Files.newBufferedReader(path, encoding), 3)) {
+                int ch = pbr.read();
+                if (ch != '\uFEFF' && ch != -1) pbr.unread(ch);  // 不是 BOM 且非 EOF,退回(-1 不回推,防幽灵列)
+                try (BufferedReader reader = new BufferedReader(pbr);
+                     CSVParser parser = fmt.parse(reader)) {
+                    List<String> names = new ArrayList<>();
+                    List<CSVRecord> records = parser.getRecords();
+                    if (records.isEmpty()) return DataFrame.of(new Schema(List.of(), List.of()), new Object[0][]);
+                    int colCount = records.get(0).size();
+                    int headerOffset = header ? 1 : 0;
+                    if (header) {
+                        for (int c = 0; c < colCount; c++) names.add(records.get(0).get(c));
+                        // 因为外部导出文件常见重复列名,若直接取首记录作列名会触发
+                        // Schema 校验抛"列名重复"、一个字段都拿不到,所以参照 Excel.dedupNames
+                        // 的 _1/_2 后缀风格自动改名并 stderr 警告一次。
+                        // 有意差异:pandas read_csv 自动改 "name.1",jian 统一用 "_1"(与 Excel 模块一致)。
+                        List<String> deduped = dedupHeaderNames(names);
+                        if (!deduped.equals(names)) {
+                            System.err.println("[jian-csv] 警告:表头存在重复列名,已自动改名"
+                                    + "(第 2 个重复名加 _1、第 3 个 _2,...;pandas 用 name.1,jian 统一 _1 与 Excel 模块一致):"
+                                    + names + " -> " + deduped);
+                        }
+                        names = deduped;
+                        records = records.subList(1, records.size());
+                    } else {
+                        for (int c = 0; c < colCount; c++) names.add("_" + c);
                     }
-                }
-                if (allString) {
-                    List<DType> allStr = new ArrayList<>();
-                    for (int c = 0; c < colCount; c++) allStr.add(DType.STRING);
-                    return DataFrame.of(new Schema(names, allStr), rows);
-                } else if (schema != null) {
-                    return DataFrame.of(schema, rows);
-                } else {
-                    return DataFrame.of(Schema.infer(names, rows), rows);
+                    Object[][] rows = new Object[records.size()][colCount];
+                    int extraRows = 0, firstExtraLine = -1;
+                    for (int r = 0; r < records.size(); r++) {
+                        CSVRecord rec = records.get(r);
+                        if (rec.size() > colCount) {
+                            extraRows++;
+                            if (firstExtraLine < 0) firstExtraLine = (int) rec.getRecordNumber();
+                        }
+                        for (int c = 0; c < colCount; c++) {
+                            String v = c < rec.size() ? rec.get(c) : null;
+                            rows[r][c] = (v == null || v.isEmpty()) ? null : v;
+                        }
+                    }
+                    // 多字段一次性汇总警告(不刷屏),可关
+                    if (warnExtraCols && extraRows > 0) {
+                        System.err.println("[jian-csv] 警告:" + extraRows + " 行字段数多于列数(" + colCount
+                                + "),多余字段被截断;首见于文件第 " + firstExtraLine + " 行(含表头行号)。"
+                                + "如需关闭本警告:Csv.read(path).warnExtraCols(false)");
+                    }
+                    if (allString) {
+                        List<DType> allStr = new ArrayList<>();
+                        for (int c = 0; c < colCount; c++) allStr.add(DType.STRING);
+                        return DataFrame.of(new Schema(names, allStr), rows);
+                    } else if (schema != null) {
+                        return DataFrame.of(schema, rows);
+                    } else {
+                        return DataFrame.of(Schema.infer(names, rows), rows);
+                    }
                 }
             }
         }
@@ -213,6 +250,11 @@ public final class Csv {
         public DataFrame go() throws IOException {
             if (widths == null) throw new IllegalStateException("FWF 必须指定 widths");
             List<String> lines = Files.readAllLines(path, encoding);
+            // 因为 Files.readAllLines 不过滤 BOM,带 BOM 的 FWF 首列名会变 "\uFEFFid"
+            // (宽度计算也随之错位),所以与 CsvReader/JsonReader 同口径先剥 BOM。
+            if (!lines.isEmpty() && !lines.get(0).isEmpty() && lines.get(0).charAt(0) == '\uFEFF') {
+                lines.set(0, lines.get(0).substring(1));
+            }
             if (lines.isEmpty()) return DataFrame.of(new Schema(List.of(), List.of()), new Object[0][]);
             int colCount = widths.length;
             List<String> names = new ArrayList<>();
@@ -283,13 +325,27 @@ public final class Csv {
             CSVFormat fmt = CSVFormat.DEFAULT.builder().setDelimiter(delimiter).build();
             try (java.io.BufferedWriter w = Files.newBufferedWriter(path, encoding);
                  CSVPrinter printer = new CSVPrinter(w, fmt)) {
-                if (header) printer.printRecord(df.columnNames());
+                if (header) {
+                    // 因为列名为 "=cmd|calc"/"+x"/"@y" 时首行同样会被 Excel 当公式执行
+                    // (仅防护数据格不够),所以表头列名也走公式注入防护:
+                    // 与数据格同一 sanitizeFormulas 开关、同一跳过集(6 字符)。
+                    java.util.List<String> hdr = new java.util.ArrayList<>(df.columnCount());
+                    for (String name : df.columnNames()) {
+                        hdr.add(sanitizeFormulas && startsWithFormulaAfterWhitespace(name) ? "'" + name : name);
+                    }
+                    printer.printRecord(hdr);
+                }
                 for (Object[] row : df.iterRows()) {
                     for (int c = 0; c < row.length; c++) {
                         Object v = row[c];
                         if (v == null) { printer.print(""); continue; }
                         String s = String.valueOf(v);
-                        if (sanitizeFormulas && startsWithFormulaAfterWhitespace(s)) {
+                        // 因为 OWASP 防的是字符串被 Excel 当公式执行,而数值/布尔的字符串形式
+                        // ("-1.5"/"true")不可能构成公式载荷(若对 -0.0/-1.5 等合法负值加 ' 前缀,
+                        // round-trip 后数值列整列降级 STRING 且值被污染),所以防护只对字符串值生效,
+                        // Number/Boolean 豁免。
+                        boolean sanitizable = !(v instanceof Number) && !(v instanceof Boolean);
+                        if (sanitizeFormulas && sanitizable && startsWithFormulaAfterWhitespace(s)) {
                             // OWASP CSV Injection:在前导空白/制表符后接 = + - @ 时,
                             // 整串加 ' 前缀(Escel/LibreOffice 会把首字符 ' 视为转义)。
                             printer.print("'" + s);
@@ -311,9 +367,12 @@ public final class Csv {
         private static boolean startsWithFormulaAfterWhitespace(String s) {
             if (s.isEmpty()) return false;
             int i = 0;
-            // 跳过前导空白类字符(空格、Tab、CR、LF)——Excel/LibreOffice 解析时会 trim
+            // 跳过前导空白类字符 + NUL/BOM(空格、Tab、CR、LF、\u0000、\uFEFF)——
+            // Excel/LibreOffice 解析时会 trim;因为若不跳 NUL/BOM,"\uFEFF=1+1" 可
+            // 绕过首字符检查,所以一并跳过(理论加固)。
             while (i < s.length() && (s.charAt(i) == ' ' || s.charAt(i) == '\t'
-                    || s.charAt(i) == '\r' || s.charAt(i) == '\n')) {
+                    || s.charAt(i) == '\r' || s.charAt(i) == '\n'
+                    || s.charAt(i) == '\u0000' || s.charAt(i) == '\uFEFF')) {
                 i++;
             }
             if (i >= s.length()) return false;
@@ -331,5 +390,39 @@ public final class Csv {
             pos += widths[c];
         }
         return r;
+    }
+
+    // ┌─ What : dedupHeaderNames —— CSV 表头列名去重(重名自动加 _1/_2 后缀)
+    // │  Why  : 因为重复表头会触发 Schema.validateUniqueNames 抛"列名重复",导致
+    // │         整个读取失败、一个字段都拿不到,所以对重名列自动加 _1/_2 后缀去重;
+    // │         同项目 Excel.dedupNames 同风格,pandas read_csv 自动改 name.1 ——
+    // │         jian 统一 _1 风格(有意差异,与 Excel 模块一致)
+    // │  Who  : CsvReader.go()(header=true 分支)
+    // │  When : 首记录收集完列名之后、构造 Schema 之前
+    // │  Where: jian-io-csv/Csv.java
+    // │  How  : 伪代码:
+    // │           1. seen 记录每个名字已出现次数(LinkedHashMap 保序)
+    // │           2. 名字首次出现 → 原样保留;第 k 次重复(k≥1)→ 改为 "名_k"
+    // │         关键变量变化:
+    // │           - names:输入原始列名(可能重复)→ 输出全部唯一的列名;
+    // │           - seen:每遇到一个名字,其计数 +1(重复者取改名前的计数作后缀)。
+    // │         逻辑路线(两条路径):
+    // │           路径 A(名字首次出现)→ 原样加入结果,seen 计 1;
+    // │           路径 B(重复)→ 结果加 "名_计数",计数自增(第 2 个重复得 _1,第 3 个得 _2)。
+    // │         数据走向:CSV 首记录字段 → names → dedupHeaderNames → DataFrame 列名。
+    private static List<String> dedupHeaderNames(List<String> names) {
+        List<String> result = new ArrayList<>(names.size());
+        java.util.Map<String, Integer> seen = new java.util.LinkedHashMap<>();
+        for (String name : names) {
+            Integer count = seen.get(name);
+            if (count == null) {
+                result.add(name);
+                seen.put(name, 1);
+            } else {
+                result.add(name + "_" + count);   // 第 2 个重复 → _1,第 3 个 → _2
+                seen.put(name, count + 1);
+            }
+        }
+        return result;
     }
 }

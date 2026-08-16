@@ -22,9 +22,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 // │  Where: jian-core/src/test/java/jian/core/MetamorphicTest.java
 // │  How  : 数据走向:种子随机生成 df → 跑算子 → 断言"蜕变关系"成立。
 // │         关键:断言用"关系",不用"具体期望值"。例:sortBy 后 rowCount 不变(不论输入)。
-// │         种子策略(2026-08-09 修复 C-1 flaky 反模式):
-// │           - 不再用 `SEED + System.nanoTime()`(裸 nanoTime 失败时种子不可见、不可复现);
-// │           - 改用 nextSeed() 取 [0, 1e6) 散列,失败时断言描述打印 seed,可 -Dtest.seed=N 回放。
+// │         种子策略:nextSeed() 取 [0, 1e6) 散列,失败时断言描述打印 seed,可 -Dtest.seed=N 回放
+// │         (不用裸 nanoTime,避免 flaky 反模式)。
 public class MetamorphicTest {
 
     private static final long SEED = 20260808L;
@@ -91,7 +90,7 @@ public class MetamorphicTest {
 
     /**
      * MR4: sortBy 后,排序键列确实单调。
-     * <p>2026-08-09 边界注入修复后:v 列含 NaN。NaN 与任何值的 >= 比较都返回 false
+     * <p>v 列含 NaN(边界注入)。NaN 与任何值的 >= 比较都返回 false
      * (IEEE 754 语义),所以断言要跳过含 NaN 的相邻对(NaN 通常被 sort 放在末尾,
      * 与 pandas 行为一致)。这不是 sortBy 的 bug,是测试断言需适配 NaN 语义。
      */
@@ -123,7 +122,7 @@ public class MetamorphicTest {
 
     /**
      * MR6: filter(p) ∪ filter(¬p) ∪ filter(NaN) == 原 df (按 id 多重集)——三分互补。
-     * <p>2026-08-09 边界注入修复后:v 列含 NaN。IEEE 754 规定 NaN 既不满足 `> 50`
+     * <p>v 列含 NaN(边界注入)。IEEE 754 规定 NaN 既不满足 `> 50`
      * 也不满足 `<= 50`,所以互补关系需扩展为三分:`>50` ∪ `<=50` ∪ `NaN` = 全集。
      * 这不是 filter 的 bug,是谓词在 NaN 上的预期行为(与 SQL NULL 语义一致)。
      */
@@ -159,9 +158,8 @@ public class MetamorphicTest {
     /**
      * MR7: inner join 的结果行数 ≤ min(左, 右)——**前提:左右 key 唯一**。
      *
-     * <p>修复(AI agent2 复审发现):原版用 randomDf(允许重复 id),但 inner join 在重复 key 时
-     * 结果行数可以超过 min(左 N1 行 key=k × 右 N2 行 key=k = N1×N2)。原断言在数学上不成立,
-     * 加上 System.nanoTime() 种子,变成 flaky test(AI agent2 实测出 31>30)。
+     * <p>前提:左右 key 唯一(randomDf 允许重复 id,inner join 在重复 key 时
+     * 结果行数可以超过 min:左 N1 行 key=k × 右 N2 行 key=k = N1×N2,断言在数学上不成立)。
      * 改用 uniqueIdDf 保证 key 唯一,断言才严格成立。
      */
     @RepeatedTest(10)
@@ -216,9 +214,9 @@ public class MetamorphicTest {
     }
 
     /**
-     * MR12(AI agent2 抓的死测试,修复):真正调 df.groupBy().agg(),
+     * MR12:真正调 df.groupBy().agg(),
      * 断言"各组 count 之和 == 原表行数"(覆盖性)+ "组数 == 唯一 gid 数"(无重复组)。
-     * 原版用 LinkedHashMap 手算分组,**完全没调 df.groupBy()**,与 P10 同类死测试。
+     * 注意:不能用手算分组替代调用,那样测不到 df.groupBy() 本身。
      */
     @Test
     void mr_groupBy_并集全覆盖且互斥() {
@@ -253,8 +251,8 @@ public class MetamorphicTest {
     }
 
     // ======================== 辅助:随机数据生成 ========================
-    // 边界注入策略(2026-08-09 修复 B-1:覆盖边界值,避免蜕变测试在 ±0.0 / NaN / MAX
-    // 边界全盲)。参考 AI 测试方法学指南 模式 A:5% NaN / 3% ±0.0 / 3% MAX / 3% MIN。
+    // 边界注入策略:覆盖边界值,避免蜕变测试在 ±0.0 / NaN / MAX 边界全盲。
+    // 参考 AI 测试方法学指南 模式 A:5% NaN / 3% ±0.0 / 3% MAX / 3% MIN。
     // 关键:id 列保持普通值(不注 null id,因 merge/sort 的 null key 行为由专门用例覆盖);
     //     v 列注入边界值,触发 sortBy/groupBy/filter 在边界条件下的潜在 bug。
 
@@ -488,6 +486,30 @@ public class MetamorphicTest {
         assertThat(var).isGreaterThan(100).isLessThan(200);  // var ≈ 166.67
     }
 
+    /** MR22b: groupBy first/last 必须跳过组内缺失(对齐 pandas skipna=True)。
+     *  契约:直接取组内 idx 首尾会在末值为 null 时给 null,与 pandas last()(跳缺失)不一致,
+     *  所以 first/last 语义必须跳缺失。 */
+    @Test
+    void mr_groupBy_first_last跳过缺失() {
+        // b 组 = [10, null]:pandas first()=10.0,last()=10.0(默认 skipna=True)
+        DataFrame df = DataFrame.ofColumnArrays(
+            java.util.List.of("g", "v"),
+            new Object[]{ new String[]{"a","a","b","b","c"},
+                          new double[]{1, 2, 10, Double.NaN, 5} });
+        Map<String, String> spec = new HashMap<>();
+        spec.put("v", "first");
+        assertThat(((Number) df.groupBy("g").agg(spec).get(1, "v_first")).doubleValue()).isEqualTo(10.0);
+        spec.clear(); spec.put("v", "last");
+        assertThat(((Number) df.groupBy("g").agg(spec).get(1, "v_last")).doubleValue()).isEqualTo(10.0);
+        // 组内全缺失:first/last 返回 NaN(DoubleColumn get() 不失真,§3.5.1;pandas 全 NaN 组 → NaN)
+        DataFrame df2 = DataFrame.ofColumnArrays(
+            java.util.List.of("g", "v"),
+            new Object[]{ new long[]{1}, new double[]{Double.NaN} });
+        spec.clear(); spec.put("v", "first");
+        Object f = df2.groupBy("g").agg(spec).get(0, "v_first");
+        assertThat(f).isNotNull().isEqualTo(Double.NaN);
+    }
+
     /** MR23: agg 的 sum 应等于手工逐元素加(性质:fold 关系)。 */
     @Test
     void mr_groupBy_sum等于手工加总() {
@@ -578,31 +600,231 @@ public class MetamorphicTest {
     // ======================== MR28:sortIndex 蜕变(补未测方法)========================
 
     /**
-     * MR28: sortIndex 后,行数守恒 + 每列值的多重集不变(只是行序变)。
-     * 覆盖之前未测的 sortIndex;RangeIndex 下升序 = 原样,降序 = 行倒序,两种都验。
+     * MR28: sortIndex 按索引重排行,锁三条性质。
+     * <p>注意:若比较前把两边的列各排一遍序再比较多重集,则无论 sortIndex 排错、排反、
+     * 甚至不排,多重集都必然相等,蜕变关系退化成恒真式,验不出任何排序 BUG。
+     * <p>本测试用**洗牌索引**把性质真正暴露出来:附加列 k = 19..0(降序)作索引 →
+     * sortIndex(true) 必须把行**完全反转**,从而可断言:
+     * ① 索引升序;② **行级配对不变**(第 i 行的 id/v 必须等于原第 19-i 行 —— 错排/串行立即暴露);
+     * ③ 多重集不变(保留作 sanity)。另补空表/单行边界。
      */
     @RepeatedTest(5)
     void mr_sortIndex_行数守恒且值多重集不变() {
         // 用本文件已有的 randomDf 构造(它返回 id long + v double,适合多重集断言)
-        DataFrame df = randomDf(new Random(42), 20);
+        DataFrame base = randomDf(new Random(42), 20);
+        int n = base.rowCount();
 
-        // 升序 sortIndex
-        DataFrame asc = df.sortIndex(true);
-        assertThat(asc.rowCount()).as("MR28 sortIndex 行数守恒(升)").isEqualTo(df.rowCount());
-        long[] origIds = ((LongColumn) df.getColumn("id")).data();
-        double[] origVs = ((DoubleColumn) df.getColumn("v")).data();
-        // 多重集不变:排序后逐位相等
+        // 附加降序索引列 k = n-1..0 → setIndex 后 sortIndex(true) 应把行完全反转
+        // (用原始类型数组重建,保持 LongColumn/DoubleColumn dtype 不经 Object 推断降级)
+        long[] ids0 = ((LongColumn) base.getColumn("id")).data();
+        double[] vs0 = ((DoubleColumn) base.getColumn("v")).data();
+        long[] ks = new long[n];
+        for (int i = 0; i < n; i++) ks[i] = n - 1 - i;
+        DataFrame df = DataFrame.ofColumnArrays(
+                java.util.List.of("id", "v", "k"), new Object[]{ids0, vs0, ks});
+        DataFrame shuffled = df.setIndex("k");           // 索引 = [n-1, n-2, ..., 0]
+
+        // ① sortIndex(true):行数守恒 + 索引严格升序 0..n-1
+        DataFrame asc = shuffled.sortIndex(true);
+        assertThat(asc.rowCount()).as("MR28 sortIndex 行数守恒(升)").isEqualTo(n);
+        for (int i = 0; i < n; i++) {
+            assertThat(((Long) asc.index().get(i)).longValue())
+                    .as("MR28 升序后索引[%d] 应为 %d", i, i).isEqualTo(i);
+        }
+
+        // ② 行级配对不变:升序后第 i 行 == 原表第 (n-1-i) 行(索引是完美反转,可逐位钉死)
+        long[] origIds = ((LongColumn) base.getColumn("id")).data();
+        double[] origVs = ((DoubleColumn) base.getColumn("v")).data();
+        long[] ascIds = ((LongColumn) asc.getColumn("id")).data();
+        double[] ascVs = ((DoubleColumn) asc.getColumn("v")).data();
+        for (int i = 0; i < n; i++) {
+            int j = n - 1 - i;
+            assertThat(ascIds[i]).as("MR28 行配对 id[%d](应为原行 %d 的 id)", i, j).isEqualTo(origIds[j]);
+            double a = ascVs[i], b = origVs[j];
+            boolean sameVal = (Double.isNaN(a) && Double.isNaN(b)) || a == b;
+            assertThat(sameVal).as("MR28 行配对 v[%d](应为原行 %d 的 v:%s,实际 %s)", i, j, b, a).isTrue();
+        }
+
+        // ③ 多重集不变(降序同样验;sanity,不再是唯一防线)
         long[] origIdsSorted = java.util.Arrays.stream(origIds).sorted().toArray();
-        long[] ascIdsSorted  = java.util.Arrays.stream(((LongColumn) asc.getColumn("id")).data()).sorted().toArray();
+        long[] ascIdsSorted  = java.util.Arrays.stream(ascIds).sorted().toArray();
         assertThat(ascIdsSorted).as("MR28 id 多重集不变(升)").isEqualTo(origIdsSorted);
         double[] origVsSorted = java.util.Arrays.stream(origVs).sorted().toArray();
-        double[] ascVsSorted  = java.util.Arrays.stream(((DoubleColumn) asc.getColumn("v")).data()).sorted().toArray();
+        double[] ascVsSorted  = java.util.Arrays.stream(ascVs).sorted().toArray();
         assertThat(ascVsSorted).as("MR28 v 多重集不变(升)").isEqualTo(origVsSorted);
 
-        // 降序 sortIndex
-        DataFrame desc = df.sortIndex(false);
-        assertThat(desc.rowCount()).as("MR28 sortIndex 行数守恒(降)").isEqualTo(df.rowCount());
-        long[] descIdsSorted = java.util.Arrays.stream(((LongColumn) desc.getColumn("id")).data()).sorted().toArray();
-        assertThat(descIdsSorted).as("MR28 id 多重集不变(降)").isEqualTo(origIdsSorted);
+        // 降序 sortIndex:索引应为 n-1..0,且行配对回到原序(升序的再反转)
+        DataFrame desc = shuffled.sortIndex(false);
+        assertThat(desc.rowCount()).as("MR28 sortIndex 行数守恒(降)").isEqualTo(n);
+        long[] descIds = ((LongColumn) desc.getColumn("id")).data();
+        for (int i = 0; i < n; i++) {
+            assertThat(((Long) desc.index().get(i)).longValue())
+                    .as("MR28 降序后索引[%d] 应为 %d", i, n - 1 - i).isEqualTo(n - 1 - i);
+            assertThat(descIds[i]).as("MR28 降序行配对 id[%d]", i).isEqualTo(origIds[i]);
+        }
+
+        // 边界:空表与单行表 sortIndex 不抛、守恒
+        DataFrame empty = DataFrame.ofColumnArrays(java.util.List.of("id", "v"),
+                new Object[]{new long[0], new double[0]});
+        assertThat(empty.sortIndex(true).rowCount()).isEqualTo(0);
+        assertThat(empty.sortIndex(false).rowCount()).isEqualTo(0);
+        DataFrame single = DataFrame.ofColumnArrays(java.util.List.of("id", "v"),
+                new Object[]{new long[]{7L}, new double[]{1.5}});
+        assertThat(single.sortIndex(true).rowCount()).isEqualTo(1);
+        assertThat(single.sortIndex(true).getColumn("id").get(0)).isEqualTo(7L);
+    }
+
+    /**
+     * MR29: pivotTable(index, columns, values, "nunique") 必须可用,且与 GroupBy.nunique
+     * 同语义(跳过组内缺失,全缺失组 → 0,对齐 pandas pivot_table aggfunc="nunique")。
+     * 契约:javadoc 声明支持的聚合必须真实可用(nunique 不得抛"不支持的聚合")。
+     */
+    @Test
+    void mr_pivotTable_nunique对齐groupBy() {
+        // (i, c, v):a-x 组两个 1.0(nunique=1)、a-y 组 2.0(nunique=1)、b-x 组 3.0(null 跳过,nunique=1)
+        DataFrame df = DataFrame.ofColumnArrays(
+            java.util.List.of("i", "c", "v"),
+            new Object[]{ new String[]{"a", "a", "a", "b", "b"},
+                           new String[]{"x", "x", "y", "x", "y"},
+                           new double[]{1.0, 1.0, 2.0, 3.0, Double.NaN} });
+        // pivotTable 必须不抛异常
+        DataFrame pt = df.pivotTable("i", "c", "v", "nunique");
+        assertThat(pt.rowCount()).as("MR29 pivotTable nunique 行数").isEqualTo(2);
+        assertThat(pt.columnCount()).as("MR29 pivotTable nunique 列数(i + x/y)").isEqualTo(3);
+        // 行 i=a:第 1 行 → a-x 组 nunique=1,a-y 组 nunique=1
+        assertThat(pt.get(0, "x")).as("MR29 a-x nunique").isEqualTo(1.0);
+        assertThat(pt.get(0, "y")).as("MR29 a-y nunique").isEqualTo(1.0);
+        // 行 i=b:b-y 组全 NaN → nunique=0(对齐 pandas),b-x 组 → 1
+        assertThat(pt.get(1, "x")).as("MR29 b-x nunique").isEqualTo(1.0);
+        assertThat(pt.get(1, "y")).as("MR29 b-y 全 NaN nunique=0").isEqualTo(0.0);
+        // 交叉验证:与 GroupBy.nunique 同语义(分组后 nunique 去重计数一致)
+        Map<String, String> spec = new HashMap<>();
+        spec.put("v", "nunique");
+        DataFrame g = df.groupBy("i").agg(spec);
+        assertThat(g.rowCount()).as("MR29 groupBy nunique 行数").isEqualTo(2);
+    }
+
+    /**
+     * MR30: resample 对乱序时间输入必须按时间索引分桶(对齐 pandas,即使输入未排序)。
+     * 因为直接用扫描序(不对时间排序)会在乱序输入下网格起点错、桶分配错乱、出现错值,
+     * 所以用乱序输入验证:6 个乱序日点(01-03/01/02/04/06/05,值 1..6),1D 分桶后 sum 必须
+     * 按日期升序输出 [01-01:2, 01-02:3, 01-03:1, 01-04:4, 01-05:6, 01-06:5]。
+     */
+    @Test
+    void mr_resample乱序输入按时间分桶() {
+        // 乱序:2024-01-03(值1)、01-01(值2)、01-02(值3)、01-04(值4)、01-06(值5)、01-05(值6)
+        DataFrame df = DataFrame.of(
+            Schema.of("ts", DType.DATETIME, "v", DType.DOUBLE),
+            new Object[][]{
+                {java.time.LocalDateTime.of(2024, 1, 3, 0, 0), 1.0},
+                {java.time.LocalDateTime.of(2024, 1, 1, 0, 0), 2.0},
+                {java.time.LocalDateTime.of(2024, 1, 2, 0, 0), 3.0},
+                {java.time.LocalDateTime.of(2024, 1, 4, 0, 0), 4.0},
+                {java.time.LocalDateTime.of(2024, 1, 6, 0, 0), 5.0},
+                {java.time.LocalDateTime.of(2024, 1, 5, 0, 0), 6.0}});
+        DataFrame r = df.resample("ts", "1D").sum("v");
+        assertThat(r.rowCount()).as("MR30 resample 乱序行数(6 个日桶)").isEqualTo(6);
+        DoubleColumn sums = r.getDoubleColumn("v_sum");
+        // 按日期升序:01-01→2, 01-02→3, 01-03→1, 01-04→4, 01-05→6, 01-06→5
+        assertThat(sums.getDouble(0)).as("MR30 01-01 sum").isCloseTo(2.0, org.assertj.core.data.Offset.offset(1e-9));
+        assertThat(sums.getDouble(1)).as("MR30 01-02 sum").isCloseTo(3.0, org.assertj.core.data.Offset.offset(1e-9));
+        assertThat(sums.getDouble(2)).as("MR30 01-03 sum").isCloseTo(1.0, org.assertj.core.data.Offset.offset(1e-9));
+        assertThat(sums.getDouble(3)).as("MR30 01-04 sum").isCloseTo(4.0, org.assertj.core.data.Offset.offset(1e-9));
+        assertThat(sums.getDouble(4)).as("MR30 01-05 sum").isCloseTo(6.0, org.assertj.core.data.Offset.offset(1e-9));
+        assertThat(sums.getDouble(5)).as("MR30 01-06 sum").isCloseTo(5.0, org.assertj.core.data.Offset.offset(1e-9));
+    }
+
+    // ======================== 测试质量补强:交换律前提 / NaN 覆盖 / 跨类型 key / ±0.0 / CATEGORY / 退化路径 ========================
+
+    /** MR10 交换律(唯一 key 版):用 uniqueIdDf —— randomDf 两侧 key 独立随机,
+     *  A∩B 中 key 的左右重复模式不一致时行数可不等,破坏交换律前提。 */
+    @RepeatedTest(10)
+    void mr_innerJoin_交换律_uniqueId() {
+        Random rnd = new Random(nextSeed());
+        DataFrame a = uniqueIdDf(rnd, 30, 100);
+        DataFrame b = uniqueIdDf(rnd, 25, 100);
+        assertThat(a.merge(b, "inner", "id").rowCount())
+                .isEqualTo(b.merge(a, "inner", "id").rowCount());
+    }
+
+    /** 补充:first/last 跳 NaN 覆盖"首尾都 NaN"与"中间 NaN"。 */
+    @Test
+    void mr_groupBy_first_last_多位置NaN() {
+        // 首尾都 NaN:first 跳过首 NaN 取 10,last 跳过尾 NaN 取 10
+        DataFrame df = DataFrame.ofColumnArrays(
+            java.util.List.of("g", "v"),
+            new Object[]{ new String[]{"b","b","b"}, new double[]{Double.NaN, 10, Double.NaN} });
+        Map<String, String> spec = new HashMap<>();
+        spec.put("v", "first");
+        assertThat(((Number) df.groupBy("g").agg(spec).get(0, "v_first")).doubleValue()).isEqualTo(10.0);
+        spec.clear(); spec.put("v", "last");
+        assertThat(((Number) df.groupBy("g").agg(spec).get(0, "v_last")).doubleValue()).isEqualTo(10.0);
+        // 中间 NaN:不影响 first/last
+        DataFrame df2 = DataFrame.ofColumnArrays(
+            java.util.List.of("g", "v"),
+            new Object[]{ new String[]{"a","a","a"}, new double[]{5, Double.NaN, 15} });
+        spec.clear(); spec.put("v", "first");
+        assertThat(((Number) df2.groupBy("g").agg(spec).get(0, "v_first")).doubleValue()).isEqualTo(5.0);
+        spec.clear(); spec.put("v", "last");
+        assertThat(((Number) df2.groupBy("g").agg(spec).get(0, "v_last")).doubleValue()).isEqualTo(15.0);
+    }
+
+    /** 补充:INT×LONG 跨类型 key join 与同类型 join 结果一致(数值等价)。 */
+    @Test
+    void mr_join_INT与LONG跨类型key等价() {
+        DataFrame intLeft = DataFrame.ofColumnArrays(java.util.List.of("id", "v"),
+            new Object[]{ new int[]{1, 2, 3}, new double[]{10, 20, 30} });
+        DataFrame longRight = DataFrame.ofColumnArrays(java.util.List.of("id", "v"),
+            new Object[]{ new long[]{2L, 3L, 4L}, new double[]{200, 300, 400} });
+        DataFrame longLeft = DataFrame.ofColumnArrays(java.util.List.of("id", "v"),
+            new Object[]{ new long[]{1L, 2L, 3L}, new double[]{10, 20, 30} });
+        // INT×LONG 与 LONG×LONG 命中行数一致(数值等价语义)
+        assertThat(intLeft.merge(longRight, "inner", "id").rowCount())
+                .isEqualTo(longLeft.merge(longRight, "inner", "id").rowCount());
+    }
+
+    /** 补充:±0.0 比较等价(同一桶/同一次序,不炸不丢行)。 */
+    @Test
+    void mr_sortBy与groupBy_正负零等价() {
+        DataFrame df = DataFrame.ofColumnArrays(java.util.List.of("k", "v"),
+            new Object[]{ new double[]{0.0, -0.0}, new double[]{1.0, 2.0} });
+        // groupBy:±0.0 落入同一桶(数值等价)
+        Map<String, String> spec = new HashMap<>();
+        spec.put("v", "sum");
+        assertThat(df.groupBy("k").agg(spec).rowCount()).isEqualTo(1);
+        // sortBy:行数守恒,±0.0 排序不抛错
+        DataFrame df2 = DataFrame.ofColumnArrays(java.util.List.of("v"),
+            new Object[]{ new double[]{0.0, -0.0, 1.0} });
+        assertThat(df2.sortBy("v", true).rowCount()).isEqualTo(3);
+    }
+
+    /** 补充:CATEGORY 列 merge 后保留类别元数据。 */
+    @Test
+    void mr_merge_CATEGORY列保留() {
+        DataFrame a = DataFrame.of(Schema.of("id", DType.INT, "cat", DType.CATEGORY),
+            new Object[][]{{1, "x"}, {2, "y"}});
+        DataFrame b = DataFrame.of(Schema.of("id", DType.INT, "cat", DType.CATEGORY),
+            new Object[][]{{2, "y"}, {3, "z"}});
+        DataFrame r = a.merge(b, "inner", "id");
+        // 结果 cat 列仍为 CATEGORY(不降级 STRING 丢类别元数据);
+        // 对齐 pandas:重名列两边加后缀,左表列输出为 cat_x(右表为 cat_y)
+        assertThat(r.getColumn("cat_x").dtype()).isEqualTo(DType.CATEGORY);
+        assertThat(r.getColumn("cat_y").dtype()).isEqualTo(DType.CATEGORY);
+    }
+
+    /** 补充:空表/单行表的退化路径。 */
+    @Test
+    void mr_空表与单行退化() {
+        DataFrame empty = DataFrame.ofColumnArrays(java.util.List.of("id", "v"),
+            new Object[]{ new long[0], new double[0] });
+        assertThat(empty.sortBy("v", true).rowCount()).isEqualTo(0);
+        assertThat(empty.groupBy("id").size().rowCount()).isEqualTo(0);
+        assertThat(empty.merge(empty, "inner", "id").rowCount()).isEqualTo(0);
+        assertThat(empty.head(5).rowCount()).isEqualTo(0);
+        DataFrame one = DataFrame.ofColumnArrays(java.util.List.of("id", "v"),
+            new Object[]{ new long[]{1}, new double[]{5.0} });
+        assertThat(one.nlargest(1, "v").rowCount()).isEqualTo(1);
+        assertThat(one.groupBy("id").size().rowCount()).isEqualTo(1);
+        assertThat(one.fillna(0.0).rowCount()).isEqualTo(1);
     }
 }

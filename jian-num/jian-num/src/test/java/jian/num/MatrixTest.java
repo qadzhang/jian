@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-// ┌─ What : Matrix 别名与 JianNum 相关别名的单元测试(2026-08-02 补齐:规范 06 §2.1/§2.3)
+// ┌─ What : Matrix 别名与 JianNum 相关别名的单元测试(规范 06 §2.1/§2.3)
 class MatrixTest {
 
     @Test

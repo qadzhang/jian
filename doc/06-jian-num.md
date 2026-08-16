@@ -192,7 +192,7 @@ fit.slope(); fit.intercept(); fit.rSquared();
 
 ---
 
-## 7. 实现说明(v1.0 stable,2026-08-01)
+## 7. 实现说明
 
 > 本节是 M0 阶段实际实现后的回填,记录"代码事实",与上文需求清单的偏差在此显式标注。
 
@@ -211,9 +211,9 @@ fit.slope(); fit.intercept(); fit.rSquared();
 | `Summary.java` | describe() 返回的 record | ~25 |
 | `NaNPolicy.java` | SKIP/ERROR/PROPAGATE 三态 | ~25 |
 | `JianNum.java` | 顶层门面(静态方法聚合) | ~90 |
-| 测试 `NdarrayTest.java` + `StatsTest.java` + `MatrixTest.java` | **38 用例**(NdarrayTest 17 + StatsTest 19 + MatrixTest 2),覆盖整数精度/字符串/NaN/统计/线代/矩阵运算/随机复现 | ~280 |
+| 测试套件(Ndarray/Stats/Matrix 等) | 覆盖整数精度/字符串/NaN/统计/线代/矩阵运算/随机复现;数量以 [api-counts.md](api-counts.md) 为准 | ~280+ |
 
-**编译/测试状态**:`mvn -pl jian-num/jian-num test` → **38/38 全过**,BUILD SUCCESS(2026-08-09 实测;早前版本写"33"漏了 MatrixTest 2 例)。
+**编译/测试状态**:`mvn -pl jian-num/jian-num test` 全过,BUILD SUCCESS(当前 @Test 数见 [api-counts.md](api-counts.md))。
 
 ### 7.2 与需求的偏差(已实现部分)
 
@@ -224,14 +224,13 @@ fit.slope(); fit.intercept(); fit.rSquared();
 | Ndarray 一维/二维 | **当前仅一维**(二维运算下沉到 `Matrix` 类) | 一维 Ndarray + 独立 Matrix 类职责更清晰;若 M2 发现 core 需要二维 Ndarray 再补 |
 | 字符串走 object dtype | OBJECT dtype + 独立 `StrOps` 入口(对齐 pandas .str accessor) | 字符串使用频率最高,提供批量操作避免逐元素循环 |
 | `Matrix.of(double[][])` 直接行向量 | 同 | 一致 |
-| Commons Math `Percentile` 默认 | 实测与 numpy 'linear' 在非中位数有差异 | jian-core 的 `DataFrameStats.percentile` 已用自写 R-7 线性插值对齐 numpy |
+| Commons Math `Percentile` 默认 | 实测与 numpy 'linear' 在非中位数有差异(R-6:Q1([1..5])=1.5,numpy R-7=2.0) | jian-core 的 `DataFrameStats.percentile` 已用自写 R-7 线性插值对齐 numpy;jian-num 保留 R-6(薄封装定位,javadoc 如实声明并钉精确值) |
 
 ### 7.3 实现状态(全部已落地)
 
 - **已实现**:`jian-num-bridge` 实现 `StatsProvider` SPI(经 ServiceLoader 加载 jian-num 精确统计)。
 - **已实现**:jian-core `DataFrameStats.percentile` 用 R-7 线性插值,对齐 numpy 'linear'(绕过 Commons Math 默认 R-6 差异)。
 - **Ndarray INT64 缺失**:long[] 原生不支持 null,设计标注(需缺失用 FLOAT64 NaN 或 OBJECT null;DataFrame 层的 IntColumn/LongColumn 有 nullMask 完整支持)。
-- M0 暂未做:jian-num-bridge 子模块(空骨架,M2 填充)。
 
 ### 7.4 验证基准(测试中已覆盖)
 
@@ -247,4 +246,12 @@ fit.slope(); fit.intercept(); fit.rSquared();
 ---
 
 *本分册独立,与 01-05 无耦合。完全独立可单独使用。*
-*M0 实现完成于 2026-08-01;v1.0 发布。2026-08-09 经 AI agent2 第二轮审查核实,测试数从"33"修正为"38"(补 MatrixTest 2 例)。*
+*M0 实现完成,v1.0 发布;当前测试数以 [api-counts.md](api-counts.md) 为准。*
+
+---
+
+### 7.5 行为细节(现行)
+
+- **jian-num**:zerosBool 全 false;INT64 sum/mean 纯 long 精度;StrOps.length 返回 FLOAT64(缺失→NaN);常数列 skew/kurt 返 NaN;sum 遇 inf+(-inf) 返 NaN。
+- **jian-num-bridge**:percentile 对齐 SPI 契约的 R-7 插值(与 pandas/numpy 'linear' 同口径)。
+- 测试:num 59 / num-bridge 11 @Test(口径见 [api-counts.md](api-counts.md))。

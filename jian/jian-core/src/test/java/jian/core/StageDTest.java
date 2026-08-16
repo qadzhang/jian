@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.within;
 // ┌─ What : 阶段 D 时序重型测试 —— Resampler + shift + at_time + between_time + asof
 // │  Why  : 时序算子是 §3.16 路线图最大头;A 级断言
 // │  Who  : 阶段 D 落地回归
-// │  When : 2026-08-09 阶段 D
+// │  When : jian-core 测试套件常规执行
 // │  Where: jian-core/src/test/java/jian/core/StageDTest.java
 class StageDTest {
 
@@ -139,7 +139,7 @@ class StageDTest {
         // 12 小时网格:0:00, 12:00,次日 0:00,次日 12:00(endpoint)
         // bucket 0 [00, 12):10+20=30(0:00 + 6:00);bucket 1 [12, 24):30+40=70(12:00+18:00);
         // bucket 2 [24, 36):50
-        assertThat(r.rowCount()).isGreaterThanOrEqualTo(3);  // 至少 3 个 bucket
+        assertThat(r.rowCount()).isEqualTo(3);  // 精确 3 个 bucket(不用 ≥3 弱断言,那会放过空/重复 bucket)
         assertThat(r.getDoubleColumn("v_sum").getDouble(0)).isEqualTo(30.0);
         assertThat(r.getDoubleColumn("v_sum").getDouble(1)).isEqualTo(70.0);
         assertThat(r.getDoubleColumn("v_sum").getDouble(2)).isEqualTo(50.0);

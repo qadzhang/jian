@@ -84,8 +84,14 @@ class SqlTest {
                     new Object[][]{{1.0}, {null}, {3.0}});
             Sql.write(df, conn, "na");
             DataFrame r = Sql.readTable(conn, "na");
+            // 因为只验行数不能证明 null 真被保留(§3.5 契约),所以补齐:
+            // 行数 + 三行取值 + 中间行确实缺失
             assertThat(r.rowCount()).isEqualTo(3);
-            // NULL 经 JDBC 读回 null,Schema 推断 + 中间列保留
+            assertThat(r.getDoubleColumn("V").getDouble(0)).isEqualTo(1.0);
+            assertThat(r.getDoubleColumn("V").getDouble(2)).isEqualTo(3.0);
+            assertThat(r.getDoubleColumn("V").isNull(1))
+                    .as("NULL 经 JDBC 读回应保留为缺失(不是 0.0 也不是 NaN 字面量)")
+                    .isTrue();
         }
     }
 
@@ -153,7 +159,7 @@ class SqlTest {
     }
 
     /**
-     * SQL 注入防护回归(2026-08-09 修复):readTable 的表名只接受白名单
+     * SQL 注入防护:readTable 的表名只接受白名单
      * [A-Za-z_][A-Za-z0-9_.]*,所有注入 payload 必须抛 IAE,不能进 SQL。
      * 覆盖经典 OWASP payload:DROP TABLE 注入、引号注入、分号注入、union 注入、注释注入。
      */
@@ -183,20 +189,72 @@ class SqlTest {
     }
 
     /**
-     * 合法的 schema.table 应被放行(白名单允许点号)。
+     * write 的 DROP/CREATE/INSERT 表名也必须过白名单 —— 因为只校验 readTable 的表名时,
+     * write 仍可直接注入 "x; DROP TABLE secret; --",所以 write 全路径统一校验。
      */
     @Test
-    void readTable_合法schema_表名放行() {
-        // 只验正则放行(不需真实表);不抛 IAE 即说明白名单通过。
-        // schema.table 是 SQL 标准写法,白名单应允许。
-        assertThat(org.junit.jupiter.api.Assertions.assertDoesNotThrow(
-                () -> TABLE_NAME_PATTERN_MATCHES("schema.users"))).isTrue();
-        assertThat(org.junit.jupiter.api.Assertions.assertDoesNotThrow(
-                () -> TABLE_NAME_PATTERN_MATCHES("_internal.log_2026"))).isTrue();
+    void write_非法表名抛IAE挡住SQL注入() throws Exception {
+        try (Connection conn = h2()) {
+            DataFrame df = DataFrame.of(Schema.of("id", DType.INT), new Object[][]{{1}});
+            String evil = "x; DROP TABLE secret; --";
+            assertThatThrownBy(() -> Sql.write(df, conn, evil, Sql.Mode.CREATE_OR_REPLACE))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("非法表名");
+            // 所有模式统一拦截(OVERWRITE 走 DROP 路径,APPEND 走 INSERT 路径)
+            assertThatThrownBy(() -> Sql.write(df, conn, evil, Sql.Mode.OVERWRITE))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> Sql.write(df, conn, evil, Sql.Mode.APPEND))
+                    .isInstanceOf(IllegalArgumentException.class);
+            // 合法表名放行
+            Sql.write(df, conn, "safe_tbl", Sql.Mode.CREATE_OR_REPLACE);
+            assertThat(Sql.readTable(conn, "safe_tbl").rowCount()).isEqualTo(1);
+        }
     }
 
-    /** 辅助:仅测白名单正则(避免真连库)。返回 true=匹配。 */
-    private static boolean TABLE_NAME_PATTERN_MATCHES(String s) {
-        return java.util.regex.Pattern.compile("[A-Za-z_][A-Za-z0-9_.]*").matcher(s).matches();
+    /**
+     * CREATE TABLE / INSERT 的列名也必须过白名单 —— 因为列名直接拼入 SQL 时,
+     * "id); DROP TABLE users; --" 形式可注入,所以列名同样走标识符白名单校验。
+     */
+    @Test
+    void write_非法列名抛IAE挡住SQL注入() throws Exception {
+        try (Connection conn = h2()) {
+            String evilCol = "id); DROP TABLE secret; --";
+            DataFrame df = DataFrame.of(Schema.of(evilCol, DType.INT), new Object[][]{{1}});
+            assertThatThrownBy(() -> Sql.write(df, conn, "t1", Sql.Mode.CREATE_OR_REPLACE))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("非法列名");
+            // 合法列名正常往返
+            DataFrame ok = DataFrame.of(Schema.of("id", DType.INT, "name", DType.STRING),
+                    new Object[][]{{1, "a"}});
+            Sql.write(ok, conn, "t2", Sql.Mode.CREATE_OR_REPLACE);
+            assertThat(Sql.readTable(conn, "t2").rowCount()).isEqualTo(1);
+        }
+    }
+
+    /**
+     * 合法的 schema.table 应被生产白名单放行,注入式表名应被拒绝。
+     * 因为用本文件内的正则副本断言与生产 Sql.readTable 的白名单零耦合
+     * (白名单被删改时测试依旧全绿,是假守卫),所以走真链路验证:
+     * H2 建真实 SCHEMA.USERS 表 → readTable 放行且读回数据;注入表名 → 生产白名单抛 IAE。
+     */
+    @Test
+    void readTable_合法schema_表名放行() throws Exception {
+        try (Connection conn = h2();
+             java.sql.Statement st = conn.createStatement()) {
+            // H2 未加引号的标识符统一转大写:CREATE SCHEMA schema → SCHEMA,与 readTable 拼接的
+            // SELECT * FROM schema.users(H2 解析为 SCHEMA.USERS)精确对应
+            st.execute("CREATE SCHEMA IF NOT EXISTS schema");
+            st.execute("CREATE TABLE schema.users(ID BIGINT)");
+            st.execute("INSERT INTO schema.users VALUES (1)");
+            DataFrame r = Sql.readTable(conn, "schema.users");   // 点号表名经生产白名单放行
+            assertThat(r.rowCount()).isEqualTo(1);
+            assertThat(r.getColumn("ID").get(0)).isEqualTo(1L);
+            // 拒绝路径:生产 Sql.readTable 的白名单(非本地副本)必须拦下注入式/非法表名
+            assertThatThrownBy(() -> Sql.readTable(conn, "users; DROP TABLE schema.users"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("非法表名");
+            assertThatThrownBy(() -> Sql.readTable(conn, "bad name"))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
     }
 }

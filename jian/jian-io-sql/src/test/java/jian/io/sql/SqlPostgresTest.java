@@ -20,8 +20,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 // ┌─ What : SqlPostgresTest —— 真实 PostgreSQL 18 数据库的完整读写测试(非 H2 模拟)
 // │  Why  : jian-io-sql 号称支持 7 库,但此前只测 H2 in-memory + SQLite,H2 的 MODE=PostgreSQL 不等于真 PG。
 // │         PG 有独特行为(大小写敏感、NUMERIC 精度、TIMESTAMP 时区、BOOLEAN 类型),必须用真 PG 验证。
-// │  Who  : 阶段 A1(补全测试覆盖 + 按 AI 测试方法学指南 完整验证)
-// │  When : 2026-08-08
+// │  Who  : jian-io-sql 维护者(跨库真实环境验证)
+// │  When : 改动 Sql 的建表 DDL / 类型映射 / 注入防护后
 // │  Where: jian-io-sql/SqlPostgresTest.java
 // │  How  :
 // │    ① 连接本地 PG 18(jdbc:postgresql://127.0.0.1:5432/postgres,用户 postgres/123)
@@ -278,8 +278,7 @@ class SqlPostgresTest {
 
     /**
      * 短文本(≤ 4000 字符)应建 VARCHAR(n),不被截断。
-     * 之前 jian 硬编码 VARCHAR(1000),超过 1000 字符的短文本也会截断——这是 BUG。
-     * 现在自适应:扫实际长度,建 VARCHAR(实际长度)。
+     * 因为定长 VARCHAR(1000) 会让 1000~4000 字符的短文本被截断,所以按实际长度自适应建列。
      */
     @Test
     void 短文本_VARCHAR自适应_不截断() throws Exception {
@@ -289,7 +288,7 @@ class SqlPostgresTest {
                 new Object[][]{{1L, "short"}, {2L, medium}});
         Sql.write(df, conn, tableName, Sql.Mode.CREATE_OR_REPLACE);
 
-        // 验证表结构:txt 列应是 VARCHAR(3500)(不是旧的 VARCHAR(1000))
+        // 验证表结构:txt 列应是 VARCHAR(3500)(按实际长度自适应,非定长 1000)
         try (Statement st = conn.createStatement();
              var rs = st.executeQuery(
                  "SELECT data_type, character_maximum_length FROM information_schema.columns " +
@@ -309,8 +308,7 @@ class SqlPostgresTest {
 
     /**
      * 长文本(> 4000 字符)应建 TEXT(PG 大文本),不被截断。
-     * 之前 jian 硬编码 VARCHAR(1000),> 1000 直接报错或截断——这是 BUG。
-     * 现在自适应:扫到 > 4000 → PG 用 TEXT。
+     * 因为 VARCHAR 超长会截断/报错,所以 > 4000 时 PG 用 TEXT 类型。
      */
     @Test
     void 长文本_走TEXT类型_万字符不截断() throws Exception {

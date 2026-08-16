@@ -107,9 +107,61 @@ class DataFrameAdvancedTest {
         DataFrame df = DataFrame.of(
                 Schema.of("dept", DType.STRING, "v", DType.DOUBLE),
                 new Object[][]{
-                        {"A", 1.0}, {null, 2.0}, {"A", 3.0}});
+                        {"A", 1.0}, {null, 5.0}, {"A", 3.0}});
         DataFrame r = df.groupBy("dept").agg("v", "mean");
         assertThat(r.rowCount()).isEqualTo(2);  // A 组 + null 组
+        // 对齐 pandas(断言聚合值本身,不只查 rowCount —— 那会放过"分组对、聚合错";
+        // 数据特意让两组均值不同以提升区分度):
+        //   A 组 v=[1.0,3.0]→mean=2.0(skipna,跳 null);null 组 v=[5.0]→mean=5.0
+        assertThat(r.getDoubleColumn("v_mean").data()).containsExactlyInAnyOrder(2.0, 5.0);
+    }
+
+    // === GroupBy.aggregate 各聚合函数的 NaN/空边界 ===
+    // 因为每个聚合的 if(!isNull) + any/n==0/isEmpty 边界容易被漏测,
+    // 所以下面两个测试逐函数覆盖,对齐 pandas skipna=True。
+
+    /** 单组辅助:返回该组 fn 聚合的数值结果(double 列)。 */
+    private double aggNum(DataFrame df, String fn) {
+        return df.groupBy("g").agg("v", fn).getDoubleColumn("v_" + fn).getDouble(0);
+    }
+    /** 单组辅助:返回该组 fn 聚合的整数结果(count/nunique 走 Long 列)。 */
+    private long aggLong(DataFrame df, String fn) {
+        return df.groupBy("g").agg("v", fn).getLongColumn("v_" + fn).getLong(0);
+    }
+
+    @Test
+    void groupBy_含NaN组各聚合skipna对齐pandas() {
+        // A 组 v=[1.0, NaN, 3.0]:每个聚合都应跳过 NaN(skipna=True,对齐 pandas)
+        DataFrame df = DataFrame.of(
+                Schema.of("g", DType.STRING, "v", DType.DOUBLE),
+                new Object[][]{{"A", 1.0}, {"A", null}, {"A", 3.0}});
+        assertThat(aggLong(df, "count")).isEqualTo(2L);        // 跳 NaN 计数
+        assertThat(aggLong(df, "nunique")).isEqualTo(2L);      // 跳 NaN 去重 {1.0, 3.0}
+        assertThat(aggNum(df, "sum")).isEqualTo(4.0);          // 1 + 3
+        assertThat(aggNum(df, "mean")).isEqualTo(2.0);         // 4 / 2
+        assertThat(aggNum(df, "min")).isEqualTo(1.0);
+        assertThat(aggNum(df, "max")).isEqualTo(3.0);
+        assertThat(aggNum(df, "median")).isEqualTo(2.0);       // [1,3] 中位数
+        // var/std of [1,3]:var = ((1-2)²+(3-2)²)/(2-1) = 2.0;std = √2
+        assertThat(Math.abs(aggNum(df, "var") - 2.0)).isLessThan(1e-9);
+        assertThat(Math.abs(aggNum(df, "std") - Math.sqrt(2))).isLessThan(1e-9);
+    }
+
+    @Test
+    void groupBy_全空组各聚合返NaN或零对齐pandas() {
+        // A 组 v=[NaN, NaN](全空):覆盖 each 聚合的"无有效值"边界
+        DataFrame df = DataFrame.of(
+                Schema.of("g", DType.STRING, "v", DType.DOUBLE),
+                new Object[][]{{"A", null}, {"A", null}});
+        assertThat(aggLong(df, "count")).isEqualTo(0L);        // 全空 → 0
+        assertThat(aggLong(df, "nunique")).isEqualTo(0L);      // ∅
+        assertThat(aggNum(df, "sum")).isEqualTo(0.0);          // 空和 = 0(累加器初值)
+        assertThat(aggNum(df, "mean")).isNaN();                // n==0 → NaN
+        assertThat(aggNum(df, "min")).isNaN();                 // any=false → NaN
+        assertThat(aggNum(df, "max")).isNaN();
+        assertThat(aggNum(df, "median")).isNaN();              // vals.isEmpty → NaN
+        assertThat(aggNum(df, "var")).isNaN();
+        assertThat(aggNum(df, "std")).isNaN();
     }
 
     @Test

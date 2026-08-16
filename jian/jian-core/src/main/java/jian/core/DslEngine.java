@@ -60,9 +60,9 @@ public interface DslEngine {
     /**
      * 取当前可用 DslEngine(优先 jian-dsl,回退内置)。
      *
-     * <p><b>Web 安全修复(2026-08-08)</b>:不再用 static ServiceLoader 缓存(导致 Tomcat redeploy 内存泄漏——
-     * ServiceLoader 内部缓存引用 WebappClassLoader,卸载 webapp 时 ClassLoader 无法 GC)。
-     * 改为每次调用时新建 ServiceLoader,由 GC 自动回收。
+     * <p><b>Web 安全</b>:不用 static ServiceLoader 缓存(会导致 Tomcat redeploy 内存泄漏——
+     * ServiceLoader 内部缓存引用 WebappClassLoader,卸载 webapp 时 ClassLoader 无法 GC),
+     * 每次调用时新建 ServiceLoader,由 GC 自动回收。
      *
      * @return DslEngine 实例:优先返回第一个非 SimpleDslEngine 的实现(jian-dsl 引入时);
      *         否则返回 BUILTIN

@@ -169,7 +169,13 @@ public final class Ndarray {
      * @param n int 元素个数,约束:n &gt;= 0
      * @return Ndarray dtype=BOOL 的全 false 数组(长度 n)
      */
-    public static Ndarray zerosBool(int n) { return new Ndarray(DType.BOOL, null, null, new Boolean[n], null); }
+    // 因为 new Boolean[n] 装箱默认 null,而 BOOL 的 null=缺失(会是"全缺失"而非"全 false"),
+    // 所以显式填充 Boolean.FALSE(zeros 语义 = 有值且为 false,对齐 numpy np.zeros(n, bool))
+    public static Ndarray zerosBool(int n) {
+        Boolean[] b = new Boolean[n];
+        java.util.Arrays.fill(b, Boolean.FALSE);
+        return new Ndarray(DType.BOOL, null, null, b, null);
+    }
 
     /**
      * 类型转换(对齐 numpy astype):
@@ -208,6 +214,7 @@ public final class Ndarray {
     }
 
     private Ndarray toInt64() {
+        // NaN → 0L 为既定行为(设计差异声明见 doc/00-overview §10.16)
         long[] l = new long[len];
         switch (dtype) {
             case FLOAT64: for (int i = 0; i < len; i++) l[i] = Double.isNaN(doubleData[i]) ? 0L : (long) doubleData[i]; break;
@@ -224,6 +231,7 @@ public final class Ndarray {
             case FLOAT64: for (int i = 0; i < len; i++) o[i] = Double.isNaN(doubleData[i]) ? null : doubleData[i]; break;
             case BOOL: for (int i = 0; i < len; i++) o[i] = boolData[i]; break;
             case DATETIME64: for (int i = 0; i < len; i++) o[i] = longData[i] == Long.MIN_VALUE ? null : Instant.ofEpochSecond(longData[i]).atOffset(ZoneOffset.UTC).toLocalDateTime(); break;
+            case OBJECT: for (int i = 0; i < len; i++) o[i] = objData[i]; break;  // identity 拷贝(非 null)
             default: break;
         }
         return new Ndarray(DType.OBJECT, null, null, null, o);
@@ -517,16 +525,19 @@ public final class Ndarray {
 
     /**
      * 求和(仅数值 dtype;FLOAT64 跳过 NaN;INT64 全量求和;非数值抛异常)。
+     * <p>因为逐项 {@code double s += v} 会在每个元素处各舍入一次(累计误差可超最终结果半个 ulp),
+     * 所以 INT64 用 long 域累加后一次转 double(numpy int64 sum 在 int64 域内精确,只在返回时舍入一次)。
      *
-     * @return double 总和(INT64 求和转 double;FLOAT64 跳过 NaN 求和)
+     * @return double 总和(INT64:long 累加后转 double,对齐 numpy;FLOAT64:跳过 NaN 求和)
      * @throws IllegalStateException 当 dtype 非数值(BOOL/DATETIME64/OBJECT)时抛出
      */
     public double sum() {
         switch (dtype) {
             case INT64: {
-                double s = 0;
+                // 纯 long 累加(int64 域内精确,溢出按补码回绕与 numpy 一致),最后才转 double
+                long s = 0;
                 for (long v : longData) s += v;
-                return s;
+                return (double) s;
             }
             case FLOAT64: {
                 double s = 0;
@@ -540,6 +551,7 @@ public final class Ndarray {
 
     /**
      * 均值(同上,跳过缺失);空或全缺失 → NaN。
+     * <p>INT64 路径委托 {@link #sum()}(long 累加),消除逐元素 double 舍入。
      *
      * @return double 均值;空数组或全缺失时返回 NaN
      * @throws IllegalStateException 当 dtype 非数值(BOOL/DATETIME64/OBJECT)时抛出
@@ -588,13 +600,26 @@ public final class Ndarray {
             }
             return new Ndarray(DType.FLOAT64, null, r, null, null);
         }
-        // INT64 + INT64 → INT64
+        // 因为经 double 中转的 (long) applyOp(...) 会把两侧提升 double 再截回,
+        // >2^53 精度丢失/饱和(numpy int64 全程精确),所以 INT64 + INT64 用纯 long 算术,
+        // 溢出按补码回绕(与 numpy 一致)。
+        // 除法例外:numpy 语义 int64/int64 = true divide → float64(整除截断也是错的)
+        if (op == '/') {
+            double[] q = new double[len];
+            for (int i = 0; i < len; i++) q[i] = (double) longData[i] / (double) other.longData[i];
+            return new Ndarray(DType.FLOAT64, null, q, null, null);
+        }
         long[] r = new long[len];
-        for (int i = 0; i < len; i++) r[i] = (long) applyOp(op, longData[i], other.longData[i]);
+        for (int i = 0; i < len; i++) {
+            long x = longData[i], y = other.longData[i];
+            r[i] = op == '+' ? x + y : op == '-' ? x - y : x * y;   // 纯 long,无 double 中转
+        }
         return new Ndarray(DType.INT64, r, null, null, null);
     }
 
     private Ndarray scalarFloat(double s, char op) {
+        // 因为 INT64 路径 (long)NaN 会静默变 0,所以 NaN 标量直接抛 IAE
+        if (Double.isNaN(s)) throw new IllegalArgumentException("标量算术不支持 NaN 标量");
         if (!dtype.isNumeric()) throw new IllegalStateException(
                 "标量算术仅数值 dtype 可用,当前 " + dtype);
         if (dtype == DType.FLOAT64) {
@@ -602,9 +627,11 @@ public final class Ndarray {
             for (int i = 0; i < len; i++) r[i] = Double.isNaN(doubleData[i]) ? Double.NaN : applyOp(op, doubleData[i], s);
             return new Ndarray(DType.FLOAT64, null, r, null, null);
         }
-        long[] r = new long[len];
-        for (int i = 0; i < len; i++) r[i] = (long) applyOp(op, longData[i], s);
-        return new Ndarray(DType.INT64, r, null, null, null);
+        // 整数 dtype 与浮点标量运算 → 提升 FLOAT64(值不截断);
+        // 对齐 numpy 提升规则:int array + float scalar → float64 [1.5, 2.5](若截断则 [1,2]+0.5 会得 [1,2])
+        double[] r = new double[len];
+        for (int i = 0; i < len; i++) r[i] = applyOp(op, (double) longData[i], s);
+        return new Ndarray(DType.FLOAT64, null, r, null, null);
     }
 
     private Ndarray logic(Ndarray other, char op, String name) {
@@ -630,6 +657,7 @@ public final class Ndarray {
             if (a == null || b == null) { r[i] = (op == '!'); continue; }
             if (a instanceof Double || b instanceof Double || a instanceof Float || b instanceof Float) {
                 double da = ((Number) a).doubleValue(), db = ((Number) b).doubleValue();
+                // NaN 统一按 IEEE 语义(==false、!=true、其它 false),eq/lt/gt 一致无分裂
                 if (Double.isNaN(da) || Double.isNaN(db)) { r[i] = (op == '!'); continue; }
                 r[i] = cmp(op, da, db);
             } else if (a instanceof Number && b instanceof Number) {

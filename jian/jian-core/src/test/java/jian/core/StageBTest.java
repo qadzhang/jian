@@ -9,7 +9,7 @@ import static org.assertj.core.api.Assertions.within;
 // ┌─ What : 阶段 B 统计变换测试 —— 验证 corr/cov/skew/kurt/cumsum/diff/pct_change/quantile/rank/clip/round/all/any/prod/nunique
 // │  Why  : §3.16 路线图移过来的统计方法,A 级断言 + numpy/scipy 基准值差分
 // │  Who  : 阶段 B 落地回归测试
-// │  When : 2026-08-09 阶段 B
+// │  When : jian-core 测试套件常规执行
 // │  Where: jian-core/src/test/java/jian/core/StageBTest.java
 class StageBTest {
 
@@ -33,12 +33,21 @@ class StageBTest {
     }
 
     @Test
-    void colKurt_正态超额应为约0() {
-        // 简单数据峰度测试:等距数列峰度 ≈ 1.3(numpy kurtosis([1,2,3,4]) ≈ -1.36 超额)
+    void colSkew_非对称无偏偏度对齐pandas() {
+        // 因为对称数据的 skew=0 掩盖有偏/无偏差异,所以用非对称数据验证无偏 G1。
+        // [1,2,2,3,3,3,4,5,9] 无偏偏度 = 1.7281842(对齐 pandas Series.skew)。
         DataFrame df = DataFrame.of(Schema.of("v", DType.DOUBLE),
-            new Object[][]{{1.0}, {2.0}, {3.0}, {4.0}});
-        double k = df.colKurt("v");
-        assertThat(Double.isNaN(k) || Math.abs(k - (-1.36)) < 0.05).isTrue();
+            new Object[][]{{1.0}, {2.0}, {2.0}, {3.0}, {3.0}, {3.0}, {4.0}, {5.0}, {9.0}});
+        assertThat(df.colSkew("v")).isCloseTo(1.7281842, within(1e-6));
+    }
+
+    @Test
+    void colKurt_非对称无偏峰度对齐pandas() {
+        // 无偏 G2(Fisher 超额)对齐 pandas Series.kurt()。
+        // 用非对称数据 + 精确无偏值 3.6483494(有偏口径会得不同值)。
+        DataFrame df = DataFrame.of(Schema.of("v", DType.DOUBLE),
+            new Object[][]{{1.0}, {2.0}, {2.0}, {3.0}, {3.0}, {3.0}, {4.0}, {5.0}, {9.0}});
+        assertThat(df.colKurt("v")).isCloseTo(3.6483494, within(1e-6));
     }
 
     @Test
@@ -333,6 +342,12 @@ class StageBTest {
             new Object[][]{{3.4}, {3.5}});
         DoubleColumn r = df.colRound("v", 0, "rounded");
         assertThat(r.getDouble(0)).isEqualTo(3.0);
-        assertThat(r.getDouble(1)).isEqualTo(4.0);  // Math.round(3.5) = 4
+        assertThat(r.getDouble(1)).isEqualTo(4.0);  // half-even:3.5 → 4(4 是偶数;该值两规则恰同值)
+        // 3.5 恰避开 half-up/half-even 分歧点(4 为偶数两规则同值),
+        // 补 2.5(half-even → 2,half-up → 3)锁住舍入方向对齐 pandas
+        DataFrame half = DataFrame.of(Schema.of("v", DType.DOUBLE), new Object[][]{{2.5}, {-3.5}});
+        DoubleColumn hr = half.colRound("v", 0, "rounded");
+        assertThat(hr.getDouble(0)).as("2.5 half-even → 2.0(对齐 pandas)").isEqualTo(2.0);
+        assertThat(hr.getDouble(1)).as("-3.5 half-even → -4.0").isEqualTo(-4.0);
     }
 }

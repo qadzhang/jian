@@ -31,7 +31,7 @@ jian-viz **大面对齐 pandas 的绘图能力**:10 种 `Plot` 静态入口(含 
 
 #### B. plotting 模块的高维/时序图(对齐 `pandas.plotting`)
 
-> **注(2026-08-09 经源码核实)**:`Plot.java` 实测**仅 3 种已实现**(`scatterMatrix` / `lagPlot` / `autocorrelation`),且全部为**静态方法**(`Plot.scatterMatrix(df, ...)`),**无 `Jian.plotting()` 入口对象**。`radviz` / `andrewsCurves` / `parallelCoordinates` / `bootstrap` 4 种未实现,列入 v2 规划。
+> **注(经源码核实)**:`Plot.java` 的 plotting 部分实现 3 种(`scatterMatrix` / `lagPlot` / `autocorrelation`),且全部为**静态方法**(`Plot.scatterMatrix(df, ...)`),**无 `Jian.plotting()` 入口对象**。`radviz` / `andrewsCurves` / `parallelCoordinates` / `bootstrap` 4 种未实现,列入 v2 规划。
 
 | 状态 | 方法 | 实际 API | 用途 | 实现方式 |
 |---|---|---|---|---|
@@ -72,7 +72,7 @@ jian-viz ── XChart 4.0.3 (org.knowm.xchart)
 
 ## 2. 核心 API
 
-> **⚠️ API 风格说明(2026-08-09 与 AI agent2 共识)**:
+> **⚠️ API 风格说明**:
 > jian 的 **DataFrame 变换**是链式实例方法;但 **绘图是静态方法收口**(`Plot.line(df, "x","y")` / `Plot.scatter(df,...)`),**不是** `df.plot().line()` 链式。
 > 原因:绘图属于 jian-viz 叶子模块,DataFrame 在 jian-core,core 不能反依赖 viz(模块单向依赖红线,见 AGENTS.md §4.1)。
 > **用户实际写法**:
@@ -149,7 +149,7 @@ Jian.plotting().lagPlot(df.getColumn("price"),lag=1).saveAsPng("lag.png");
 
 ### 2.3 子图与二级轴 —— v2 规划(未实现)
 
-> **状态**:`subplots(true)` / `secondaryY(col)` 等 API **v2 规划,代码侧从未实现**(2026-08-09 核验)。当前 jian 的绘图都是单图;子图/双轴请用 XChart 原生 API 组合,或等 v2。
+> **状态**:`subplots(true)` / `secondaryY(col)` 等 API **v2 规划,代码侧从未实现**。当前 jian 的绘图都是单图;子图/双轴请用 XChart 原生 API 组合,或等 v2。
 
 ```java
 // v2 设计示意(未实现)
@@ -232,7 +232,7 @@ Jian.plotting().lagPlot(df.getColumn("price"),lag=1).saveAsPng("lag.png");
 
 ---
 
-## 7. 实现说明(M3 部分,2026-08-01)
+## 7. 实现说明
 
 > M3.4 已实现 4 种基础图;M4 补齐全部 13 种(kde/box/area/pie/hexbin/scatterMatrix/lag/autocorrelation);4 种高维图(radviz/andrews/parallel_coordinates/bootstrap)v2 规划。
 
@@ -240,7 +240,7 @@ Jian.plotting().lagPlot(df.getColumn("price"),lag=1).saveAsPng("lag.png");
 
 | 文件 | 内容 | 测试 |
 |---|---|---|
-| `Plot.java` | 13 种图入口(line/scatter/bar/hist/barh/area/pie/box/kde/hexbin/scatterMatrix/lagPlot/autocorrelation)+ PNG/SVG 落盘 | `PlotTest` 16 用例 |
+| `Plot.java` | 13 种图入口(line/scatter/bar/hist/barh/area/pie/box/kde/hexbin/scatterMatrix/lagPlot/autocorrelation)+ PNG/SVG 落盘 | @Test 数以 api-counts.md 为准 |
 
 ### 7.2 与需求的偏差
 
@@ -252,7 +252,7 @@ Jian.plotting().lagPlot(df.getColumn("price"),lag=1).saveAsPng("lag.png");
 
 ### 7.3 实现状态(全部已落地)
 
-13 种图**全部已实现**(16 测试通过;radviz/andrews/parallel_coordinates/bootstrap 4 种高维图 v2 规划):
+13 种图**全部已实现**(radviz/andrews/parallel_coordinates/bootstrap 4 种高维图 v2 规划):
 - 11 种 plot:line/bar/barh/hist/box/kde/area/pie/scatter/hexbin
 - plotting:scatter_matrix/autocorrelation/lag_plot
 - PNG/SVG 双格式输出
@@ -260,4 +260,11 @@ Jian.plotting().lagPlot(df.getColumn("price"),lag=1).saveAsPng("lag.png");
 ---
 
 *本分册独立,与 01/02/04-06 无耦合。大面对齐 pandas 的 13 种绘图能力(4 种高维图 v2 规划)。*
-*M3 + M4.5:13 种图全实现(10 plot + plotting 高维/时序图)完成于 2026-08-01;radviz/andrews/parallel_coordinates/bootstrap 4 种高维图 v2 规划。*
+*13 种图全实现(10 plot + 3 plotting);radviz/andrews/parallel_coordinates/bootstrap 4 种高维图 v2 规划;测试数以 [api-counts.md](api-counts.md) 为准。*
+
+---
+
+## 8. 行为细节(现行)
+
+- 全缺失列:kde / autocorrelation / box 抛教学型报错(不退化输出);hexbin 按密度映射渲染。
+- 测试:jian-viz @Test **28**(口径见 [api-counts.md](api-counts.md))。

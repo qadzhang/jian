@@ -4,6 +4,7 @@
 - **library**: jian
 - **entryClass**: jian.io.latex.LatexIo
 - **deps**: jian-core;纯 JDK(自写,无第三方库)
+- **tests**: 6
 
 ## 摘要
 LaTeX 表格写出,对齐 pandas.to_latex;输出 `\begin{tabular}{对齐}...\end{tabular}` 块,纯 JDK,仅写不读。
@@ -14,6 +15,12 @@ LaTeX 表格写出,对齐 pandas.to_latex;输出 `\begin{tabular}{对齐}...\end
 - 可选 caption + label(figure/table 浮动体)
 - 可选行索引列输出(对齐 pandas to_latex index)
 - 与 jian-export.LatexRenderer 互补:本模块是 io 入口(对齐 pandas to_latex),LatexRenderer 含 Styler 集成
+
+### 行为细节
+- 转义占位符三阶段(反斜杠不再二次转义)
+
+### 行为细节(续 1)
+- 数据含控制字符时抛 IAE(防占位符冲突损坏输出)
 
 ## 限制
 - 仅写出,不提供读取(pandas to_latex 也无 read_latex)

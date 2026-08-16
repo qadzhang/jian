@@ -6,11 +6,11 @@
   <parent>
     <groupId>jian</groupId>
     <artifactId>jian-parent</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <relativePath>../pom.xml</relativePath>
   </parent>
 
-  <!-- jian 库聚合 fat jar:含 17 个子模块 + 全部第三方依赖(POI/Jackson/parquet/orc/XChart 等) -->
+  <!-- jian 库聚合 fat jar:含 16 个子模块 + 第三方依赖(POI/Jackson/XChart 等);列存(Parquet/ORC)另见 jian-columnar-all -->
   <artifactId>jian-all</artifactId>
   <name>jian-all (fat jar)</name>
   <packaging>jar</packaging>
@@ -27,8 +27,8 @@
     <dependency><groupId>jian</groupId><artifactId>jian-io-html</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>jian</groupId><artifactId>jian-io-json</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>jian</groupId><artifactId>jian-io-latex</artifactId><version>${project.version}</version></dependency>
-    <dependency><groupId>jian</groupId><artifactId>jian-io-orc</artifactId><version>${project.version}</version></dependency>
-    <dependency><groupId>jian</groupId><artifactId>jian-io-parquet</artifactId><version>${project.version}</version></dependency>
+    <!-- 列存(parquet/orc)不进 jian-all(用户决策):单独出 jian-columnar-all 附加 fat,
+         需要的用户叠加;Jian 门面经反射探测 + ModuleNotLoadedException 指引 -->
     <dependency><groupId>jian</groupId><artifactId>jian-io-pickle</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>jian</groupId><artifactId>jian-io-sql</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>jian</groupId><artifactId>jian-io-xml</artifactId><version>${project.version}</version></dependency>
@@ -73,6 +73,10 @@
                 <filter>
                   <artifact>*:*</artifact>
                   <excludes>
+                    <!-- AI 文档:排除 thin 形态的 module.md(多模块同名,只留一份会误导);
+                         各模块文档走唯一路径 META-INF/ai/modules/<artifactId>/module.md,
+                         总索引见 META-INF/ai/aggregated.md(MANIFEST 的 Ai-Modules 指向) -->
+                    <exclude>META-INF/ai/module.md</exclude>
                     <exclude>META-INF/*.SF</exclude>
                     <exclude>META-INF/*.DSA</exclude>
                     <exclude>META-INF/*.RSA</exclude>

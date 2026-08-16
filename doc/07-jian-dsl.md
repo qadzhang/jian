@@ -54,7 +54,7 @@ jian-dsl 提供 **自写的 DataFrame 表达式 + 自写 SQL 子集引擎(L3 支
 - 不替代 core 的强类型 Java API(Java API 仍是主接口)。
 - 不做完整数据库 SQL 方言(只做"DataFrame 上的 SQL 子集")。
 - 不做 numexpr 那种向量化高性能引擎(用户已明确不追求极致性能)。
-- 不做存储过程/触发器/窗口函数 over SQL(SQL 子集够用,复杂分析走 core 的 window API)。**注**:CTE(WITH)阶段 E 已实现(SqlPreprocessor)。
+- 不做存储过程/触发器/窗口函数 over SQL(SQL 子集够用,复杂分析走 core 的 window API)。**注**:CTE(WITH)已实现(SqlPreprocessor)。
 
 ### 1.5 依赖关系
 
@@ -141,9 +141,10 @@ Jian.sql("SELECT * FROM ${df1} UNION ALL SELECT * FROM ${df2}");
 
 **支持的 SQL 子集**:
 - **DQL**:`SELECT`(含 `distinct` / `*` / 别名 / `CASE WHEN`)/ `FROM ${df}`(占位符绑定 DataFrame;含派生表 `FROM (SELECT ...)`)/ `JOIN ... ON`(inner/left/right/cross)+ `USING`/ `WHERE` / `GROUP BY` / `HAVING` / `ORDER BY`(asc/desc)/ `LIMIT n [OFFSET m]` / `WITH`(CTE)/ 集合运算 `UNION [ALL]` / `INTERSECT` / `EXCEPT`
-  > **注(2026-08-09 L8 修复)**:`SELECT` 表达式列已支持算术(`+ - * /`)+ 三元(`cond ? a : b`,嵌套)+ 比较/逻辑,委托 PrattEngine.eval 真实求值;**窗口函数 over SQL 不支持**(走 core 的 Window API,见 §9.4)。
-- **DML**(2026-08 新增,immutable-first):`INSERT INTO ... VALUES` / `UPDATE ... SET ... WHERE` / `DELETE FROM ... WHERE` —— **返回新 DataFrame,不修改原表**(与 §4.3 immutable-first 红线一致;与 jian-io-sql Engine 的"真实数据库只读"红线不冲突,两者语义边界干净)
-  > **注(2026-08-09 L8 修复)**:DML 的 WHERE 求值失败不再静默吞(原 catch skip 会让 UPDATE 漏更新/DELETE 漏删除),现抛 IAE 带 WHERE 原文。
+  > **注**:`SELECT` 表达式列支持算术(`+ - * /`)+ 三元(`cond ? a : b`,嵌套)+ 比较/逻辑,委托 PrattEngine.eval 真实求值;**窗口函数 over SQL 不支持**(走 core 的 Window API,见 §9.4)。
+  > **注**:① 列名/别名/`${}` 占位名**支持中文等 Unicode 标识符**;② `WHERE`/`HAVING` 支持 **SQL 标准运算符 `=` / `<>`** 与 MySQL 反引号 `` `列名` ``;③ **`AS` 别名真重命名**(聚合列 `sum(x) AS 合计` 的输出列就叫 `合计`,HAVING/ORDER BY 可引用;表达式列别名行为不变);④ **ORDER BY 可引用未选中列**(SQL 语义:排序作用于投影前的行集,如 `SELECT 名称 FROM t ORDER BY 金额 DESC`)。详见 §9.6。
+- **DML**(immutable-first):`INSERT INTO ... VALUES` / `UPDATE ... SET ... WHERE` / `DELETE FROM ... WHERE` —— **返回新 DataFrame,不修改原表**(与 §4.3 immutable-first 红线一致;与 jian-io-sql Engine 的"真实数据库只读"红线不冲突,两者语义边界干净)
+  > **注**:DML 的 WHERE 求值失败抛 IAE 带 WHERE 原文(不静默跳过)。
 
 **不支持**:嵌套子查询多层(v2)、存储过程、DDL(CREATE/DROP TABLE 等)。
 
@@ -338,7 +339,7 @@ public interface DslEngine {  // jian-core 中定义
 
 ---
 
-## 9. 实现说明(M6,2026-08-01)
+## 9. 实现说明
 
 
 ### 9.1 已实现
@@ -359,7 +360,7 @@ public interface DslEngine {  // jian-core 中定义
 | 多方言(ROWNUM/LIMIT/FETCH FIRST / NVL/COALESCE/IFNULL 等) | **分页三方言都认**(LIMIT n [OFFSET m] / FETCH FIRST n ROWS ONLY / OFFSET m ROWS FETCH FIRST / ROWNUM <= n);**空值函数已实现**(nvl/coalesce/ifnull → 第一个非 null) | 分页与空值函数均已在 L1/L3 落地 |
 | `df.eval(...)` / `df.sql(...)` 接收者形态 | **已实现**:`df.eval("total = price * qty")`、`df.sql("SELECT ... FROM this")`(经 DslEngine SPI) | 与规范 §2.2 一致;core 未引 jian-dsl 时抛 ModuleNotLoadedException 提示 |
 | `SELECT DISTINCT` / `LIMIT ... OFFSET` | **已实现**:DISTINCT 去重、`LIMIT n OFFSET m` 与 Oracle `OFFSET m ROWS FETCH FIRST n` | 规范 §2.3 补全 |
-| like 模式语义 | **除 `%` `_` 外全部按字面量**(正则元字符转义,防正则注入) | 安全修复(2026-08-02 审查) |
+| like 模式语义 | **除 `%` `_` 外全部按字面量**(正则元字符转义,防正则注入) | 防正则注入(见 §9.5) |
 | 方言变量 `SqlDialect.caseSensitive()` | 已定义但 v1.0 未接线:列名匹配一律精确匹配 | 大小写归一列 v2 规划(见 §9.5) |
 | `Jian.setDefaultDialect(SqlDialect)` 全局默认方言 | 不提供(全局可变状态);方言只经 `Dsl.sql(sql, SqlDialect, dfs...)` 显式传,或 `SqlDialect.fromEnv()` 读环境变量 | API 风格:显式优于全局可变状态 |
 
@@ -373,17 +374,17 @@ public interface DslEngine {  // jian-core 中定义
 
 以下为**有意不做**的设计选择(非遗留 TODO):
 - **ANTLR4 已弃用**:L3 SQL 自写 Pratt + 正则版功能完整(SELECT/WHERE/GROUP/HAVING/ORDER/LIMIT/JOIN 4种/UNION ALL/子查询2层 + CTE/CASE WHEN/派生表/集合运算/算术表达式列),无需 ANTLR4 的额外复杂度和依赖。
-- **窗口函数 over SQL**:规范明确不做(走 core 的 Window API,规范 §1.4)。**注**:CTE(WITH)已实现(阶段 E SqlPreprocessor),不在此列。
+- **窗口函数 over SQL**:规范明确不做(走 core 的 Window API,规范 §1.4)。**注**:CTE(WITH)已实现(SqlPreprocessor),不在此列。
 - **存储过程/触发器**:规范明确不做(内存 DataFrame 不需要过程化语义)。
-- **多方言空值函数归一化**(NVL/COALESCE/IFNULL):**已实现**(2026-08-02),见 §9.5。
+- **多方言空值函数归一化**(NVL/COALESCE/IFNULL):**已实现**,见 §9.5。
 
 ---
 
 *本分册独立,与 02-06 无耦合,只单向依赖 core。完全可选,缺失时 core 兜底。jar 完全自包含。*
-### 9.5 2026-08-02 全项目审查修复
+### 9.5 解析与注入防护(现行)
 
-- **LIKE 正则注入修复**:`like` 模式除 `%`(任意串)、`_`(单字符)外,其余字符(含 `.` `*` `(` `)` 等正则元字符)一律按字面量转义匹配。
-- **`in` 谓词补全**(core 兜底 `SimpleQueryParser`):`col in (v1, v2)` / `not in`,数值跨类型相等(Long 30 == Double 30.0)。
+- **LIKE 字面量匹配**:`like` 模式除 `%`(任意串)、`_`(单字符)外,其余字符(含 `.` `*` `(` `)` 等正则元字符)一律按字面量转义匹配(防正则注入)。
+- **`in` 谓词**(core 兜底 `SimpleQueryParser`):`col in (v1, v2)` / `not in`,数值跨类型相等(Long 30 == Double 30.0)。
 - **NVL/COALESCE/IFNULL 实现**:Pratt 新增函数调用节点,返回第一个非 null 参数(参数可引用列,逐行求值)。
 - **L3 补全**:`SELECT DISTINCT`(去重)、`LIMIT n OFFSET m` / `OFFSET m ROWS FETCH FIRST n ROWS ONLY` / 独立 `OFFSET m`。
 - **NPE 防护**:`${}` 占位与 `FROM this`/`DUAL` 混用 → 明确报错(提示改用 `df.sql()`);未知数据源不再静默当 this。
@@ -391,7 +392,31 @@ public interface DslEngine {  // jian-core 中定义
 - **绑定数量校验**:`Dsl.sql(sql, dialect, dfs...)` 与 `df.sql(sql, binds...)` 均校验占位数 = 参数数(防静默少绑)。
 - **`df.eval()` / `df.sql()` 落地**:`DslEngine` SPI 增加默认 `sql()` 方法;core 兜底抛 `ModuleNotLoadedException`(带安装提示),jian-dsl 覆盖为完整实现。
 
+### 9.6 SQL 自然语法能力(现行)
+
+> 因为 SQL 子集面向真实数据任务(中文列名、自然运算符、别名引用是高频用法),所以引擎在标识符与运算符层做如下支持,并由回归测试锁定(`SqlNaturalSyntaxTest` 13 例 + `JianTest.按中文类别拆分Excel端到端`):
+
+| 能力 | 行为 |
+|---|---|
+| **中文/Unicode 列名** | SELECT 层(列名/AS 别名/聚合参数/JOIN ON/USING/派生表别名/DML 列名)与 WHERE 层(Pratt 词法器)一致支持;涉及标识符的正则带 `Pattern.UNICODE_CHARACTER_CLASS`(含 `${}` 占位名) |
+| **SQL 标准运算符** | `WHERE 类别 = '食品'` 的裸 `=`、`<>`、MySQL 反引号 `` `列名` `` 均支持(`SqlPreprocessor.normalizeSqlExpr` 字符串字面量感知:`<>`→`!=`、裸 `=`→`==`、剥反引号;接入 WHERE/HAVING/表达式列与 DML 的 UPDATE/DELETE WHERE) |
+| **AS 别名真重命名 + ORDER BY 未选中列** | ① 聚合别名在 HAVING **之前**重命名(`Column.rename` + `ofColumnsDirect`),HAVING/ORDER BY 均可引用;② 普通列别名投影后重命名;③ ORDER BY 列在投影结果缺失但投影前存在 → 先排序再投影(select 保序) |
+| **`count(*)`** | 经哨兵常量列(全 1 无缺失)走 `count` 聚合,输出 **LONG**(对齐 SQL/pandas),别名经重命名生效;占位绑定逻辑收敛为 `Dsl.bindPlaceholders`,静态/实例两入口共用(CTE 占位可多于 df);CTE 裸名替换限定 `(FROM\|JOIN)\s+名` 表引用位置 |
+| **增补平面字符(U+10000+)与 emoji** | Pratt Lexer codePoint 感知:高代理进 `ident()`,`ident` 按 codePoint 续吃(`cp > 0xFFFF` 无条件当标识符字符,emoji 列名亦可用);连写 emoji(如 😀🚀)整 token 化 |
+
+- **旧写法注意**:`ORDER BY salary_mean`(引用底层聚合输出名)不可用(该列已改名为别名),应写 `ORDER BY avg_sal`。
+- **多语言往返**:`UnicodeRoundTripTest` 11 例(简繁中/日/韩/西里尔/阿拉伯 RTL/希腊/CJK 扩展B/emoji ZWJ/组合变音 的 CSV/JSON/Excel/Pickle 写读回环 + SQL 多语言列名列值 + 中文 CTE/占位名 + count(*) 定向回归);IO 层 CSV/JSON/XML/HTML/Pickle/LaTeX 全部显式 `StandardCharsets.UTF_8`,无平台默认编码风险。
+- **测试**:jian-dsl 全绿(@Test 数以 [api-counts.md](api-counts.md) 为准);全仓 `mvn test` BUILD SUCCESS。
+
 ---
 
 *本分册独立,与 02-06 无耦合,只单向依赖 core。完全可选,缺失时 core 兜底。jar 完全自包含。*
-*M6 实现(L1/L2/L3 + SPI 集成)完成于 2026-08-01;2026-08-02 全项目审查后 36 测试全过;2026-08-09 L8 修复后实测 76 测试(DslTest 36 + SqlAdvancedTest 14 + SqlEngineInterfaceTest 19 + Round2AuditFixTest 8,数字以 api-counts.md 为准)。*
+*L1/L2/L3 + SPI 集成实现完成;当前测试数以 [api-counts.md](api-counts.md) 为准。*
+
+---
+
+### 9.7 行为细节(现行)
+
+- SELECT 表达式列(无括号)与未知列报错(不静默跳过);JOIN ON 多条件 + USING 多列。
+- UNION / 派生表括号感知;OFFSET 三方言分页;科学计数法字面量;引擎线程安全。
+- 测试:jian-dsl @Test **149**(口径见 [api-counts.md](api-counts.md))。

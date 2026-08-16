@@ -79,10 +79,13 @@ class ExcelTypeTest {
             try (java.io.FileOutputStream fos = new java.io.FileOutputStream(p.toFile())) { wb.write(fos); }
         }
         DataFrame df = Excel.read(p.toString()).go();
-        // 整数列 → DataFrame 经 Schema 推断为 INT 或 LONG
-        assertThat(df.getColumn("qty").get(0)).isInstanceOf(Number.class);
+        // 因为 isInstanceOf(Number.class) 断言过弱(Integer 也是 Number,无法区分
+        // INT 与 LONG),所以改为精确 dtype 断言:整数列 LONG(Long 装箱)、小数列 DOUBLE。
+        assertThat(df.dtypes().get(0)).as("纯整数列应为 LONG").isEqualTo(DType.LONG);
+        assertThat(df.getColumn("qty").get(0)).isInstanceOf(Long.class);
         assertThat(((Number) df.getColumn("qty").get(0)).longValue()).isEqualTo(10L);
         // 小数列
+        assertThat(df.dtypes().get(1)).as("小数列应为 DOUBLE").isEqualTo(DType.DOUBLE);
         assertThat(((Number) df.getColumn("price").get(0)).doubleValue()).isEqualTo(3.14);
     }
 
@@ -122,7 +125,12 @@ class ExcelTypeTest {
     }
 
     @Test
-    void 大整数ID列不丢精度() throws Exception {
+    void 大整数超2_53同格收敛为Long() throws Exception {
+        // 因为 POI 直写的超 2^53 long 经 Excel double 存储必然丢精度 —— 9e18 落在
+        // [2^62, 2^63),double 的 ulp=1024,9_000_000_000_000_000_001 与 …002 都
+        // 四舍五入到同一格 9.0e18(同格收敛),所以读回两个相邻 long 落到同一 long;
+        // 又因为整值列走 NUMERIC 分支精确转 long,所以读回 Long 9000000000000000000
+        // (无 E 记号、无二次字符串解析)。本测试锁定该行为。
         Path p = tmp.resolve("ids.xlsx");
         try (org.apache.poi.xssf.usermodel.XSSFWorkbook wb = new org.apache.poi.xssf.usermodel.XSSFWorkbook()) {
             org.apache.poi.ss.usermodel.Sheet sheet = wb.createSheet("s");
@@ -135,10 +143,14 @@ class ExcelTypeTest {
             try (java.io.FileOutputStream fos = new java.io.FileOutputStream(p.toFile())) { wb.write(fos); }
         }
         DataFrame df = Excel.read(p.toString()).go();
-        // 注:Excel 用 double 存储数值,超 2^53 的 long 经 double 会丢精度(Excel 格式固有限制)
-        // 但我们的转换不会再额外丢精度(long) d 直接截取 double 存的值
-        Object v = df.getColumn("id").get(0);
-        assertThat(v).isInstanceOfAny(Long.class, Double.class); // Excel 格式固有精度限制(超 2^53 的 long 存为 double)
+        Object v0 = df.getColumn("id").get(0);
+        Object v1 = df.getColumn("id").get(1);
+        assertThat(v0).as("超 2^53 整值读回为 Long(整值走 NUMERIC 分支)").isInstanceOf(Long.class);
+        assertThat(v1).isInstanceOf(Long.class);
+        assertThat((Long) v0).as("ulp=1024 同格收敛:两个相邻 long 落到同一格,读回同一 long")
+                .isEqualTo(9_000_000_000_000_000_000L);
+        assertThat((Long) v1).isEqualTo(9_000_000_000_000_000_000L);
+        assertThat(df.dtypes().get(0)).isEqualTo(DType.LONG);
     }
 
 }

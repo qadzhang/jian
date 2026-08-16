@@ -16,7 +16,7 @@ jian-export **大面对齐 pandas 的 `df.style` (Styler) + 多格式文档导�
 
 | 能力 | 子组件 | 对齐 pandas |
 |---|---|---|
-| **Styler 样式引擎** | `Styler` 类 | `df.style` |
+| **Styler 样式引擎** | `Styler` 类 | `df.style` + **字体颜色/加粗(fontColor/fontColorIf/bold/boldIf)+ 自动列宽** |
 | 条件染色(highlight_max/min/null) | Styler API | `.highlight_max()` 等 |
 | 颜色映射(背景渐变) | Styler API | `.background_gradient()`(文字渐变 text_gradient 未实现,见 §2.2 v2) |
 | 数值格式化 | Styler API | `.format()` |
@@ -51,7 +51,7 @@ jian-export
 
 ## 2. Styler 子系统设计(核心)
 
-> **⚠️ API 风格说明(2026-08-09 与 AI agent2 共识)**:
+> **⚠️ API 风格说明**:
 > jian 的 **Styler 入口是静态方法** `Styler.of(df)`,**不是** `df.style()` 链式。
 > 原因:Styler 属于 jian-export 叶子模块,DataFrame 在 jian-core,core 不能反依赖 export(模块单向依赖红线,见 AGENTS.md §4.1)。
 > **用户实际写法**:
@@ -78,7 +78,7 @@ Styler = DataFrame(原数据)
 
 **入口**:`Styler s = Styler.of(df);`(对齐 pandas `df.style()`,但 jian 用静态 `of` 而非实例方法)
 
-#### 已实现(2026-08-09 与 AI agent2 共识:文档如实对齐代码)
+#### 已实现(文档如实对齐代码)
 
 ```java
 Styler s = Styler.of(df);
@@ -240,7 +240,7 @@ String tex = s.toLatex();
 
 ---
 
-## 8. 实现说明(M3.3 + M4.2,2026-08-01)
+## 8. 实现说明
 
 > 已实现 HTML / Markdown / LaTeX 渲染器 + **Styler 子系统核心子集**;Excel 样式输出(条件格式)与控制台 repr 留 M4.3+。
 
@@ -266,7 +266,7 @@ String tex = s.toLatex();
 
 ### 8.3 实现状态(全部已落地)
 
-5 渲染器 + Styler 子系统**全部已实现**(23 测试通过):
+5 渲染器 + Styler 子系统**全部已实现**(测试数以 [api-counts.md](api-counts.md) 为准):
 - HTML/Markdown/LaTeX/**控制台 repr**(中文 2 宽对齐)/ **Styler.toExcel**(POI 条件格式 + 单元格背景色)
 - Styler:format/highlightMax/Min/Null/backgroundGradient/bar/setCaption/hideIndex/hideColumns/setTableStyles
 - 内置 ColorMap(GREEN_YELLOW_RED/BLUE_RED/WHITE_BLUE)+ RGB 插值
@@ -274,4 +274,27 @@ String tex = s.toLatex();
 ---
 
 *本分册独立,与 01-03/05-06 无耦合。Styler HTML 零依赖;Excel 样式复用 POI。*
-*M3.3 + M4.2 + M4.6:5 渲染器(HTML/Markdown/LaTeX/控制台)+ Styler 全套实现完成于 2026-08-01。*
+*5 渲染器(HTML/Markdown/LaTeX/控制台)+ Styler 全套实现完成;测试数以 [api-counts.md](api-counts.md) 为准。*
+
+### 8.4 字体样式与列宽(Styler 现行能力)
+
+> 与 pandas Styler.applymap 对齐的字体/整行/整列维度(背景色维度之外):
+
+| 新 API | HTML | Excel |
+|---|---|---|
+| `fontColor(col, "#ff0000")` / `fontColorIf(col, color, 谓词)` | 内联 `color:` | POI `Font.setColor`(IndexedColors 映射) |
+| `bold(col)` / `boldIf(col, 谓词)` | `font-weight: bold` | POI `Font.setBold` |
+| `autoColumnWidth(false)`(默认**开**) | — | 列宽 = max(表头,内容采样 200 行)×1.2(中文/韩文/假名/全角按 2 宽),clamp [8, 80](只放宽不缩窄) |
+| `rowBackgroundIf(col, color, 谓词)` | 命中行每格 `background-color:` | 命中行每格 fill(对齐 pandas apply(axis=1) 的"依据列条件整行标色") |
+| `columnBackground(col, color)` | 该列每格 | 该列每格 fill(对齐 apply(axis=0)) |
+
+- **原生数字格式透传**:`format("#,##0.00"/"0.00"/"0.00%")` 等 `[#0][#0.,%]*` 形态的标准 Excel 格式串原样交给 `DataFormat`;数值单元格保持 NUMERIC(**Excel 内可直接求和**,非文本;HTML 端为文本渲染)。
+- 测试:字体/加粗/行列背景(HTML 断言 + Excel POI 读回断言 Font/Bold/列宽/NUMERIC/DataFormatString/Fill);真实场景 **S16**(财务月报样式导出,POI 读回全链验证)。
+
+
+---
+
+### 8.5 行为细节(现行)
+
+- toHtml 缺失值默认 `<NA>`(naRep 可配,对齐 pandas to_html 默认);Styler.toExcel 多条 FontRule 合并生效。
+- 测试:jian-export @Test **33**(口径见 [api-counts.md](api-counts.md))。

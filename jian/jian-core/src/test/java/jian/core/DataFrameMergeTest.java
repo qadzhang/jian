@@ -19,6 +19,37 @@ class DataFrameMergeTest {
         assertThat(r.columnNames()).contains("name", "dept_id", "dept_name");
     }
 
+    /**
+     * 对齐 pandas:leftOn≠rightOn 异名键时右表键列必须保留。
+     * 三条路径(long/double/generic)都不得跳过右键列(否则 k2 列及数据整体丢失);
+     * pandas(1.5.3 实测)输出 ['k1','x_x','k2','x_y'],且 outer/right 右表独有行 k1=NaN(不回填)。
+     * 期望值全部来自 pandas 实测(pd.merge left_on/right_on 四种 how)。
+     */
+    @Test
+    void 异名键merge_右表键列保留_对齐pandas() {
+        DataFrame l = DataFrame.of(Schema.of("k1", DType.LONG, "x", DType.DOUBLE),
+                new Object[][]{{1L, 10.0}, {2L, 20.0}, {3L, 30.0}});
+        DataFrame r = DataFrame.of(Schema.of("k2", DType.LONG, "x", DType.DOUBLE),
+                new Object[][]{{1L, 11.0}, {4L, 41.0}});
+        for (String how : new String[]{"inner", "left", "outer", "right"}) {
+            DataFrame m = l.merge(r, how, new String[]{"k1"}, new String[]{"k2"}, null);
+            assertThat(m.columnNames()).as("merge(%s) 异名键应保留 k2(对齐 pandas)", how)
+                    .containsExactly("k1", "x_x", "k2", "x_y");
+        }
+        // inner:1 行 [1, 10.0, 1, 11.0]
+        DataFrame inner = l.merge(r, "inner", new String[]{"k1"}, new String[]{"k2"}, null);
+        assertThat(inner.rowCount()).isEqualTo(1);
+        assertThat(inner.getRow(0)).containsExactly(1L, 10.0, 1L, 11.0);
+        // left:3 行,未匹配行 k2/x_y 为 null
+        DataFrame lf = l.merge(r, "left", new String[]{"k1"}, new String[]{"k2"}, null);
+        assertThat(lf.rowCount()).isEqualTo(3);
+        assertThat(lf.getRow(1)).containsExactly(2L, 20.0, null, null);
+        // outer:4 行;右表独有行(k2=4)的 k1 为 null(pandas 不把右键回填进左键列)
+        DataFrame out = l.merge(r, "outer", new String[]{"k1"}, new String[]{"k2"}, null);
+        assertThat(out.rowCount()).isEqualTo(4);
+        assertThat(out.getRow(3)).containsExactly(null, null, 4L, 41.0);
+    }
+
     @Test
     void leftJoin_左表全保留() {
         DataFrame left = users();
@@ -36,9 +67,18 @@ class DataFrameMergeTest {
     void rightJoin_右表全保留() {
         DataFrame left = users();
         DataFrame right = depts();
+        // STRING 键 → 落 generic 路径(right 不走 fast path),验证右表序驱动
         DataFrame r = left.merge(right, "right", "dept_id");
-        // depts 全保留:RD, ENG, MGT
-        assertThat(r.rowCount()).isGreaterThanOrEqualTo(3);
+        // 对齐 pandas(pandas 1.5.3 实测):right=4 行,输出按右表键序驱动
+        //   —— RD 匹配 alice+carol(2) + ENG 未匹配(1) + MGT 未匹配(1)(精确断言,不用 ≥3 弱断言)
+        assertThat(r.rowCount()).isEqualTo(4);
+        // right join 输出按右表序驱动(pandas 实测键序 [RD,RD,ENG,MGT],即 depts 表的行序;
+        // 不是左序再追加未匹配)。同时抓"右表未匹配行键丢失"类 bug(ENG/MGT 的键非 null)。
+        assertThat(r.getStringColumn("dept_id").data())
+            .containsExactly("RD", "RD", "ENG", "MGT");
+        // 行级精确(对齐 pandas):前两行是左表匹配行(alice/carol),后两行右表独有(name=null)
+        assertThat(r.getStringColumn("name").data())
+            .containsExactly("alice", "carol", null, null);
     }
 
     @Test
@@ -46,8 +86,16 @@ class DataFrameMergeTest {
         DataFrame left = users();
         DataFrame right = depts();
         DataFrame r = left.merge(right, "outer", "dept_id");
-        // 左 3 + 右未匹配的(MGT) = 至少 4
-        assertThat(r.rowCount()).isGreaterThanOrEqualTo(4);
+        // 对齐 pandas(pandas 1.5.3 实测,sort=False 默认):outer=5 行,
+        // 按键分组、键序=首次出现序(先扫左表键再扫右表键)——
+        //   RD(匹配 alice+carol)→ PM(左独有 bob)→ ENG → MGT(右独有)
+        // 精确断言锁定 pandas 实测的键序 [RD,RD,PM,ENG,MGT]
+        // (注意:这不是字典序 —— pandas merge 默认 sort=False 不排序,是首现键序)。
+        assertThat(r.rowCount()).isEqualTo(5);
+        assertThat(r.getStringColumn("dept_id").data())
+            .containsExactly("RD", "RD", "PM", "ENG", "MGT");
+        assertThat(r.getStringColumn("name").data())
+            .containsExactly("alice", "carol", "bob", null, null);
     }
 
     @Test

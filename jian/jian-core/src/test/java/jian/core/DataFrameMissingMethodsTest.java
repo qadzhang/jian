@@ -10,7 +10,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 // ┌─ What : DataFrame 11 个"未测方法"补测 —— 覆盖率盲区,补齐 compare 派生列族 + 类型化访问器 + 工厂 + 排序
 // │  Why  : 用户要求"测试即文档",测试不全则抽取的示例不全;这 11 个方法此前 0 测试覆盖
 // │  Who  : 阶段 A1(补全测试覆盖)
-// │  When : 2026-08-08 AI 友好 jar 改造
+// │  When : jian-core 测试套件常规执行
 // │  Where: jian-core/DataFrameMissingMethodsTest.java
 // │  How  : 每个方法用 A 级断言:构造具体数据 → 调用 → 断言精确返回值(不用 isNotNull 弱断言)
 class DataFrameMissingMethodsTest {
@@ -124,12 +124,15 @@ class DataFrameMissingMethodsTest {
                 Schema.of("c", DType.STRING),
                 new Object[][]{{"x"}, {"y"}, {null}});
         BoolColumn mask = df.colNe("c", "x");
-        // "x"!=x false, "y"!=x true, null!=x 视为 true(缺失!=任何值)
-        // 注:缺失行 cmp 返回 false(对象为 null),但 colNe 用 "!=" 运算符,
-        //     null != "x" 在 cmp 实现里走 false → "!="取反 → true。需验证。
+        // 因为缺失行 != 语义需与 cmp 内部 null 契约、query 双引擎
+        // (c != 'x' 保留 null 行)、pandas(NaN != 'x' → True)三方一致,所以此处显式断言 null 行:
+        // != 对缺失行为 **true**;== 与顺序比较对缺失行仍为 false(NaN 传播,见下方 colEq 对照)。
         boolean[] data = mask.dataInPlace();
         assertThat(data[0]).isFalse();   // "x"!=x → false
         assertThat(data[1]).isTrue();    // "y"!=x → true
+        assertThat(data[2]).as("缺失行 != → true(对齐 pandas 与 query 引擎)").isTrue();
+        // 对照:== 对缺失行恒 false(不是 != 的取反 —— 缺失参与比较按 NaN 传播处理)
+        assertThat(df.colEq("c", "x").dataInPlace()[2]).isFalse();
     }
 
     // ======================== 8-9. colDiv/colSub(算术派生列)========================

@@ -105,6 +105,7 @@ public enum DbType {
         if (lower.startsWith("h2:")) return H2;
         if (lower.startsWith("oracle:")) return ORACLE;
         if (lower.startsWith("access:") || lower.startsWith("ucanaccess:")) return ACCESS;
-        throw new IllegalArgumentException("无法识别的数据库 URL:" + sqlalchemyUrl);
+        // 因为异常消息可能回显整个 URL,不得泄露其中的密码段,所以过 sanitize
+        throw new IllegalArgumentException("无法识别的数据库 URL:" + JianSqlException.sanitize(sqlalchemyUrl));
     }
 }
