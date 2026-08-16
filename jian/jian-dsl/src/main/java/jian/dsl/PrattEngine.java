@@ -651,13 +651,19 @@ final class PrattEngine {
             }
             if (t.t == TT.NUM) {
                 consume();
-                // 无小数点的字面量按 long 精确解析(超 long 再回退 double)。
-                // 科学计数法字面量(1e5)在此走 Long.parseLong 抛 NFE,
-                // 由 catch 回退到下面的 Double.parseDouble(词法器产出的 NUM 可含 e/E,
-                // 不做前置判断)
-                if (t.s.indexOf('.') < 0) {
+                // 纯整数字面量(无小数点、无 e/E)按 long 精确解析,超 long 抛 IAE
+                //(fail-fast,与 SimpleQueryParser 双引擎同步)。不再静默回退 double:
+                // 回退会把 9223372036854775808 折成 9.223372036854776E18,恰好等于
+                // Long.MAX_VALUE 列值的 double 投影,> / == 随之误匹配(pandas 的 Python
+                // 任意精度 int 同输入不误判);需要近似值请显式写科学计数法(1e19)。
+                // 科学计数法(1e5)不属于纯整数,照旧走下面的 Double.parseDouble(近似)
+                if (t.s.indexOf('.') < 0 && t.s.indexOf('e') < 0 && t.s.indexOf('E') < 0) {
                     try { return new NumLit(Long.parseLong(t.s)); }
-                    catch (NumberFormatException notALong) { /* 科学计数法/超 long → double */ }
+                    catch (NumberFormatException overflow) {
+                        throw new IllegalArgumentException(
+                            "整数子面量超出 long 范围:" + t.s
+                            + "(jian 不支持任意精度整数字面量;如需近似比较请改写为科学计数法,如 9.22e18)");
+                    }
                 }
                 return new NumLit(Double.parseDouble(t.s));
             }

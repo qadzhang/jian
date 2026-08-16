@@ -336,14 +336,14 @@
 
 > 本节是项目实际实现进度的"看板",与上面需求稿并列。详细实现说明见各分册末尾「实现说明」章节。
 
-### 已实现模块(全测试通过,实测 **@Test 1159 / surefire 执行 1285**,全量 0 失败,见 [api-counts.md](api-counts.md))
+### 已实现模块(全测试通过,实测 **@Test 1211**,全量 0 失败,见 [api-counts.md](api-counts.md))
 
-> **测试口径说明**:**全仓 @Test 方法数实测 1159**(jian 1024 + jian-num 70 + jian-sql 65);surefire 执行数 1285(@RepeatedTest/参数化测试多轮执行所致,与 @Test 方法数是**两个口径**,本文以 @Test 方法数为准)。其中 14 个 PG 集成测试经 `-Dtest.pg=true` 激活,默认 skip(不算 fail)。数字以 api-counts.md 为准。
+> **测试口径说明**:**全仓 @Test 方法数实测 1211**(jian 1076 + jian-num 70 + jian-sql 65;含外部 AI 协作复审新增回归 +52 与 pandas 对照 +7)。其中 14 个 PG 集成测试经 `-Dtest.pg=true` 激活,默认 skip(不算 fail)。数字以 api-counts.md 为准。
 
 | 模块 | 测试数 | 状态 |
 |---|---|---|
 | `jian-num` | 59 | ✅ 多 dtype Ndarray + Stats + StrOps + Matrix + Random + LinearFit |
-| `jian-core` | 545(见 [api-counts.md](api-counts.md)) | ✅ DataFrame 完整(9 dtype 列 / query(含 in/not in)/ groupby / merge / pivot / melt / sort / 缺失 / 统计(经 StatsProvider SPI)/ eval / sql)+ 60+ 扩展方法(idxmax/sample/isin/where/mask/pivot/explode/join/merge_asof/corr/cov/skew/kurt/cumsum/diff/quantile/rank/clip/interpolate/astype 8种/Resampler/DatetimeIndex/Frequency/MultiIndex N级 等)+ 蜕变/差分/PBT/性能/边界等各类专项测试(数字为方法数,见 api-counts.md) |
+| `jian-core` | 571(见 [api-counts.md](api-counts.md),含 AI 复审回归 AuditRegressionTest) | ✅ DataFrame 完整(9 dtype 列 / query(含 in/not in)/ groupby / merge / pivot / melt / sort / 缺失 / 统计(经 StatsProvider SPI)/ eval / sql)+ 60+ 扩展方法(idxmax/sample/isin/where/mask/pivot/explode/join/merge_asof/corr/cov/skew/kurt/cumsum/diff/quantile/rank/clip/interpolate/astype 8种/Resampler/DatetimeIndex/Frequency/MultiIndex N级 等)+ 蜕变/差分/PBT/性能/边界等各类专项测试(数字为方法数,见 api-counts.md) |
 | `jian-num-bridge` | 11 | ✅ StatsProvider SPI(经 ServiceLoader 升级 jian-num 精确统计)|
 | `jian-io-csv` | 46 | ✅ CSV/TSV/FWF + 公式注入防护(默认开,OWASP 严格版含前导空白) |
 | `jian-io-json` | 28 | ✅ JSON 5 orient + json_normalize 拍平 |
@@ -358,13 +358,13 @@
 | `jian-io-latex` | 6 | ✅ LaTeX 表格 |
 | `jian-export` | 33 | ✅ HTML/Markdown/LaTeX/控制台 + Styler 子系统(含 toExcel POI 条件格式)|
 | `jian-viz` | 28 | ✅ 13 种图(line/scatter/bar/hist/barh/area/pie/box/kde/hexbin/scatterMatrix/lag/autocorrelation;radviz/andrews/parallel_coordinates/bootstrap 4 种高维图 v2 规划)|
-| `jian-dsl` | 149 | ✅ L1/L2 Pratt(含 nvl/coalesce/ifnull)+ L3 SQL(可插拔引擎接口 SqlEngineInterface/SqlEngines;默认 SqlRegexEngine 支持 DISTINCT/LIMIT OFFSET/GROUP/HAVING/ORDER/JOIN/UNION ALL/子查询≤2 层;支持 CTE/CASE WHEN/派生表/集合运算(UNION/INTERSECT/EXCEPT)/USING 预处理;算术表达式列真实求值(委托 PrattEngine.eval);DML 的 WHERE/SELECT 异常显式抛出、不静默吞)|
+| `jian-dsl` | 155(含 PrattLiteralOverflowTest) | ✅ L1/L2 Pratt(含 nvl/coalesce/ifnull)+ L3 SQL(可插拔引擎接口 SqlEngineInterface/SqlEngines;默认 SqlRegexEngine 支持 DISTINCT/LIMIT OFFSET/GROUP/HAVING/ORDER/JOIN/UNION ALL/子查询≤2 层;支持 CTE/CASE WHEN/派生表/集合运算(UNION/INTERSECT/EXCEPT)/USING 预处理;算术表达式列真实求值(委托 PrattEngine.eval);DML 的 WHERE/SELECT 异常显式抛出、不静默吞)|
 | `jian-sql-engine` | 26 | ✅ Engine + DbType(7 库)+ HikariCP + dsl()/sql() 入口 + 只读拦截防注释绕过 |
 | `jian-sql-expr` | 9 | ✅ SqlBuilder(jOOQ 3.21.6 运行时)|
 | `jian-sql-orm` | 19 | ✅ @Table/@Column/@Id + Session CRUD |
 | `jian-sql-bridge` | 11 | ✅ ResultSet/jOOQ Result → DataFrame |
 | `jian-facade` | 63 | ✅ 顶层 Jian 门面(read/write 按扩展名自动分发 + pandas 风格 read*/to* 全套 + L3 SQL 入口)|
-| **合计 Java** | **1159**(surefire 执行 1285) | **22 模块**(jian 1024 + jian-num 70 + jian-sql 65;Python 117 全过(pandas 对照 d1-d73 + Hypothesis PBT + fuzz 16)另计;数字以 [api-counts.md](api-counts.md) 为准,只链接不抄写) |
+| **合计 Java** | **1211** | **22 模块**(jian 1076 + jian-num 70 + jian-sql 65;Python 124 全过(pandas 对照 d1-d80 + Hypothesis PBT + fuzz 16)另计;数字以 [api-counts.md](api-counts.md) 为准,只链接不抄写) |
 
 ### 工程基线
 
@@ -789,6 +789,9 @@ META-INF/ai/
 | 14 | **resample 空桶 sum/count 返回缺失**(见 §10.12) | 空桶(无观测时间段)sum/count 返回 NaN/缺失 | `min_count=0` 默认下 sum 返 `0.0`、count 返 `0` | jian 认为"无观测 ≠ 0"(与 §3.5 缺失语义一致,pandas 的 0 是 min_count=0 历史怪癖,混淆"无数据"与"数据为零");有意差异 |
 | 15 | **astype(BOOL) 字符串判定** | 对字符串仅 `"true"`/`"1"` 转 true,其余转 false | 非空字符串恒 True(如 `"false"` 也是 True) | jian 拒绝隐式真值("任意非空即真"易掩盖脏数据);有意差异 |
 | 16 | **CSV/TSV 重复表头自动改名** | 重复表头自动加 `_1` 后缀(`name, name` → `name, name_1`) | 重名列用 `name.1` | jian 与 Excel 模块 dedupNames 统一用 `_1` 后缀,全库口径一致;有意差异 |
+| 17 | **大整数(> 2^53)× 浮点混型比较** | 精确判定(`compareLongVsDouble`:浮点侧须为数学整数值且相等才等;Long 2^53+1 ≠ Double 2^53) | NumPy 把 Python int 标量 cast 成 float64 再比(2^53+1 折成 2^53,`==` 判 True,精度丢失) | jian 遵循 LONG"大 ID 不丢精度"契约(§3.5 / DType javadoc);测试 d78 锁定双方行为备查 |
+| 18 | **超 long 范围的整数字面量(query/eval)** | 双引擎(Pratt/SimpleQueryParser)抛 IAE,提示改写科学计数法 | Python int 任意精度,`id > 9223372036854775808` 正常比较 | fail-fast 优于静默近似(旧版回退 double 会与 LONG 列的 double 投影恰好相等,`>`/`==` 误匹配);科学计数法(1e19)仍是显式近似路径 |
+| 19 | **resample().first()/.last() 对 BOOL 列** | 返回 DOUBLE(0.0/1.0) | 返回 bool | Resampler 的 first/last 走数值提取路径;BOOL 列时序首末取值罕见,避免大重构;sum/count 已对齐(BOOL sum→LONG true 计数) |
 
 > 修改 Column 缺失语义前,必须先读本表第 1/2 行与 AGENTS.md §3.5,再决定是否动契约。
 

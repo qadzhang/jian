@@ -79,11 +79,13 @@ public final class ConsoleRenderer {
         for (int c = 0; c < cols.size(); c++) {
             widths[c + 1] = Math.min(Math.max(displayWidth(cols.get(c)), 4), maxColWidth);
         }
+        // 宽度计算与显示口径对齐:缺失一律按 naRep 的
+        // 显示宽度计(旧实现按 v==null 判缺失,DOUBLE 列 NaN 会按 "NaN"=3 计入,
+        // 而显示走 isNull 输出空串,列宽虚高)
         for (int r = 0; r < headN; r++) {
             widths[0] = Math.max(widths[0], Math.min(displayWidth(String.valueOf(df.index().get(r))), maxColWidth));
             for (int c = 0; c < cols.size(); c++) {
-                Object v = df.getColumn(cols.get(c)).get(r);
-                int w = v == null ? 4 : displayWidth(String.valueOf(v));
+                int w = cellDisplayWidth(df, cols.get(c), r, naRep);
                 widths[c + 1] = Math.max(widths[c + 1], Math.min(w, maxColWidth));
             }
         }
@@ -91,8 +93,7 @@ public final class ConsoleRenderer {
             for (int r = n - tailN; r < n; r++) {
                 widths[0] = Math.max(widths[0], Math.min(displayWidth(String.valueOf(df.index().get(r))), maxColWidth));
                 for (int c = 0; c < cols.size(); c++) {
-                    Object v = df.getColumn(cols.get(c)).get(r);
-                    int w = v == null ? 4 : displayWidth(String.valueOf(v));
+                    int w = cellDisplayWidth(df, cols.get(c), r, naRep);
                     widths[c + 1] = Math.max(widths[c + 1], Math.min(w, maxColWidth));
                 }
             }
@@ -101,7 +102,7 @@ public final class ConsoleRenderer {
         // 表头
         sb.append(pad("", widths[0])).append(' ');
         for (int c = 0; c < cols.size(); c++) {
-            sb.append(pad(cols.get(c), widths[c + 1])).append(' ');
+            sb.append(pad(truncateTo(cols.get(c), widths[c + 1]), widths[c + 1])).append(' ');
         }
         sb.append('\n');
 
@@ -117,15 +118,49 @@ public final class ConsoleRenderer {
     }
 
     private static void appendRow(StringBuilder sb, DataFrame df, int r, int[] widths, List<String> cols, String naRep) {
-        sb.append(pad(String.valueOf(df.index().get(r)), widths[0])).append(' ');
+        sb.append(pad(truncateTo(String.valueOf(df.index().get(r)), widths[0]), widths[0])).append(' ');
         for (int c = 0; c < cols.size(); c++) {
             // 用 isNull 判断缺失(DOUBLE 列 NaN 不是 null);缺失默认空字符串,对齐 AGENTS §3.5.2
             boolean missing = df.getColumn(cols.get(c)).isNull(r);
             Object v = df.getColumn(cols.get(c)).get(r);
             String s = missing ? naRep : String.valueOf(v);
-            sb.append(pad(s, widths[c + 1])).append(' ');
+            sb.append(pad(truncateTo(s, widths[c + 1]), widths[c + 1])).append(' ');
         }
         sb.append('\n');
+    }
+
+    /** 单元格显示宽度(缺失按 naRep 计,与 appendRow 显示口径一致)。 */
+    private static int cellDisplayWidth(DataFrame df, String col, int r, String naRep) {
+        if (df.getColumn(col).isNull(r)) return displayWidth(naRep);
+        return displayWidth(String.valueOf(df.getColumn(col).get(r)));
+    }
+
+    // ┌─ What : 超宽值截断为 "..." + 尾部(pandas to_string max_colwidth 同形态)
+    // │  Why  : javadoc 声明"超 maxColWidth 截断加 ...",但 pad
+    // │         对超宽值原样返回,单元格撑破列宽导致后续列错位;本机 pandas 实测
+    // │         to_string(max_colwidth=4) 对超长值显示 "..."(仅省略号 + 尾部),按此对齐。
+    // │  How  : 显示宽度 ≤ width 直通;超宽时取 "..." + 末尾(width-3) 个字符
+    // │         (width < 4 时退化为纯 "..."),CJK 按 2 列累计从尾部截取。
+    /**
+     * 超过显示宽度的值截断为 "..." + 尾部(对齐 pandas to_string max_colwidth)。
+     * @param s String 原文,非 null
+     * @param width int 目标显示宽度
+     * @return String 显示宽度 ≤ width 的可展示文本
+     */
+    static String truncateTo(String s, int width) {
+        int w = displayWidth(s);
+        if (w <= width) return s;
+        if (width <= 3) return "...".substring(0, Math.max(0, width));
+        // 保留尾部(width-3) 显示列:pandas 语义是"省略头部、保留尾部"
+        StringBuilder tail = new StringBuilder("...");
+        int budget = width - 3;
+        for (int i = s.length() - 1; i >= 0 && budget > 0; i--) {
+            int cw = displayWidth(String.valueOf(s.charAt(i)));
+            if (cw > budget) break;
+            tail.insert(3, s.charAt(i));
+            budget -= cw;
+        }
+        return tail.toString();
     }
 
     /** 按显示宽度右补空格(CJK 字符占 2 列)。 */

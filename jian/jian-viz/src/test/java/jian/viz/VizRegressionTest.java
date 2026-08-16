@@ -200,4 +200,32 @@ class VizRegressionTest {
         }
         return n;
     }
+
+    // ======================== 参数校验补齐 ========================
+
+    @Test
+    void kde_bins非正_教学式IAE而非静默空图() {
+        DataFrame df = DataFrame.of(Schema.of("v", DType.DOUBLE), new Object[][]{{1.0}, {2.0}});
+        assertThatThrownBy(() -> Plot.kde(df, "v", 0))
+            .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("bins");
+        assertThatThrownBy(() -> Plot.kde(df, "v", -3))
+            .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void hexbin_gridsize非正_教学式IAE而非负分箱() {
+        DataFrame df = DataFrame.of(Schema.of("x", DType.DOUBLE, "y", DType.DOUBLE),
+            new Object[][]{{1.0, 2.0}, {3.0, 4.0}});
+        assertThatThrownBy(() -> Plot.hexbin(df, "x", "y", 0))
+            .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("gridsize");
+        assertThatThrownBy(() -> Plot.hexbin(df, "x", "y", -2))
+            .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void lagPlot负lag_教学式IAE而非裸越界() {
+        DataFrame df = DataFrame.of(Schema.of("v", DType.DOUBLE), new Object[][]{{1.0}, {2.0}, {3.0}});
+        assertThatThrownBy(() -> Plot.lagPlot(df, "v", -1))
+            .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("lag");
+    }
 }

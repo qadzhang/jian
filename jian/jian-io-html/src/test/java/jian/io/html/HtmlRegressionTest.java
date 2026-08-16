@@ -85,4 +85,17 @@ class HtmlRegressionTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("http/https");
     }
+
+    // ======================== 表头去重 ========================
+
+    @Test
+    void 重复th表头_自动加后缀去重不再抛列名重复() throws Exception {
+        // 合并单元格/手写表格常见重复 th;修复前 Schema 校验抛"列名重复"整表拒读
+        List<DataFrame> tables = Html.parse(
+            "<table><tr><th>a</th><th>a</th><th>b</th></tr>"
+            + "<tr><td>1</td><td>2</td><td>3</td></tr></table>", null);
+        assertThat(tables).hasSize(1);
+        assertThat(tables.get(0).columnNames()).containsExactly("a", "a_1", "b");
+        assertThat(((Number) tables.get(0).get(0, "a_1")).intValue()).isEqualTo(2);   // "1/2/3" 被 infer 为整数
+    }
 }

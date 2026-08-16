@@ -62,4 +62,8 @@ tests-pbt/classes/
 __pycache__/
 *.pyc
 *.pyo
+
+# AI 协作会话遗留文件(审计报告/调度状态,不入库)
+*测试结果.md
 .cli-ai-sessions.md
+.cli-ai-aliases.json

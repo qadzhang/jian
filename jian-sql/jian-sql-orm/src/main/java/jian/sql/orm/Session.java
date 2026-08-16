@@ -60,7 +60,17 @@ public final class Session<T> {
         this.tableName = requireSafeTableName(t.value());
         Field idF = null;
         List<FieldInfo> fs = new ArrayList<>();
-        for (Field f : entityClass.getDeclaredFields()) {
+        // 沿类层级收集字段(旧实现只扫本类 getDeclaredFields,
+        // 父类(实体基类模式)的 @Id/@Column 字段被静默丢弃 —— insert 抛"无 @Id"或
+        // update 丢列,数据漂移无提示)。父类字段在前(ORM 惯例);跳过 static/synthetic。
+        java.util.List<Class<?>> hierarchy = new ArrayList<>();
+        for (Class<?> k = entityClass; k != null && k != Object.class; k = k.getSuperclass()) {
+            hierarchy.add(k);
+        }
+        java.util.Collections.reverse(hierarchy);
+        for (Class<?> k : hierarchy) {
+        for (Field f : k.getDeclaredFields()) {
+            if (Modifier.isStatic(f.getModifiers()) || f.isSynthetic()) continue;
             Id idAnno = f.getAnnotation(Id.class);
             Column colAnno = f.getAnnotation(Column.class);
             if (idAnno != null) {
@@ -69,6 +79,7 @@ public final class Session<T> {
             } else if (colAnno != null) {
                 fs.add(new FieldInfo(f, requireSafeColumnName(colAnno.value()), false));
             }
+        }
         }
         this.idField = idF;
         this.fields = fs;
@@ -192,7 +203,9 @@ public final class Session<T> {
         if (idField == null) return;
         if (Modifier.isFinal(idField.getModifiers())) return;
         Class<?> ft = idField.getType();
-        if (!Number.class.isAssignableFrom(ft)) return;   // 仅 Number 字段回填(String/自定义主键不动)
+        // 去掉"仅 Number 回填"早退 —— String/enum 等 @Id 走
+        // adaptValue 既有兜底(String.valueOf/Enum.valueOf);不可适配类型由 adaptValue
+        // 抛教学型 IAE(fail-fast 优于静默丢回填)
         try (ResultSet keys = ps.getGeneratedKeys()) {
             if (keys.next()) {
                 Object key = keys.getObject(1);

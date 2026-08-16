@@ -89,7 +89,7 @@ DataFrame inSet  = df.query("city in ('SH','BJ','SZ')");
 - 逻辑:`&& || !`(也兼容 `and / or / not`)
 - 算术:`+ - * / %`
 - 谓词:`between X and Y` / `like 'pattern'`(% 通配)/ `in (...)` / `is null` / `is not null`
-- 字面量:数字、字符串(单/双引号)、布尔、null
+- 字面量:数字、字符串(单/双引号)、布尔、null。数字:纯整数按 long 精确解析,**超出 long 范围抛 IAE**(提示改写科学计数法;科学计数法按 double 近式)—— 双引擎(Pratt/SimpleQueryParser)同口径,详见 doc/00 §10.16#18
 - 列名:直接当标识符(底层从 binding 取值)
 - 括号:任意嵌套
 
@@ -420,3 +420,10 @@ public interface DslEngine {  // jian-core 中定义
 - SELECT 表达式列(无括号)与未知列报错(不静默跳过);JOIN ON 多条件 + USING 多列。
 - UNION / 派生表括号感知;OFFSET 三方言分页;科学计数法字面量;引擎线程安全。
 - 测试:jian-dsl @Test **149**(口径见 [api-counts.md](api-counts.md))。
+
+### 实现说明:外部 AI 协作复审修复
+
+| # | 修复 | 行为变化 |
+|---|---|---|
+| 1 | SqlPreprocessor.sigOf 类型感知签名 | INTERSECT/EXCEPT 行签名带 dtype 标签 + 缺失独立哨兵:字符串 "null"/"NaN" 与真缺失/DOUBLE NaN 不再误判等;NULL=NULL 按 SQL 标准 "not distinct" 语义判等 |
+| 2 | tests-pbt 桥(JianJpypeBridge)S0 | LONG 列 null 经 nullMask 标记(原 null→0L 且 isNull 恒 false,pandas 对照在 LONG 缺失维度整体失明;d80 锁定) |

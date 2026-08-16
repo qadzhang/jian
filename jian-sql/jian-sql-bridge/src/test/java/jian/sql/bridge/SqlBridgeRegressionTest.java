@@ -148,4 +148,24 @@ class SqlBridgeRegressionTest {
             assertThat(df.getColumn("ID").get(1)).isEqualTo(2L);
         }
     }
+
+    // ======================== Clob/Blob 失败对称性 ========================
+
+    @Test
+    void Clob与Blob读取失败路径对称_统一为缺失() throws Exception {
+        // length() 抛 SQLException 的坏 Clob/Blob:两路都应返回 null(缺失)
+        // 修复前:Clob 失败返回 clob.toString()(非缺失垃圾串),Blob 失败返 null,语义不对称
+        // 动态代理实现"任何调用都失败"的 Clob/Blob(接口方法可声明 SQLException)
+        java.sql.Clob badClob = (java.sql.Clob) java.lang.reflect.Proxy.newProxyInstance(
+                java.sql.Clob.class.getClassLoader(), new Class<?>[]{java.sql.Clob.class},
+                (proxy, method, args) -> { throw new java.sql.SQLException("broken"); });
+        java.sql.Blob badBlob = (java.sql.Blob) java.lang.reflect.Proxy.newProxyInstance(
+                java.sql.Blob.class.getClassLoader(), new Class<?>[]{java.sql.Blob.class},
+                (proxy, method, args) -> { throw new java.sql.SQLException("broken"); });
+        java.lang.reflect.Method m = jian.sql.bridge.SqlBridge.class
+                .getDeclaredMethod("normalizeJdbcObject", Object.class);
+        m.setAccessible(true);
+        assertThat(m.invoke(null, badClob)).isNull();
+        assertThat(m.invoke(null, badBlob)).isNull();
+    }
 }

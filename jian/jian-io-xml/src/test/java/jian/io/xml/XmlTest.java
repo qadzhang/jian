@@ -65,18 +65,22 @@ class XmlTest {
 
     @Test
     void 非法列名与值写出() throws Exception {
-        // 列名含空格/&(XML 名称非法字符)→ 写端替换为 _ 保证合法;值含 & < > → 转义
+        // 列名含空格/&(XML 名称非法字符)→ 元素名替换为 _ 保证合法;根元素 cols 属性
+        // 携带原始列名(读侧据此还原,往返不再改名);
+        // 值含 & < > → 转义后读回原文
         DataFrame df = DataFrame.of(
                 Schema.of("a b", DType.STRING, "c&d", DType.STRING),
                 new Object[][]{{"x&y", "p<q>r"}});
         Path p = tmp.resolve("special.xml");
         Xml.write(df, p.toString()).go();
         String content = java.nio.file.Files.readString(p);
-        assertThat(content).doesNotContain("a b");          // 非法名被替换
+        assertThat(content).contains("<a_b>");              // 非法名清洗为合法元素名
+        assertThat(content).contains("cols=");              // 原始列名进 cols 元数据属性
         DataFrame r = Xml.read(p.toString()).go();
-        assertThat(r.getStringColumn("c_d").get(0)).isEqualTo("p<q>r");
-        // 值里的 & < 转义后读回原文
-        assertThat(r.getStringColumn("a_b").get(0)).isEqualTo("x&y");
+        // 读回还原原始列名(不再是有损的 a_b/c_d)
+        assertThat(r.columnNames()).containsExactly("a b", "c&d");
+        assertThat(r.getStringColumn("c&d").get(0)).isEqualTo("p<q>r");
+        assertThat(r.getStringColumn("a b").get(0)).isEqualTo("x&y");
     }
 }
 

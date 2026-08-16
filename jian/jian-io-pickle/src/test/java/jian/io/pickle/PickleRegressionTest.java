@@ -59,4 +59,23 @@ class PickleRegressionTest {
         DataFrame back = Pickle.read(p.toString());
         assertThat(back.columnNames()).containsExactly("a", "b");
     }
+
+    // ======================== 严格等长校验 ========================
+
+    @Test
+    void 尾部多余字节_读取抛IOException不再静默忽略() throws Exception {
+        DataFrame df = DataFrame.of(Schema.of("v", DType.LONG), new Object[][]{{1L}, {2L}});
+        Path p = tmp.resolve("trailing.jpk");
+        Pickle.write(df, p.toString());
+        // 在合法文件末尾追加垃圾字节(拼接/损坏形态);修复前静默忽略通过全部校验
+        byte[] orig = java.nio.file.Files.readAllBytes(p);
+        byte[] tampered = new byte[orig.length + 3];
+        System.arraycopy(orig, 0, tampered, 0, orig.length);
+        tampered[orig.length] = 1; tampered[orig.length + 1] = 2; tampered[orig.length + 2] = 3;
+        Path p2 = tmp.resolve("trailing2.jpk");
+        java.nio.file.Files.write(p2, tampered);
+        assertThatThrownBy(() -> Pickle.read(p2.toString()))
+            .isInstanceOf(IOException.class)
+            .hasMessageContaining("多余尾部字节");
+    }
 }

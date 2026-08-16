@@ -192,7 +192,9 @@ public final class Sql {
                 long len = clob.length();
                 return len > Integer.MAX_VALUE ? clob.getSubString(1, Integer.MAX_VALUE) : clob.getSubString(1, (int) len);
             } catch (SQLException e) {
-                return clob.toString();   // fallback
+                // 与 SqlBridge.normalizeJdbcObject 同步(两处同根因,须同步改)—— Clob 失败
+                // 统一返 null(缺失),不再 toString 出驱动内部对象字符串(两处同根因,须同步改)
+                return null;
             }
         }
         // BLOB → byte[](二进制大对象)

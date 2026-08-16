@@ -145,6 +145,10 @@ public final class SqlBridge {
             case Types.BOOLEAN, Types.BIT -> DType.BOOL;
             case Types.TIMESTAMP -> DType.DATETIME;
             case Types.DATE -> DType.DATE;
+            // 厂商扩展/自定义类型(struct/array/域类型等)保原对象,不再静默 toString 成
+            // STRING(厂商扩展类型保真:值经 rs.getObject 原样进 OBJECT 列,
+            // 保真优于字符串化;用户需要文本可显式 astype)
+            case Types.OTHER, Types.JAVA_OBJECT -> DType.OBJECT;
             default -> DType.STRING;   // TIME/VARCHAR/CHAR/CLOB/LONGVARCHAR/NCHAR/... 及其它
         };
     }
@@ -224,7 +228,10 @@ public final class SqlBridge {
                 long len = clob.length();
                 return len > Integer.MAX_VALUE ? clob.getSubString(1, Integer.MAX_VALUE) : clob.getSubString(1, (int) len);
             } catch (java.sql.SQLException e) {
-                return clob.toString();
+                // Clob 读取失败与 Blob 失败路径统一为 null(缺失)——
+                // 旧实现 Clob 失败返回 clob.toString()(非缺失的驱动内部对象字符串),
+                // 与 Blob 失败返 null 不对称,同一读取失败两种语义
+                return null;
             }
         }
         if (v instanceof java.sql.Blob blob) {

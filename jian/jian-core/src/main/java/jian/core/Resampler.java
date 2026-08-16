@@ -228,7 +228,7 @@ public final class Resampler {
         int sp = 2;
         for (Map.Entry<String, String> e : spec.entrySet()) {
             schParts[sp++] = e.getValue() + "_" + e.getKey();
-            schParts[sp++] = DType.DOUBLE;
+            schParts[sp++] = aggDtype(df.getColumn(e.getKey()).dtype(), e.getValue());
         }
         Schema sch = Schema.of(schParts);
         List<Object[]> rows = new ArrayList<>();
@@ -287,7 +287,7 @@ public final class Resampler {
         schParts[0] = "_bucket_"; schParts[1] = DType.DATETIME;
         for (int j = 0; j < numCols.size(); j++) {
             schParts[2 + j * 2] = numCols.get(j) + "_" + fn;
-            schParts[3 + j * 2] = DType.DOUBLE;
+            schParts[3 + j * 2] = aggDtype(df.getColumn(numCols.get(j)).dtype(), fn);
         }
         Schema sch = Schema.of(schParts);
         List<Object[]> rows = new ArrayList<>();
@@ -303,11 +303,26 @@ public final class Resampler {
         return DataFrame.of(sch, rows.toArray(new Object[0][]));
     }
 
+    /**
+     * 聚合输出 dtype 分派(与 GroupBy.agg / DataFrameReshape.aggDtype 同口径,修复口径分裂)。
+     * @param srcDt DType 源列 dtype
+     * @param fn    String 聚合函数名
+     * @return DType count→LONG;sum 整数族(INT/LONG/BOOL)→LONG(true 计数/long 累计);
+     *         其余(mean/min/max/median/std/var/first/last)→DOUBLE
+     */
+    private static DType aggDtype(DType srcDt, String fn) {
+        if ("count".equals(fn)) return DType.LONG;
+        if ("sum".equals(fn) && (srcDt == DType.INT || srcDt == DType.LONG || srcDt == DType.BOOL)) {
+            return DType.LONG;
+        }
+        return DType.DOUBLE;
+    }
+
     /** 单列聚合。 */
     private DataFrame aggregateOne(String col, String fn) {
         Map<Integer, List<Integer>> bins = computeBins();
         Column c = df.getColumn(col);
-        Schema sch = Schema.of("_bucket_", DType.DATETIME, col + "_" + fn, DType.DOUBLE);
+        Schema sch = Schema.of("_bucket_", DType.DATETIME, col + "_" + fn, aggDtype(c.dtype(), fn));
         List<Object[]> rows = new ArrayList<>();
         for (int g = 0; g < grid.length - 1; g++) {
             List<Integer> bucket = bins.get(g);
@@ -323,9 +338,31 @@ public final class Resampler {
      * 这是 jian 的<b>有意设计差异</b>,并非 pandas 行为:
      * pandas resample().sum()/.count() 空桶默认 min_count=0 返回 0(仅 mean/min/max 为 NaN)。
      * 该差异已在 doc/00-overview.md §10.16 显式声明;空桶语义由回归测试锁定。
+     * <p>输出类型(v 修复后,与 GroupBy.agg 同口径):count→LONG;sum 对整数族
+     * (INT/LONG/BOOL)→LONG(long 精确累计,对齐 pandas int64 sum;BOOL=true 计数);
+     * 其余 → DOUBLE。
      */
-    private Double bucketAggregate(Column c, List<Integer> bucket, String fn) {
+    private Object bucketAggregate(Column c, List<Integer> bucket, String fn) {
         if (bucket == null || bucket.isEmpty()) return null;
+        // count:非空精确计数(LONG;全缺失桶保持"无观测=缺失"契约,返回 null 而非 0)
+        if ("count".equals(fn)) {
+            long valid = 0;
+            for (int idx : bucket) if (!c.isNull(idx)) valid++;
+            return valid == 0 ? null : valid;
+        }
+        DType dt = c.dtype();
+        // sum 整数族:long 精确累计(修复:原先一律 getDouble 累加,LONG 列总和 > 2^53 失真,
+        // BOOL 列返回 DOUBLE 与 GroupBy.agg 的 LONG 口径分裂)
+        if ("sum".equals(fn) && (dt == DType.INT || dt == DType.LONG || dt == DType.BOOL)) {
+            long s = 0;
+            boolean any = false;
+            for (int idx : bucket) {
+                if (c.isNull(idx)) continue;
+                any = true;
+                s += (dt == DType.BOOL) ? (((Boolean) c.get(idx)) ? 1 : 0) : c.getLong(idx);
+            }
+            return any ? s : null;   // 全缺失桶 → 缺失(不输出 0)
+        }
         double[] vals = new double[bucket.size()];
         int valid = 0;
         for (int idx : bucket) {

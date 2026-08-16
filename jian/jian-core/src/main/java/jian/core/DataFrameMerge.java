@@ -739,6 +739,9 @@ public final class DataFrameMerge {
     /**
      * 按最近键对齐(对齐 pandas merge_asof,方向 backward:取 ≤ left.on 的最后一个 right 行)。
      * <p>两表 on 列需可比较(数值 / LocalDateTime / String);两表都按 on 升序。
+     * <p>缺失键语义(对齐 pandas 1.5.3 实测,§3.5 权威判定一律 isNull,DOUBLE 列 NaN 同为缺失):
+     * <b>左右任一侧 on 键含缺失即抛 IllegalArgumentException</b>(pandas 同输入抛
+     * ValueError"Merge keys contain null values");请先 dropna/清洗再 mergeAsof。
      * @param left DataFrame 左表,非 null
      * @param right DataFrame 右表,非 null
      * @param on String 对齐列名(两表同名);非 null
@@ -746,15 +749,23 @@ public final class DataFrameMerge {
      */
     public static DataFrame mergeAsof(DataFrame left, DataFrame right, String on) {
         int nl = left.rowCount(), nr = right.rowCount();
-        left.getColumn(on);
-        right.getColumn(on);
-        // 过滤 right 表中 on 列为 null 的行(不参与 asof 匹配)
-        java.util.List<Integer> validRightIdx = new java.util.ArrayList<>();
-        for (int i = 0; i < nr; i++) {
-            if (right.get(i, on) != null) validRightIdx.add(i);
+        Column leftOn = left.getColumn(on);
+        Column rightOn = right.getColumn(on);
+        // 对齐 pandas 1.5.3(实测 oracle):merge_asof 对左右任一侧 on 键含缺失
+        //(null/NaN,一律 isNull 权威判定 —— DOUBLE 列 NaN 同为缺失)直接抛
+        // ValueError("Merge keys contain null values on left/right side")。
+        // jian 同口径 fail-fast 抛 IAE(提示先清洗),不做"容忍缺失键静默跳过/
+        // 输出 null 行"的未声明偏离 —— 那会让脏数据悄悄改变匹配结果。
+        for (int i = 0; i < nl; i++) {
+            if (leftOn.isNull(i)) throw new IllegalArgumentException(
+                "merge_asof 的 on 键含缺失值(left 第 " + i + " 行);两侧键都不允许缺失,"
+                + "请先 dropna/清洗(对齐 pandas ValueError)");
         }
-        int[] rightMap = validRightIdx.stream().mapToInt(Integer::intValue).toArray();
-        int nvr = rightMap.length;
+        for (int i = 0; i < nr; i++) {
+            if (rightOn.isNull(i)) throw new IllegalArgumentException(
+                "merge_asof 的 on 键含缺失值(right 第 " + i + " 行);两侧键都不允许缺失,"
+                + "请先 dropna/清洗(对齐 pandas ValueError)");
+        }
 
         java.util.List<String> leftNames = left.columnNames();
         java.util.List<String> rightExtraNames = new java.util.ArrayList<>();
@@ -766,14 +777,14 @@ public final class DataFrameMerge {
         java.util.List<Object[]> rows = new java.util.ArrayList<>();
         for (int i = 0; i < nl; i++) {
             Object lv = left.get(i, on);
-            while (rp + 1 < nvr && compareAsf(right.get(rightMap[rp + 1], on), lv) <= 0) rp++;
+            // 键已全量校验无缺失,直接在 right 原始行号上单调推进(backward:≤ lv 的最后一行)
+            while (rp + 1 < nr && compareAsf(right.get(rp + 1, on), lv) <= 0) rp++;
             Object[] row = new Object[outNames.size()];
             Object[] leftRow = left.getRow(i);
             System.arraycopy(leftRow, 0, row, 0, leftNames.size());
             if (rp >= 0) {
-                int rightRowIdx = rightMap[rp];
                 for (int j = 0; j < rightExtraNames.size(); j++) {
-                    row[leftNames.size() + j] = right.get(rightRowIdx, rightExtraNames.get(j));
+                    row[leftNames.size() + j] = right.get(rp, rightExtraNames.get(j));
                 }
             }
             rows.add(row);

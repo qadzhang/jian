@@ -175,4 +175,25 @@ class CsvRegressionTest {
         DataFrame df = Csv.readFwf(p.toString()).widths(4, 4).go();
         assertThat(df.columnNames()).containsExactly("id", "name");
     }
+
+    // ======================== 去重冲突边界 ========================
+
+    @Test
+    void 表头含重复名及其_k变体_去重后仍唯一可读() throws Exception {
+        // 修复前:计数式去重产出 ["a","a_1","a_1"](仍重复),Schema 抛"列名重复"整表拒读;
+        // pandas read_csv 同输入正常读出 3 列唯一名。修复后探测式保证绝对唯一
+        Path p = tmp.resolve("dup_variant.csv");
+        java.nio.file.Files.writeString(p, "a,a,a_1\n1,2,3\n4,5,6\n");
+        DataFrame df = Csv.read(p.toString()).go();
+        assertThat(df.columnNames()).containsExactly("a", "a_1", "a_1_1");
+        assertThat(df.rowCount()).isEqualTo(2);
+    }
+
+    @Test
+    void 表头多重重复_后缀递增不回退() throws Exception {
+        Path p = tmp.resolve("dup_multi.csv");
+        java.nio.file.Files.writeString(p, "x,x,x\n1,2,3\n");
+        DataFrame df = Csv.read(p.toString()).go();
+        assertThat(df.columnNames()).containsExactly("x", "x_1", "x_2");
+    }
 }

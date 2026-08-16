@@ -85,12 +85,14 @@ public enum DType {
      * INT+INT→INT, INT+LONG→LONG, 任意数值+DOUBLE→DOUBLE;同类型→自身;
      * 非数值混合或类型不兼容 → 抛 IllegalArgumentException。
      * BOOL 参与数值提升(对齐 numpy/pandas —— bool 视作 0/1,
-     * BOOL+INT→INT、BOOL+LONG→LONG、BOOL+DOUBLE→DOUBLE)。
+     * BOOL+INT→INT、BOOL+LONG→LONG、BOOL+DOUBLE→DOUBLE);
+     * 但 BOOL 与非数值(DATE/DATETIME/CATEGORY)混合不参与提升,抛 IAE
+     * (与 DataFrameCompare.cmp 混型抛错口径一致)。
      * @param a DType 第一个类型,非 null
      * @param b DType 第二个类型,非 null
      * @return DType 提升后的统一类型:同类型返回自身;数值混合按 INT→LONG→DOUBLE 提升;
      *         BOOL 按 0/1 参与数值提升;一方为 OBJECT 返回 OBJECT(兜底)
-     * @throws IllegalArgumentException 两方都非 OBJECT 且不可数值提升(如 BOOL+STRING)
+     * @throws IllegalArgumentException 两方都非 OBJECT 且不可数值提升(如 BOOL+STRING、BOOL+DATE)
      */
     public static DType promote(DType a, DType b) {
         if (a == b) return a;
@@ -99,8 +101,12 @@ public enum DType {
             throw new IllegalArgumentException(
                     "无法提升类型 " + a + " 与 " + b + "(类型不兼容,如 BOOL/STRING/DATETIME 混合)");
         }
-        // 数值(含 BOOL 按 0/1):提升到最宽类型
-        if (a.isNumeric() || b.isNumeric() || a == BOOL || b == BOOL) {
+        // 数值提升分支收紧:两侧都必须属于数值族(INT/LONG/DOUBLE/BOOL)才进入
+        // (修复:原先 a==BOOL || b==BOOL 单侧命中就会放行,导致 BOOL+DATE/DATETIME/CATEGORY
+        //  漏进数值分支返回 INT,与 cmp 混型抛 IAE 的口径分裂)
+        boolean aNum = a.isNumeric() || a == BOOL;
+        boolean bNum = b.isNumeric() || b == BOOL;
+        if (aNum && bNum) {
             if (a == DOUBLE || b == DOUBLE) return DOUBLE;
             if (a == LONG || b == LONG) return LONG;
             return INT;   // INT+INT(被 a==b 拦)/ BOOL+INT / BOOL+BOOL(被拦)

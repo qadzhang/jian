@@ -302,8 +302,24 @@ public final class SqlPreprocessor {
      * 数值跨 dtype 等价属 v2 议题。
      */
     private static String sigOf(DataFrame df, int row) {
+        // 类型感知签名:旧实现裸 append,null 被写成 "null"、
+        // DOUBLE NaN 被写成 "NaN" —— 字符串列的字面 "null"/"NaN" 与真缺失互撞,
+        // INTERSECT/EXCEPT 误判等。现在:① 每列带 dtype 标签(DOUBLE 的 NaN 与 STRING
+        // 的 "NaN" 不同签名);② 缺失用 \u0000N 哨兵(isNull 权威判定,NULL=NULL 判等,
+        // SQL 集合运算语义);③ 值中的 \u0000 转义为 \u0000S,防字面值伪造哨兵。
         StringBuilder sb = new StringBuilder();
-        for (int c = 0; c < df.columnCount(); c++) sb.append(df.get(row, c)).append("\u0001");
+        for (int c = 0; c < df.columnCount(); c++) {
+            jian.core.Column col = df.getColumn(df.columnNames().get(c));
+            sb.append(col.dtype().name()).append('\u0002');
+            if (col.isNull(row)) {
+                sb.append("\u0000N");
+            } else {
+                String s = String.valueOf(df.get(row, c));
+                if (s.indexOf('\u0000') >= 0) s = s.replace("\u0000", "\u0000S");
+                sb.append(s);
+            }
+            sb.append('\u0001');
+        }
         return sb.toString();
     }
 

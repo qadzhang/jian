@@ -567,4 +567,25 @@ double[] ema = df.getSeries("price").ewm(0.3).mean();
 - `setIndex` 多列时构建 MultiIndex;`pivotTable` 对缺失键行按 pandas `dropna` 语义丢弃。
 - merge `right` 按右表行序、`outer` 按键首现序输出;输出列保留源 dtype(0 行/全 null 不降级)。
 - `spearman` 并列取平均秩;`interpolate` 对无缺失的整型列直通(不降级);`sortBy` 混型键抛 IAE(doc/00 §10.16 第 4 条五入口,对齐 pandas `sort_values` 抛 TypeError);`ohlc` 跳过桶首缺失;`resample("1ME")` 跨短月正确分桶。
-- 测试:jian-core @Test **545**(口径见 [api-counts.md](api-counts.md))。
+- 测试:jian-core @Test **571**(口径见 [api-counts.md](api-counts.md))。
+
+### 13.9 外部 AI 协作复审修复
+
+> 由 AI1 依 ai-code-testing 方法学复审发现(以构造/转换路径的契约一致性问题为主),
+> 逐条对源码与 pandas 实测复核修正后修复。配套:Java 回归 `AuditRegressionTest`(26)+ pandas 对照 `d74~d79`(6)。
+
+| # | 修复 | 行为变化 |
+|---|---|---|
+| 1 | `DType.promote` 数值分支收紧为"两侧均属数值族(INT/LONG/DOUBLE/BOOL)" | BOOL+DATE/DATETIME/CATEGORY 由"误返 INT"改为抛 IAE(与 cmp 混型口径一致) |
+| 2 | `DataFrameCompare.cmp/valueEquals` 精确混型比较 | 整数×浮点走 `compareLongVsDouble`(2^53 边界不折叠);BigDecimal/BigInteger 统一 compareTo;**[有意差异 §10.16#17]** jian 精确 vs NumPy 标量折叠 |
+| 3 | `DataFrameReshape` 判重键统一 `normUniqueKey` | dropDuplicates/duplicated/pivotTable/pivot 把 ±0.0 归一(NaN 经 Double.equals 本就判重);对齐 pandas |
+| 4 | `pivotTable` 输出 dtype 按 aggFn 分派(照抄 GroupBy.agg) | count/nunique→LONG;first/last→源 dtype;sum→BOOL 计数 LONG/字符串拼接 STRING/整数 long 累计 LONG/浮点 DOUBLE |
+| 5 | `mergeAsof` 缺失键 fail-fast | 左右任一侧 on 键含 null/NaN(isNull 权威判定)抛 IAE —— 对齐本机 pandas 1.5.3 实测 ValueError;同时修复右表过滤 `get()!=null` 漏 NaN 的连带问题 |
+| 6 | 整数列求和 long 累计 | `DataFrameStats.sum`/`Reshape.aggregate`/`Resampler` 对 INT/LONG/BOOL 走 long 精确累计(对齐 pandas int64 sum;API 仍返回 double) |
+| 7 | 超长整数字面量 fail-fast(双引擎) | 纯整数(无 `.`/`e/E`)超 Long 范围抛 IAE;科学计数法照常按 double 近似;**[有意差异 §10.16#18]** |
+| 8 | `Resampler` 聚合 dtype 对齐 GroupBy | count→LONG;sum 整数族(含 BOOL)→LONG;空桶缺失语义(§10.16#14)不变;first/last BOOL→DOUBLE 为声明差异(§10.16#19) |
+| 9 | BOOL 构造/转换契约统一为 `DataFrameConvert.toBoolValue` | `DataFrame.of` 显式 BOOL schema 接受 Boolean/任意 Number(非零即 true,对齐 pandas)/"true"/"1"(trim+不区分大小写);修复 Number 元素 CCE 与 parseBoolean 不认 "1" 的双分裂 |
+| 10 | `compareLongVsDouble` javadoc 边界说明 | Long.MAX 与其 double 投影(2^63)严格不等是 IEEE 754 固有限制,文档化并指引用 BigInteger/BigDecimal;无代码行为变化 |
+| 11 | DATETIME/DATE 构造与转换统一(`toDateTimeValue`/`toDateValue`) | `DataFrame.of` 显式时间 schema 接受跨类型元素:LocalDate→DATETIME 走 atStartOfDay、LocalDateTime→DATE 走 toLocalDate(原先强转 (String) 抛 CCE);与 astype 完全同口径 |
+| 12 | 构造数值列非法字符串报错统一(`toNumberChecked`) | INT/LONG/DOUBLE 构造对非法字符串抛带列名/行号/值的 IAE(原裸 NumberFormatException,与 astype 的教学型报错分裂) |
+| 13 | `astype INT` 对 BigInteger/BigDecimal 超 long 域 fail-fast | 超域抛 IAE(原裸 `intValue()` 静默回绕致数据损坏);long 域内超 int 的回绕**对齐 pandas/numpy 静默截断**(实测 5e9→705032704),不制造新差异 |

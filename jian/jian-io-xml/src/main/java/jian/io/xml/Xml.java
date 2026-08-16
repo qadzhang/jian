@@ -78,21 +78,47 @@ public final class Xml {
         // root 是对象,找到所有 rowName 子节点
         List<com.fasterxml.jackson.databind.JsonNode> rows = new ArrayList<>();
         findRows(root, rowName, rows);
+        // 取列名:优先根元素 cols 属性(写侧始终携带原始列名,见 XmlWriter.render;
+        // 据此还原清洗前的列名,修复往返改名)
+        com.fasterxml.jackson.databind.JsonNode colsAttr = root.get("cols");
+        List<String> attrNames = null;
+        if (colsAttr != null && colsAttr.isTextual()) {
+            // split 用 -1 限制:保留末尾空串列名(默认 split 会丢弃尾空元素)
+            String[] parts = colsAttr.asText().split(",", -1);
+            attrNames = new ArrayList<>();
+            for (String nm : parts) attrNames.add(decodeAttrValue(nm));
+        }
         if (rows.isEmpty()) {
-            // 因为写出端 0 行时把列元数据写入根元素 cols 属性,所以空行但根元素带
-            // cols 属性时据此重建 0 行 N 列(元数据不丢);解码走与写侧对称的
-            // escapeAttrValue/decodeAttrValue。
-            com.fasterxml.jackson.databind.JsonNode colsAttr = root.get("cols");
-            if (colsAttr != null && colsAttr.isTextual()) {
-                // split 用 -1 限制:保留末尾空串列名(默认 split 会丢弃尾空元素)
-                String[] names = colsAttr.asText().split(",", -1);
-                List<String> nc = new ArrayList<>();
-                for (String nm : names) nc.add(decodeAttrValue(nm));
-                return DataFrame.of(Schema.infer(nc, new Object[0][nc.size()]), new Object[0][nc.size()]);
+            if (attrNames != null) {
+                return DataFrame.of(Schema.infer(attrNames, new Object[0][attrNames.size()]),
+                        new Object[0][attrNames.size()]);
             }
             return DataFrame.of(new Schema(List.of(), List.of()), new Object[0][]);
         }
-        // 取列名(首行的字段)
+        // cols 属性存在:jian 写出的文件 —— 按字段出现顺序位置取值
+        //(写侧按列序写出元素、字段顺序即列序,且清洗冲突已在写侧 fail-fast;
+        //不能用 row.get(名字) 取值:清洗后的元素名与原始列名不同)
+        if (attrNames != null) {
+            Object[][] data = new Object[rows.size()][attrNames.size()];
+            for (int r = 0; r < rows.size(); r++) {
+                java.util.Iterator<java.util.Map.Entry<String, com.fasterxml.jackson.databind.JsonNode>> it =
+                        rows.get(r).fields();
+                int c = 0;
+                while (it.hasNext()) {
+                    if (c >= attrNames.size()) {
+                        throw new IOException("XML 第 " + r + " 行字段数多于 cols 声明的 "
+                                + attrNames.size() + " 列");
+                    }
+                    data[r][c++] = nodeToValue(it.next().getValue());
+                }
+                if (c != attrNames.size()) {
+                    throw new IOException("XML 第 " + r + " 行字段数 " + c
+                            + " 少于 cols 声明的 " + attrNames.size() + " 列");
+                }
+            }
+            return DataFrame.of(Schema.infer(attrNames, data), data);
+        }
+        // 无 cols 属性:旧版 jian 文件或手写 XML —— 按首行字段名取值(旧行为兼容)
         List<String> names = new ArrayList<>();
         rows.get(0).fieldNames().forEachRemaining(names::add);
         Object[][] data = new Object[rows.size()][names.size()];
@@ -181,21 +207,41 @@ public final class Xml {
         private String render() {
             StringBuilder sb = new StringBuilder();
             sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-            // 0 行时列元数据写入根元素 cols 属性(读侧据此重建空列,不丢 schema)
             List<String> cols = df.columnNames();
-            if (df.rowCount() == 0 && !cols.isEmpty()) {
-                StringBuilder names = new StringBuilder();
+            // 列名清洗冲突 fail-fast(两个列名 escapeName 后同名
+            // → 同名元素在解析时互相覆盖,读回静默丢列;教学式报错让用户先改名)
+            java.util.Set<String> escSeen = new java.util.HashSet<>();
+            for (String c : cols) {
+                if (!escSeen.add(escapeName(c))) {
+                    throw new IllegalArgumentException("XML 写出失败:列名 '" + c
+                            + "' 清洗后(非法字符替换为 _)与其它列同名 '" + escapeName(c)
+                            + "',读回会静默丢列;请先重命名冲突列");
+                }
+            }
+            // 始终把原始列名编码进根元素 cols 属性(escapeAttrValue 含 %2C 逗号占位)——
+            // 读侧据此还原原始列名,修复"往返改名"(列名 'a b' 写出 <a_b> 读回变 a_b);
+            // 旧版仅 0 行分支写 cols,非 0 行的列名清洗不可逆
+            StringBuilder names = new StringBuilder();
+            if (!cols.isEmpty()) {
                 for (String c : cols) {
                     if (names.length() > 0) names.append(',');
-                    // 因为列名裸拼进属性值时,列名含 " / & / < 会产出非法 XML
-                    // (cols="a"b,c&d"),读回 JsonParseException,所以做属性值转义(& < ")
                     names.append(escapeAttrValue(c));
                 }
-                sb.append('<').append(escapeName(rootName)).append(" cols=\"").append(names).append("\">\n");
+            }
+            if (df.rowCount() == 0) {
+                if (names.length() > 0) {
+                    sb.append('<').append(escapeName(rootName)).append(" cols=\"").append(names).append("\">\n");
+                } else {
+                    sb.append('<').append(escapeName(rootName)).append(">\n");
+                }
                 sb.append("</").append(escapeName(rootName)).append(">\n");
                 return sb.toString();
             }
-            sb.append('<').append(escapeName(rootName)).append(">\n");
+            if (names.length() > 0) {
+                sb.append('<').append(escapeName(rootName)).append(" cols=\"").append(names).append("\">\n");
+            } else {
+                sb.append('<').append(escapeName(rootName)).append(">\n");
+            }
             for (Object[] row : df.iterRows()) {
                 sb.append("  <").append(escapeName(rowName)).append(">\n");
                 for (int c = 0; c < cols.size(); c++) {

@@ -35,13 +35,25 @@ public final class DataFrameStats {
     // ======================== 单列数值统计 ========================
 
     /**
-     * 求和(数值列,skip NaN,Neumaier 补偿求和)。
-     * <p>采用 Neumaier 改进型(经典 Kahan 升级)—— 误差项独立累加,最后 {@code sum+comp} 修正。
+     * 求和(数值列,skip NaN)。
+     * <p>整数族(INT/LONG/BOOL)走 <b>long 精确累计</b>(对齐 pandas int64 sum,返回 double 签名不变);
+     * DOUBLE 列采用 Neumaier 改进型(经典 Kahan 升级)—— 误差项独立累加,最后 {@code sum+comp} 修正。
      * 实测对 [1e16,1,2,-1e16]:经典 Kahan 得 4.0(y=x-comp 预取整放大误差),Neumaier 得精确 3.0;复杂度同为 O(n)。
-     * @param c Column 待求和列,数值类型(INT/LONG/DOUBLE);非 null
+     * @param c Column 待求和列,数值类型(INT/LONG/DOUBLE/BOOL);非 null
      * @return double 非空值之和;全空返回 0.0
      */
     public static double sum(Column c) {
+        // 整数族 long 精确累计(修复:原先进 getDouble 进 Neumaier,单值 < 2^53 但
+        // 总和 > 2^53 时静默丢精度;long 域内精确,超出后取最近 double)
+        DType dt = c.dtype();
+        if (dt == DType.INT || dt == DType.LONG || dt == DType.BOOL) {
+            long s = 0;
+            for (int i = 0; i < c.size(); i++) {
+                if (c.isNull(i)) continue;
+                s += (dt == DType.BOOL) ? (((Boolean) c.get(i)) ? 1 : 0) : c.getLong(i);
+            }
+            return (double) s;
+        }
         // 伪代码(Neumaier 补偿求和):
         //   1. 对每个非空 x:t = sum + x
         //   2. |sum| >= |x| 时 comp += (sum - t) + x;否则 comp += (x - t) + sum(低阶位进补偿项)

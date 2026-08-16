@@ -668,4 +668,34 @@ class DslRegressionTest {
         assertThat(engine).isInstanceOf(SqlRegexEngine.class);
         assertThat(engine.supports(SqlEngineInterface.Capability.SELECT_EXPR)).isTrue();
     }
+
+    // ======================== 集合运算签名语义 ========================
+
+    @Test
+    void INTERSECT字面null字符串与真缺失不判等() {
+        // 修复前:sigOf 裸 append,null 与字符串 "null" 同为 "null" → 误判等
+        DataFrame l = DataFrame.of(Schema.of("s", DType.STRING), new Object[][]{{"null"}});
+        DataFrame r2 = DataFrame.of(Schema.of("s", DType.STRING), new Object[][]{{null}});
+        DataFrame r = Dsl.sql("SELECT s FROM ${x} INTERSECT SELECT s FROM ${y}", l, r2);
+        assertThat(r.rowCount()).isEqualTo(0);   // SQL:字符串 'null' ≠ NULL
+    }
+
+    @Test
+    void INTERSECT缺失行NULL等于NULL() {
+        // SQL 集合运算语义:NULL 与 NULL 判等(两 null 行相交保留)
+        DataFrame l = DataFrame.of(Schema.of("s", DType.STRING), new Object[][]{{null}, {"a"}});
+        DataFrame r2 = DataFrame.of(Schema.of("s", DType.STRING), new Object[][]{{null}});
+        DataFrame r = Dsl.sql("SELECT s FROM ${x} INTERSECT SELECT s FROM ${y}", l, r2);
+        assertThat(r.rowCount()).isEqualTo(1);
+        assertThat(r.getRow(0)[0]).isNull();
+    }
+
+    @Test
+    void INTERSECT_DOUBLE列NaN与字符串NaN不判等() {
+        // dtype 标签区分:DOUBLE 的 NaN(缺失哨兵)≠ STRING 的字面 "NaN"
+        DataFrame l = DataFrame.of(Schema.of("v", DType.DOUBLE), new Object[][]{{Double.NaN}});
+        DataFrame r2 = DataFrame.of(Schema.of("v", DType.STRING), new Object[][]{{"NaN"}});
+        DataFrame r = Dsl.sql("SELECT v FROM ${x} INTERSECT SELECT v FROM ${y}", l, r2);
+        assertThat(r.rowCount()).isEqualTo(0);
+    }
 }

@@ -692,11 +692,12 @@ public class MetamorphicTest {
         assertThat(pt.rowCount()).as("MR29 pivotTable nunique 行数").isEqualTo(2);
         assertThat(pt.columnCount()).as("MR29 pivotTable nunique 列数(i + x/y)").isEqualTo(3);
         // 行 i=a:第 1 行 → a-x 组 nunique=1,a-y 组 nunique=1
-        assertThat(pt.get(0, "x")).as("MR29 a-x nunique").isEqualTo(1.0);
-        assertThat(pt.get(0, "y")).as("MR29 a-y nunique").isEqualTo(1.0);
+        // (v 修复后 nunique 列 dtype=LONG 与 GroupBy.agg 同口径,断言用 1L 不再是 1.0)
+        assertThat(pt.get(0, "x")).as("MR29 a-x nunique").isEqualTo(1L);
+        assertThat(pt.get(0, "y")).as("MR29 a-y nunique").isEqualTo(1L);
         // 行 i=b:b-y 组全 NaN → nunique=0(对齐 pandas),b-x 组 → 1
-        assertThat(pt.get(1, "x")).as("MR29 b-x nunique").isEqualTo(1.0);
-        assertThat(pt.get(1, "y")).as("MR29 b-y 全 NaN nunique=0").isEqualTo(0.0);
+        assertThat(pt.get(1, "x")).as("MR29 b-x nunique").isEqualTo(1L);
+        assertThat(pt.get(1, "y")).as("MR29 b-y 全 NaN nunique=0").isEqualTo(0L);
         // 交叉验证:与 GroupBy.nunique 同语义(分组后 nunique 去重计数一致)
         Map<String, String> spec = new HashMap<>();
         spec.put("v", "nunique");

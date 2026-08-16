@@ -538,10 +538,16 @@ public final class SimpleQueryParser {
             }
             if (t.type == TokType.NUM) {
                 consume();
-                // 整数字面量按 long 精确解析(超 long 回退 double),与 PrattEngine 同步
+                // 纯整数字面量按 long 精确解析,超 long 抛 IAE(fail-fast,与 PrattEngine
+                // 双引擎同步):静默回退 double 会把超出值折成最近 double,与 LONG 列值的
+                // double 投影恰好相等,> / == 误匹配;近似需求请显式写科学计数法(1e19)
                 if (t.text.indexOf('.') < 0 && t.text.indexOf('e') < 0 && t.text.indexOf('E') < 0) {
                     try { return new NumLit(Long.parseLong(t.text)); }
-                    catch (NumberFormatException overflow) { /* 超 long → double */ }
+                    catch (NumberFormatException overflow) {
+                        throw new IllegalArgumentException(
+                            "整数子面量超出 long 范围:" + t.text
+                            + "(jian 不支持任意精度整数字面量;如需近似比较请改写为科学计数法,如 9.22e18)");
+                    }
                 }
                 return new NumLit(Double.parseDouble(t.text));
             }

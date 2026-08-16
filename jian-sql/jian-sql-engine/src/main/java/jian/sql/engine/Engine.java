@@ -371,6 +371,12 @@ public final class Engine implements AutoCloseable {
                 char q = c;
                 sb.append(' '); i++;
                 while (i < n) {
+                    // 字符串剥除采用 ANSI/PG 语义(反斜杠是普通
+                    // 字符、仅 q q 翻倍转义),**不**按 MySQL \' 消费转义 —— 若按 MySQL
+                    // 语义消费,PG(standard_conforming_strings=on)下 'a\'; DROP TABLE t'
+                    // 的 DROP 真实可执行,却会被误当字符串内容剥掉,readOnly 被绕过。
+                    // ANSI 语义对 MySQL 专属转义串可能"提前闭合+错拒"(fail-closed:
+                    // 宁可拒绝合法 SQL,不可放过字符串外的写操作),该取舍在 javadoc 声明。
                     if (sql.charAt(i) == q) {
                         if (i + 1 < n && sql.charAt(i + 1) == q) { sb.append("  "); i += 2; continue; }
                         sb.append(' '); i++;
@@ -383,10 +389,21 @@ public final class Engine implements AutoCloseable {
                 while (i < n && sql.charAt(i) != '\n') { sb.append(' '); i++; }
             } else if (c == '`') {
                 // MySQL 反引号标识符 —— 整段(含反引号)剥为空格:
-                // `delete` 是列名不是关键字,SELECT `delete` FROM t 必须放行
+                // `delete` 是列名不是关键字,SELECT `delete` FROM t 必须放行。
+                // `` 双反引号 = 字面反引号(MySQL 标准),仍在标识符内(旧实现在 `` 处
+                // 提前闭合配对,标识符外的真实代码被误剥,
+                // readOnly 拦截可被 `col``name` 形态绕过)
                 sb.append(' '); i++;
-                while (i < n && sql.charAt(i) != '`') { sb.append(' '); i++; }
-                if (i < n) { sb.append(' '); i++; }
+                while (i < n) {
+                    if (sql.charAt(i) == '`') {
+                        if (i + 1 < n && sql.charAt(i + 1) == '`') {
+                            sb.append("  "); i += 2; continue;   // `` 字面反引号,标识符继续
+                        }
+                        sb.append(' '); i++;
+                        break;
+                    }
+                    sb.append(' '); i++;
+                }
             } else if (c == '$' && i + 1 < n && sql.charAt(i + 1) == '$') {
                 // PG $$...$$ 美元引号字符串(函数体常用)—— 剥到下一个 $$,内容不当代码
                 sb.append("  "); i += 2;

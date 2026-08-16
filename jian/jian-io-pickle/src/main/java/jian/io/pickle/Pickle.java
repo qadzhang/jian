@@ -127,9 +127,15 @@ public final class Pickle {
         // 因为 int 算术在 payloadLen 接近 Integer.MAX_VALUE 时溢出为负、检查会静默通过,
         // 后续 crc.update 抛裸 AIOOBE,所以做 long 提升校验;负值 payloadLen 同样先拒绝
         // (pandas read_pickle 对损坏文件抛可读 UnpicklingError)
-        if (payloadLen < 0 || (long) payloadLen + 12L > all.length) {
-            throw new IOException("payload 长度无效或文件长度不匹配:声明 payload " + payloadLen
-                    + ",文件总长 " + all.length + "(需 ≥ " + (12L + (long) Math.max(payloadLen, 0)) + ")");
+        // 严格等长校验(.jpk 头部声明了 payloadLen,尾部多余
+        // 字节 = 文件被追加/拼接的异常形态;旧实现只拦"长度不够",多出的尾巴静默忽略,
+        // 与"CRC 校验失败:文件损坏"的防御意图不一致。注:Python pickle.load 本身容忍
+        // 尾部字节,此为 jian 自定义格式的完整性加固,非 pandas 对齐项)
+        if (payloadLen < 0 || (long) payloadLen + 12L != all.length) {
+            throw new IOException("文件长度与声明不符:声明 payload " + payloadLen
+                    + "(总长应为 " + (12L + (long) Math.max(payloadLen, 0)) + ")"
+                    + ",实际总长 " + all.length
+                    + (all.length > 12L + Math.max(payloadLen, 0) ? "(含多余尾部字节,疑似文件被追加/损坏)" : ""));
         }
         // 校验 CRC
         CRC32 crc = new CRC32();

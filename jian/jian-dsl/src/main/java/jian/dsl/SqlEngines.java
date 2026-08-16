@@ -63,7 +63,10 @@ public final class SqlEngines {
         CURRENT.set(engine);
     }
 
-    public static void reset() { CURRENT.remove(); }
+    // 注(设计裁定):reset 只清 ThreadLocal 引用,不关闭旧 engine ——
+// 生命周期归调用方(jian 不拥有用户 engine 的资源,与 DataFrame 不提供 close 同理,
+// AGENTS §3.7.7);自定义 engine 持有连接池等资源时,请调用方自行 try-finally 释放。
+public static void reset() { CURRENT.remove(); }
 
     public static Set<SqlEngineInterface.Capability> currentCapabilities() {
         return CURRENT.get().capabilities();

@@ -12,6 +12,7 @@ import java.nio.file.Path;
 
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 // ┌─ What : ExportRegressionTest —— jian-export 回归测试集:固化渲染器与 Styler 行为
 // │  Why  : 因为公式注入防护、缺失值口径(§3.5.2)、LaTeX 转义、字体规则合并这类
@@ -134,5 +135,42 @@ class ExportRegressionTest {
             assertThat(bobFont.getColor()).isEqualTo((short) 10);
             assertThat(bobFont.getBold()).isTrue();
         }
+    }
+
+    // ======================== LaTeX 占位符防御 / 控制台截断 ========================
+
+    @Test
+    void Latex渲染_控制字符占位符冲突_抛IAE不静默损坏() {
+        // 修复前:'\u0001' 会被占位符机制二次替换成 \textbackslash{}(数据静默损坏);
+        // jian-io-latex 的 LatexIo 早有同款防御,本入口补齐后双入口一致
+        DataFrame df = DataFrame.of(Schema.of("v", DType.STRING),
+            new Object[][]{{"dirty\u0001control"}});
+        assertThatThrownBy(() -> LatexRenderer.of(df).render())
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("U+0001");
+    }
+
+    @Test
+    void 控制台渲染_超宽值按pandas语义截断加省略号() {
+        // pandas to_string(max_colwidth=4) 对超长值显示 "..."(省略头部保留尾部);
+        // 修复前 pad 原样返回超宽值,撑破列宽导致后续列错位
+        DataFrame df = DataFrame.of(Schema.of("a", DType.STRING, "b", DType.LONG),
+            new Object[][]{{"abcdefghij", 1L}});
+        String out = ConsoleRenderer.render(df, 10, 4, "");
+        assertThat(out).contains("...");
+        assertThat(out).doesNotContain("abcdefghij");
+        // 截断后 b 列不再被挤错位:值 1 仍在本行
+        assertThat(out).contains("1");
+    }
+
+    @Test
+    void 控制台渲染_缺失宽度按naRep对齐显示口径() {
+        // DOUBLE 列 NaN:显示为空(naRep=""),宽度也应按 naRep 计(修复前按 "NaN"=3 虚高)
+        DataFrame df = DataFrame.of(Schema.of("v", DType.DOUBLE),
+            new Object[][]{{Double.NaN}, {1.5}});
+        String out = ConsoleRenderer.render(df, 10, 10, "");
+        String[] lines = out.split("\n");
+        // 第 0 行(数据首行)缺失单元格应渲染为空串占位,不出现 "NaN" 字样
+        assertThat(lines[1]).doesNotContain("NaN");
     }
 }

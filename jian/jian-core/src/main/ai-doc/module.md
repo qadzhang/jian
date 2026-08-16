@@ -6,7 +6,7 @@
 - **version**: 1.0.1
 - **deps**: 纯 JDK 17(零外部依赖)
 - **methods**: DataFrame ~180 unique public 方法名(含重载 195 处) + Series 52 public 方法(口径见 doc/api-counts.md)
-- **tests**: 545(JUnit 5 @Test,口径见 doc/api-counts.md)
+- **tests**: 571(JUnit 5 @Test,口径见 doc/api-counts.md;含 AI 复审回归 AuditRegressionTest 26)
 
 ## 摘要
 jian DataFrame 核心:列式存储 + 9 种 dtype + 变换 + 统计 + 时序。jian 库的基石模块,所有其它子模块依赖它。不可变优先(每次变换返回新 DataFrame,线程安全/Web 友好)。

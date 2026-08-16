@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
 
 // ┌─ What : CoreTimeseriesRegressionTest —— 时序域回归测试集:固化 Frequency / Resampler / DatetimeIndex /
@@ -231,7 +232,11 @@ class CoreTimeseriesRegressionTest {
     // ======================== merge_asof 边界 ========================
 
     @Test
-    void mergeAsof_时间列含null_不NPE不崩溃() {
+    void mergeAsof_时间列含null_显式抛IAE对齐pandas() {
+        // 语义演进:旧契约"null 右行静默跳过"→ 新契约"显式抛 IAE"。
+        // 依据:本机 pandas 1.5.3 实测 merge_asof 对左右任一侧键含 null 抛
+        // ValueError("Merge keys contain null values on ...");jian 对齐 fail-fast
+        //(连带修复旧过滤 get()!=null 导致 DOUBLE 列 NaN 右键漏网)
         DataFrame left = DataFrame.of(
             Schema.of("ts", DType.LONG, "lv", DType.STRING),
             new Object[][]{{10L, "a"}, {20L, "b"}});
@@ -239,13 +244,16 @@ class CoreTimeseriesRegressionTest {
             Schema.of("ts", DType.LONG, "rv", DType.STRING),
             new Object[][]{
                 {5L, "x"},
-                {null, "should_skip"},  // null 时间点应被跳过
+                {null, "dirty"},   // null 时间点:不再静默跳过,显式报错
                 {15L, "y"}});
-        DataFrame r = left.mergeAsof(right, "ts");
-        assertThat(r.rowCount()).isEqualTo(2);  // left 行数
-        // ts=10 → ≤10 的最后 right = 5(rv=x);null right 被跳过
-        assertThat(r.get(0, "rv")).isEqualTo("x");
-        // ts=20 → ≤20 的最后 = 15(rv=y)
-        assertThat(r.get(1, "rv")).isEqualTo("y");
+        assertThatThrownBy(() -> left.mergeAsof(right, "ts"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("right");
+        // 清洗后(dropna)正常 backward 匹配
+        DataFrame rightClean = right.dropna();
+        DataFrame r = left.mergeAsof(rightClean, "ts");
+        assertThat(r.rowCount()).isEqualTo(2);
+        assertThat(r.get(0, "rv")).isEqualTo("x");   // ts=10 → ≤10 的最后 = 5
+        assertThat(r.get(1, "rv")).isEqualTo("y");   // ts=20 → ≤20 的最后 = 15
     }
 }

@@ -43,17 +43,27 @@ public class JianJpypeBridge {
             for (int c = 0; c < nCols; c++) nr.add(c < row.size() ? row.get(c) : null);
             norm.add(nr);
         }
-        Object[] colArrays = new Object[nCols];
+        // LONG 列 null 必须经 nullMask 标记(AGENTS §3.5 isNull 权威)。
+        // 旧实现 null→0L 且无掩码 → isNull 恒 false,PBT/pandas 对照在 LONG 缺失维度整体失明
+        //(DOUBLE 列 NaN 本就是缺失哨兵、OBJECT 列存 null,契约均正确,无需改)。
+        List<Column> cols = new ArrayList<>(nCols);
         for (int c = 0; c < nCols; c++) {
             String kind = inferType(norm, c);
+            String name = columns.get(c);
             switch (kind) {
                 case "LONG": {
                     long[] arr = new long[n];
+                    boolean[] mask = null;
                     for (int r = 0; r < n; r++) {
                         Object v = norm.get(r).get(c);
-                        arr[r] = v == null ? 0L : ((Number) v).longValue();
+                        if (v == null) {
+                            if (mask == null) mask = new boolean[n];
+                            mask[r] = true;   // 缺失行:掩码置位,arr[r] 保持 0(被掩码遮蔽)
+                        } else {
+                            arr[r] = ((Number) v).longValue();
+                        }
                     }
-                    colArrays[c] = arr;
+                    cols.add(new LongColumn(name, arr, mask));
                     break;
                 }
                 case "DOUBLE": {
@@ -62,17 +72,17 @@ public class JianJpypeBridge {
                         Object v = norm.get(r).get(c);
                         arr[r] = v == null ? Double.NaN : ((Number) v).doubleValue();
                     }
-                    colArrays[c] = arr;
+                    cols.add(new DoubleColumn(name, arr));
                     break;
                 }
                 default: {
                     Object[] arr = new Object[n];
                     for (int r = 0; r < n; r++) arr[r] = norm.get(r).get(c);
-                    colArrays[c] = arr;
+                    cols.add(new ObjectColumn(name, arr));
                 }
             }
         }
-        return DataFrame.ofColumnArrays(columns, colArrays);
+        return DataFrame.ofColumnsDirect(cols);
     }
 
     /** 全行扫描列 c 的最宽类型:String/Boolean→OBJECT;Double/Float→DOUBLE;否则 LONG;全 null→DOUBLE。 */

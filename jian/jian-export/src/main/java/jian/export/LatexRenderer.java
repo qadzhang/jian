@@ -78,6 +78,11 @@ public final class LatexRenderer {
      * @return String LaTeX 源码(\begin{table}...\end{table},数值列右对齐 r、文本列左对齐 l)
      */
     public String render() {
+        // 占位符冲突防御(escape 用 U+0001-U+0008/U+000B/U+000C 作
+        // 中间占位符,数据含同款控制字符会被二次替换成转义序列=静默损坏;jian-io-latex
+        // 的 LatexIo.assertNoPlaceholderConflict 已有同款防御,本入口此前缺失,
+        // 两处同根因实现,修改须同步)
+        assertNoPlaceholderConflict();
         List<String> cols = df.columnNames();
         List<DType> dtypes = df.dtypes();
         StringBuilder sb = new StringBuilder();
@@ -121,6 +126,39 @@ public final class LatexRenderer {
     }
 
     /** LaTeX 转义:特殊字符前加反斜杠(对齐规范 04 §5)。 */
+    // ┌─ What : 数据含 U+0001-U+0008/U+000B/U+000C 占位符字符时 fail-fast(与 LatexIo 同款)
+    // │  Why  : escape 以这批控制字符作中间占位符,输入含同款字符会被二次替换成
+    // │         \textbackslash{} 等转义序列 = 数据静默损坏;LatexIo 有此防御而本类
+    // │         此前没有,双入口行为必须一致。
+    // │  How  : 扫 caption/label/列名/index/全部非空单元格,命中占位符字符即抛
+    // │         教学式 IAE(带 U+ 编码与预览,提示先清洗)。
+    private void assertNoPlaceholderConflict() {
+        java.util.List<String> texts = new java.util.ArrayList<>();
+        if (caption != null) texts.add(caption);
+        if (label != null) texts.add(label);
+        texts.addAll(df.columnNames());
+        if (index) {
+            for (int r = 0; r < df.rowCount(); r++) texts.add(String.valueOf(df.index().get(r)));
+        }
+        List<String> cols = df.columnNames();
+        for (int r = 0; r < df.rowCount(); r++) {
+            for (int c = 0; c < cols.size(); c++) {
+                if (!df.getColumn(cols.get(c)).isNull(r)) texts.add(String.valueOf(df.get(r, c)));
+            }
+        }
+        for (String t : texts) {
+            for (int i = 0; i < t.length(); i++) {
+                char ch = t.charAt(i);
+                if (ch >= '\u0001' && ch <= '\u0008' || ch == '\u000B' || ch == '\u000C') {
+                    throw new IllegalArgumentException("LaTeX 渲染失败:数据含控制字符 U+"
+                            + String.format("%04X", (int) ch)
+                            + "(与转义占位符冲突,渲染会静默损坏数据)。请先清洗该值,预览:"
+                            + t.substring(Math.max(0, i - 5), Math.min(t.length(), i + 6)));
+                }
+            }
+        }
+    }
+
     private static String escape(String s) {
         if (s == null) return "";
             // 占位符三阶段替换:因为先 replace 反斜杠为 textbackslash{} 再替换 { 的话,

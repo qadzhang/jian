@@ -199,6 +199,18 @@ public final class Html {
             int cols = bodyRows.isEmpty() ? 0 : bodyRows.get(0).select("th,td").size();
             for (int c = 0; c < cols; c++) headers.add("_" + c);
         }
+        // 因为合并单元格/手写表格常见重复 th,而 Schema 校验对重名抛 IAE 会整表拒读
+        //(Csv/Excel 都自动去重,唯 Html 抛错,表格型 IO 行为分裂),
+        // 所以与 Csv.dedupHeaderNames 同口径去重:重名自动加 _1/_2 后缀
+        //(pandas read_csv mangle_dupe_cols 同语义;jian 用 _1 而 pandas 用 .1,§10.16#16)。
+        java.util.Set<String> seenH = new java.util.LinkedHashSet<>();
+        for (int c = 0; c < headers.size(); c++) {
+            String base = headers.get(c);
+            String cand = base;
+            int k = 1;
+            while (!seenH.add(cand)) cand = base + "_" + k++;
+            headers.set(c, cand);
+        }
         if (bodyRows.isEmpty()) return null;
         int cols = headers.size();
         Object[][] rows = new Object[bodyRows.size()][cols];

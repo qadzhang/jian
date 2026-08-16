@@ -176,7 +176,7 @@ final class DataFrameConstruct {
                 for (int r = 0; r < n; r++) {
                     Object v = rows[r] == null ? null : rows[r][c];
                     if (v == null) { mask[r] = true; data[r] = 0; }
-                    else data[r] = (int) toLongExact(toNumber(v), name, r);
+                    else data[r] = (int) toLongExact(toNumberChecked(v, name, r), name, r);
                 }
                 return new IntColumn(name, data, mask);
             }
@@ -186,7 +186,7 @@ final class DataFrameConstruct {
                 for (int r = 0; r < n; r++) {
                     Object v = rows[r] == null ? null : rows[r][c];
                     if (v == null) { mask[r] = true; data[r] = 0; }
-                    else data[r] = toLongExact(toNumber(v), name, r);
+                    else data[r] = toLongExact(toNumberChecked(v, name, r), name, r);
                 }
                 return new LongColumn(name, data, mask);
             }
@@ -195,7 +195,7 @@ final class DataFrameConstruct {
                 for (int r = 0; r < n; r++) {
                     Object v = rows[r] == null ? null : rows[r][c];
                     if (v == null) data[r] = Double.NaN;
-                    else data[r] = toNumber(v).doubleValue();
+                    else data[r] = toNumberChecked(v, name, r).doubleValue();
                 }
                 return new DoubleColumn(name, data);
             }
@@ -205,8 +205,11 @@ final class DataFrameConstruct {
                 for (int r = 0; r < n; r++) {
                     Object v = rows[r] == null ? null : rows[r][c];
                     if (v == null) { mask[r] = true; }
-                    else if (v instanceof Boolean) data[r] = (Boolean) v;
-                    else data[r] = Boolean.parseBoolean(((String) v).trim());
+                    // 统一走 DataFrameConvert.toBoolValue(构造与转换契约统一):
+                    // 构造与 astype 两条 BOOL 入路径契约一致 —— Boolean/Number(非零即
+                    // true)/"true"/"1";旧实现对 Number 强转 (String) 抛 CCE,且
+                    // parseBoolean 连 "1" 都不认,与 astype 路径双分裂
+                    else data[r] = DataFrameConvert.toBoolValue(v);
                 }
                 return new BoolColumn(name, data, mask);
             }
@@ -222,9 +225,10 @@ final class DataFrameConstruct {
                 java.time.LocalDateTime[] data = new java.time.LocalDateTime[n];
                 for (int r = 0; r < n; r++) {
                     Object v = rows[r] == null ? null : rows[r][c];
-                    if (v == null) data[r] = null;
-                    else if (v instanceof java.time.LocalDateTime) data[r] = (java.time.LocalDateTime) v;
-                    else data[r] = java.time.LocalDateTime.parse(((String) v).trim().replace(' ', 'T'));
+                    // 统一走 DataFrameConvert.toDateTimeValue(与 astype 同口径):
+                    // 与 astype 路径同口径接受 LocalDateTime/LocalDate(转 atStartOfDay)/String;
+                    // 旧实现对 LocalDate 等跨类型元素强转 (String) 抛 CCE
+                    data[r] = v == null ? null : DataFrameConvert.toDateTimeValue(v, name, r);
                 }
                 return new DateTimeColumn(name, data);
             }
@@ -232,9 +236,8 @@ final class DataFrameConstruct {
                 java.time.LocalDate[] data = new java.time.LocalDate[n];
                 for (int r = 0; r < n; r++) {
                     Object v = rows[r] == null ? null : rows[r][c];
-                    if (v == null) data[r] = null;
-                    else if (v instanceof java.time.LocalDate) data[r] = (java.time.LocalDate) v;
-                    else data[r] = java.time.LocalDate.parse(((String) v).trim());
+                    // 同上:LocalDateTime→DATE 跨类型走 toLocalDate(旧实现强转 (String) 抛 CCE)
+                    data[r] = v == null ? null : DataFrameConvert.toDateValue(v, name, r);
                 }
                 return new DateColumn(name, data);
             }
@@ -278,6 +281,25 @@ final class DataFrameConstruct {
         String s = v.toString().trim();
         try { return Long.parseLong(s); }
         catch (NumberFormatException e) { return Double.parseDouble(s); }
+    }
+
+    /**
+     * 带上下文的数值解析(包装 {@link #toNumber},非法字符串抛教学型 IAE 而非裸 NFE)。
+     * <p>构造路径(INT/LONG/DOUBLE)对非法数字字符串原先抛裸
+     * NumberFormatException(无列名/行号),与 convertColumn 的带上下文 IAE 分裂。
+     * @param v    Object 输入值,非 null
+     * @param name String 列名(报错上下文)
+     * @param r    int 行号(报错上下文)
+     * @return Number 解析结果(Number 直取;字符串先 long 后 double)
+     * @throws IllegalArgumentException 值不是合法数值(带列名/行号/值,pandas 同场景抛 ValueError)
+     */
+    private static Number toNumberChecked(Object v, String name, int r) {
+        try {
+            return toNumber(v);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("构造数值列失败:列 '" + name + "' 第 " + r
+                    + " 行值 '" + v + "' 不是合法数值(pandas 同场景抛 ValueError)");
+        }
     }
 
     /**

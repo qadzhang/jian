@@ -5,7 +5,7 @@
 - **entryClass**: jian.dsl.Dsl(静态门面)/ jian.dsl.JianDslEngine(SPI 实现)
 - **deps**: jian-core;纯 JDK(零运行时依赖,Pratt parser 与 SQL 子集均自写)
 - **version**: 1.0.1
-- **tests**: 149(含 EngineConformanceTest 19 双引擎与 core 兜底 SimpleQueryParser 语法矩阵互证)
+- **tests**: 152(含 EngineConformanceTest 19 双引擎矩阵互证与 PrattLiteralOverflowTest 3;口径见 doc/api-counts.md)
 
 ## 摘要
 jian 的三档表达式/SQL 引擎:L1 布尔过滤 query、L2 派生列 eval、L3 SQL(可插拔引擎接口)sql;经 SPI 自动接管 core 的 DslEngine。L3 支持完整 DQL + DML(INSERT/UPDATE/DELETE)。

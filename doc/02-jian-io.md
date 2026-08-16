@@ -538,3 +538,18 @@ CSV/JSON 读回的值统一为字符串,经 `Schema.infer` 推断:
 - **SQL/Clipboard/LaTeX**:tableExists 精确匹配(表名含 `_` 不当通配符);Oracle VARCHAR2(n CHAR) 字符语义;TSV 写出公式注入防护(`= + - @` 前缀);数据含控制字符时 LaTeX 抛 IAE(防占位符冲突)。
 - **Parquet/ORC**:0 行往返保留列名与 dtype;ORC BOOL/INT 往返类型保真。
 - 测试:csv 46 / excel 32 / json 28 / html 9 / xml 12 / sql 45 / parquet 6 / orc 8 / pickle 6 / clipboard 8 / latex 6 @Test(口径见 [api-counts.md](api-counts.md))。
+
+### 实现说明:外部 AI 协作复审修复
+
+> 由 AI2 依 ai-code-testing 方法学复审发现(9 项),逐条对源码验证,
+> 并以 pandas / Python 官方文档双向核实 oracle 后修复。
+
+| # | 模块 | 修复 | 行为变化 |
+|---|---|---|---|
+| 1 | jian-io-clipboard | `parseTsv` 表头去重 | 重复表头自动加 `_1/_2` 后缀(原抛"列名重复"整表拒读;对齐 Csv/Excel 与 pandas mangle_dupe_cols) |
+| 2 | jian-io-html | `tableToDataFrame` 表头去重 | 重复 `th` 同上处理 |
+| 3 | jian-io-xml | 列名往返与冲突三件套 | 根元素始终携带 `cols` 原始列名属性(读侧还原,往返不再改名);清洗后同名冲突写出前抛 IAE(原静默丢列);无 cols 属性的旧文件按字段名兼容读取 |
+| 4 | jian-io-pickle | `read` 严格等长校验 | 头部声明 payloadLen 与实际长度不符(含尾部多余字节)抛 IOException(原静默忽略;注:Python pickle 官方容忍尾部字节,此为 .jpk 自定义格式完整性加固,非 pandas 对齐项) |
+| 5 | jian-export | LatexRenderer 占位符防御 | 数据含 U+0001-U+0008/U+000B/U+000C 与转义占位符冲突时抛 IAE(原静默损坏;与 jian-io-latex 的 LatexIo 同款防御,双入口一致) |
+| 6 | jian-export | ConsoleRenderer 超宽截断 | 超过 maxColWidth 的值按 pandas `to_string(max_colwidth)` 语义截断为 "..." + 尾部(原样输出撑破列宽导致错列);缺失宽度按 naRep 与显示口径对齐 |
+| 7 | jian-io-csv | `dedupHeaderNames` 探测式去重 | 表头同时含重复名及其 `_k` 变体(如 `a,a,a_1`)时,原计数式产出仍重复的列名致整表拒读;改为 while 探测式(与 Clipboard/Html 同款),输出绝对唯一 |

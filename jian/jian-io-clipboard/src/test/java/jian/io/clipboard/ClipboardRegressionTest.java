@@ -117,4 +117,22 @@ class ClipboardRegressionTest {
         assertThat(r.getStringColumn("s").get(0)).isEqualTo("' =cmd");
         assertThat(r.getStringColumn("s").get(1)).isEqualTo("'\r=cmd");
     }
+
+    // ======================== 表头去重 ========================
+
+    @Test
+    void parseTsv重复表头_自动加后缀去重不再抛列名重复() {
+        // Excel/WPS 允许两列同名,复制到剪贴板即 TSV 重复表头;修复前 Schema 校验
+        // 抛"列名重复"整表拒读,与 Csv/Excel 的自动去重分裂;修复后同口径 _1 后缀
+        DataFrame df = Clipboard.parseTsv("a\ta\tb\n1\t2\t3\n4\t5\t6\n");
+        assertThat(df.columnNames()).containsExactly("a", "a_1", "b");
+        assertThat(df.rowCount()).isEqualTo(2);
+        assertThat(((Number) df.get(0, "a_1")).intValue()).isEqualTo(2);   // "1/2/3" 被 infer 为整数
+    }
+
+    @Test
+    void parseTsv三重表头_后缀递增() {
+        DataFrame df = Clipboard.parseTsv("x\tx\tx\n1\t2\t3\n");
+        assertThat(df.columnNames()).containsExactly("x", "x_1", "x_2");
+    }
 }

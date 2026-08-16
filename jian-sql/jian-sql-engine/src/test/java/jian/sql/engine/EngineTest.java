@@ -226,4 +226,31 @@ class EngineTest {
             engine.checkReadOnly("SELECT DROP_COL FROM t");
         }
     }
+
+    // ======================== 字面量剥除的转义边界 ========================
+
+    @Test
+    void 只读拦截_反引号双写转义不可绕过() {
+        EngineConfig cfg = EngineConfig.builder()
+                .path("mem:ro_bt").user("sa").password("").readOnly(true).build();
+        try (Engine engine = Engine.create(DbType.H2, cfg)) {
+            // MySQL `` 双反引号 = 字面反引号;DROP 在标识符外,必须被拦截
+            //(修复前:剥除器在 `` 处提前闭合配对,DROP 被误当标识符内容剥掉 → 绕过)
+            assertThatThrownBy(() -> engine.checkReadOnly("SELECT `x``y` FROM t; DROP TABLE t"))
+                    .isInstanceOf(SecurityException.class);
+            // 合法标识符含字面反引号仍放行
+            engine.checkReadOnly("SELECT `x``y` FROM t");
+        }
+    }
+
+    @Test
+    void 只读拦截_反斜杠转义引号不可绕过() {
+        EngineConfig cfg = EngineConfig.builder()
+                .path("mem:ro_bs").user("sa").password("").readOnly(true).build();
+        try (Engine engine = Engine.create(DbType.H2, cfg)) {
+            // MySQL \' 不闭合字符串;修复前在 \' 处提前闭合,后续 DROP 被误剥 → 绕过
+            assertThatThrownBy(() -> engine.checkReadOnly("SELECT 'a\\'; DROP TABLE t"))
+                    .isInstanceOf(SecurityException.class);
+        }
+    }
 }

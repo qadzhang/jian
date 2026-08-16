@@ -236,7 +236,7 @@ public final class Clipboard {
     }
 
     /** 解析 TSV 字符串为 DataFrame(对齐 pandas.read_clipboard 按 \t 分列)。 */
-    private static DataFrame parseTsv(String tsv) {
+    static DataFrame parseTsv(String tsv) {
         if (tsv == null || tsv.isBlank()) {
             return DataFrame.of(new Schema(List.of(), List.of()), new Object[0][]);
         }
@@ -250,6 +250,19 @@ public final class Clipboard {
         // 所以空表头字段兜底 "_0"/"_1"(FwfReader 同款;pandas 用 Unnamed:N,语义相同)。
         for (int c = 0; c < header.length; c++) {
             names.add(header[c].trim().isEmpty() ? "_" + c : header[c]);
+        }
+        // 因为 Excel/WPS 允许两列同名,复制到剪贴板即 TSV 重复表头,而 Schema 校验对
+        // 重名抛 IAE 会让整表读不进来(Csv/Excel 都自动去重,
+        // 唯 Clipboard 抛错,三入口行为分裂),所以与 Csv.dedupHeaderNames 同口径
+        // 去重:重名自动加 _1/_2 后缀(pandas mangle_dupe_cols 同语义;
+        // jian 用 _1 而 pandas 用 .1,§10.16#16 已声明)。
+        java.util.Set<String> seen = new java.util.LinkedHashSet<>();
+        for (int c = 0; c < names.size(); c++) {
+            String base = names.get(c);
+            String cand = base;
+            int k = 1;
+            while (!seen.add(cand)) cand = base + "_" + k++;
+            names.set(c, cand);
         }
         Object[][] rows = new Object[lines.length - 1][names.size()];
         for (int r = 1; r < lines.length; r++) {

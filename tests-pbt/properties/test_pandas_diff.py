@@ -1730,3 +1730,136 @@ def test_d73_slice负索引与空区间_对齐pandas_iloc(df):
         for i, row in enumerate(j["rows"]):
             assert _norm_val(row[0]) == _norm_val(p["id"].iloc[i]), \
                 f"slice[{a}:{b}] 第 {i} 行 id 不一致:jian={row[0]} pandas={p['id'].iloc[i]}"
+
+
+# ═══════════════ 外部 AI 协作复审修复对照(d74-d80)═══════════════
+# 修复对应算子在此以 pandas 为 oracle 逐项对照(AGENTS §0.5 红线)。
+
+
+def test_d74_dropDuplicates正负零与NaN_对齐pandas():
+    """±0.0 判重等价 + NaN 判重等价(修复:jian 曾把 +0.0/-0.0 当不同键)。
+
+    pandas drop_duplicates:+0.0 == -0.0 相等、NaN 与 NaN 相等(hash 路径规范化);
+    jian 修复后键经 normUniqueKey 归一,同口径(NaN 本就经 Double.equals 规范化判重)。
+    """
+    client = get_client()
+    vals = [0.0, -0.0, float("nan"), float("nan"), 1.0]
+    j_rows = client.dropDuplicates(make_df(["v"], [[v] for v in vals]), ["v"])["rows"]
+    p = pd.DataFrame({"v": vals}).drop_duplicates(subset=["v"])
+    assert len(j_rows) == len(p), f"行数不一致:jian={j_rows} pandas={p['v'].tolist()}"
+    for i in range(len(p)):
+        assert _norm_val(j_rows[i][0]) == _norm_val(p["v"].iloc[i]), \
+            f"第 {i} 行不一致:jian={j_rows[i][0]} pandas={p['v'].iloc[i]}"
+
+
+def test_d75_mergeAsof缺失键_双方都抛错_对齐pandas():
+    """缺失 on 键(NaN/null)→ 双方一致抛错(修复:jian 曾静默容忍并复用/漏过匹配)。
+
+    本机 pandas 1.5.3 实测(oracle):merge_asof 对左或右任一侧键含 null 抛
+    ValueError("Merge keys contain null values on ..."),不输出 NaN 行;
+    jian 修复后同口径抛 IAE(fail-fast,提示先清洗)。此前的"右列置 NaN"方案
+    基于社区传言,与安装版 oracle 不符,已废弃。
+    """
+    client = get_client()
+    left_nan = make_df(["ts", "lv"], [[1.0, "a"], [3.0, "b"], [float("nan"), "c"]])
+    right_ok = make_df(["ts", "rv"], [[1.0, "R1"], [2.5, "R2"]])
+    # 左键缺失:双方都抛
+    with pytest.raises(ValueError):
+        pd.merge_asof(to_pandas(left_nan), to_pandas(right_ok), on="ts")
+    with pytest.raises(Exception):
+        client.mergeAsof(left_nan, right_ok, "ts")
+    # 右键缺失:双方都抛
+    left_ok = make_df(["ts", "lv"], [[1.0, "a"], [3.0, "b"]])
+    right_nan = make_df(["ts", "rv"], [[1.0, "R1"], [float("nan"), "R2"]])
+    with pytest.raises(ValueError):
+        pd.merge_asof(to_pandas(left_ok), to_pandas(right_nan), on="ts")
+    with pytest.raises(Exception):
+        client.mergeAsof(left_ok, right_nan, "ts")
+
+
+def test_d76_pivotTable_first聚合字符串值_对齐pandas():
+    """pivotTable first 聚合返回原值(修复:输出列曾硬编码 DOUBLE,String 值强转失败)。"""
+    client = get_client()
+    df = make_df(["r", "c", "name"],
+                 [["r1", "c1", "alice"], ["r1", "c2", "bob"], ["r2", "c1", "carol"]])
+    j = client.pivotTable(df, "r", "c", "name", "first")
+    p = pd.pivot_table(to_pandas(df), index="r", columns="c", values="name",
+                       aggfunc="first")
+    jcols = j["columns"]
+    assert "r" in jcols and "c1" in jcols and "c2" in jcols, f"jian 列异常:{jcols}"
+    for i, r in enumerate(["r1", "r2"]):
+        for c in ["c1", "c2"]:
+            jv = _norm_val(j["rows"][i][jcols.index(c)])
+            pv = _norm_val(p.loc[r, c])
+            assert jv == pv, f"({r},{c}) jian={jv!r} pandas={pv!r}"
+
+
+def test_d77_pivotTable_count聚合_对齐pandas():
+    """pivotTable count 聚合值对齐(pandas count → 计数;jian 修复后 LONG 输出同值)。"""
+    client = get_client()
+    df = make_df(["r", "c", "v"],
+                 [["r1", "x", 1.0], ["r1", "x", 2.0], ["r2", "x", 3.0], ["r2", "y", 4.0]])
+    j = client.pivotTable(df, "r", "c", "v", "count")
+    p = pd.pivot_table(to_pandas(df), index="r", columns="c", values="v",
+                       aggfunc="count")
+    jcols = j["columns"]
+    for i, r in enumerate(["r1", "r2"]):
+        for c in ["x", "y"]:
+            jv = _norm_val(j["rows"][i][jcols.index(c)])
+            pv = _norm_val(p.loc[r, c])
+            assert jv == pv, f"({r},{c}) jian={jv!r} pandas={pv!r}"
+
+
+def test_d78_大整数与DOUBLE列混型比较_有意差异声明():
+    """[有意差异,§10.16#17] 整数(> 2^53)× DOUBLE 列混型比较:jian 精确,pandas 折叠。
+
+    NumPy 把 Python int 标量 cast 成 float64 再比较(9007199254740993 → 折成 2^53),
+    故 pandas 判 2^53 == 2^53+1 为 True(下方断言锁定 oracle 行为备查);
+    jian 遵循 LONG"大 ID 不丢精度"契约(AGENTS §3.5 / DType javadoc),混型走
+    compareLongVsDouble 精确路径判 False。已在 doc/00-overview.md §10.16 显式声明。
+    修复背景:原实现 doubleValue 直比与 pandas 一样折叠,但那是"两边都错";
+    修复后 jian 精确、pandas 折叠,方向按方案 B 声明而非对齐。
+    """
+    client = get_client()
+    df = make_df(["v"], [[9007199254740992.0]])   # 2^53
+    # oracle 行为备查:NumPy 标量折叠,判相等为 True(精度丢失)
+    p_eq = (pd.Series([9007199254740992.0]) == 9007199254740993).tolist()
+    assert p_eq[0] is True
+    # jian 有意差异:精确判定(2^53 ≠ 2^53+1;修复前 doubleValue 直比与 NumPy 一样折叠)
+    j_eq = client.colCmp(df, "v", "==", 9007199254740993)
+    assert j_eq[0] is False, f"jian 应精确判不等:{j_eq}"
+    j_lt = client.colCmp(df, "v", "<", 9007199254740993)
+    assert j_lt[0] is True, "2^53 < 2^53+1 应为 True"
+    j_gt = client.colCmp(df, "v", ">", 9007199254740991)
+    assert j_gt[0] is True, "2^53 > 2^53-1 应为 True"
+
+
+def test_d79_resample整数列sum_对齐pandas():
+    """resample 整数列 sum 值对齐(pandas int64 累计;jian 修复后 long 累计,LONG 输出)。"""
+    client = get_client()
+    ts = ["2026-01-01T01:00:00", "2026-01-01T02:00:00", "2026-01-02T01:00:00"]
+    vs = [2, 3, 4]
+    j = client.resample(make_df(["ts", "v"], [[t, v] for t, v in zip(ts, vs)]), "ts", "1D", "v", "sum")
+    p = pd.DataFrame({"v": vs}, index=pd.to_datetime(ts)).resample("D").sum()["v"]
+    assert len(j["rows"]) == len(p), f"行数不一致:jian={j['rows']} pandas={p.tolist()}"
+    for i, pv in enumerate(p):
+        assert _norm_val(j["rows"][i][1]) == _norm_val(pv), \
+            f"第 {i} 桶不一致:jian={j['rows'][i][1]} pandas={pv}"
+
+
+def test_d80_桥LONG列null往返不失真_S0修复():
+    """[桥修复] LONG null 掩码:None 过桥进 jian 再回 Python 仍是 None。
+
+    修复前:桥把 LONG 列 null 写成 0L 且无 nullMask(isNull 恒 false)——
+    roundtrip 变 0、fillna/dropna 等一切 LONG 缺失维度的对照全部失真。
+    """
+    client = get_client()
+    df = make_df(["x"], [[1], [None], [3]])
+    out = client.head(df, 10)
+    vals = [r[0] for r in out["rows"]]
+    assert vals[0] == 1 and vals[1] is None and vals[2] == 3, f"LONG null 往返失真:{vals}"
+    # isNull 语义经 fillna 交叉验证:jian 填 0 后值序与 pandas 一致
+    j = client.fillna(df, 0)["rows"]
+    p = to_pandas(df).fillna(0)["x"].tolist()
+    for i in range(3):
+        assert _norm_val(j[i][0]) == _norm_val(p[i]), f"fillna 第 {i} 行:jian={j[i][0]} pandas={p[i]}"

@@ -268,3 +268,11 @@ Jian.plotting().lagPlot(df.getColumn("price"),lag=1).saveAsPng("lag.png");
 
 - 全缺失列:kde / autocorrelation / box 抛教学型报错(不退化输出);hexbin 按密度映射渲染。
 - 测试:jian-viz @Test **28**(口径见 [api-counts.md](api-counts.md))。
+
+### 实现说明:外部 AI 协作复审修复
+
+| # | 修复 | 行为变化 |
+|---|---|---|
+| 1 | `Plot.kde` bins 校验 | bins ≤ 0 抛教学式 IAE(原 bins=0 静默产出空图);与 hist 同口径 |
+| 2 | `Plot.hexbin` gridsize 校验 | gridsize ≤ 0 抛 IAE(原 gridsize=0 产出负分箱 key 的错误图表且静默成功) |
+| 3 | `Plot.lagPlot` lag 校验 | lag < 0 抛 IAE(原裸 IndexOutOfBoundsException) |

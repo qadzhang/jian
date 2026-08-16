@@ -352,6 +352,11 @@ public final class Plot {
      */
     public static XYChart kde(DataFrame df, String valCol, int bins) {
         List<Double> vals = numericColumn(df, valCol);
+        // bins 非正数 fail-fast(与 hist 同口径——bins=0 时
+        // (max-min)/0=Infinity、循环零次,静默产出空图而非教学式报错)
+        if (bins <= 0) {
+            throw new IllegalArgumentException("bins 必须为正整数,实际:" + bins);
+        }
         // 全缺失列 fail-fast(否则产出 NaN~NaN 退化图)
         if (vals.isEmpty()) {
             throw new IllegalArgumentException("列 \"" + valCol + "\" 全为缺失,无法估计密度;"
@@ -397,6 +402,11 @@ public final class Plot {
      * @return XYChart XChart 散点对象(每箱一个点,坐标取箱中心,点大小 ∝ 箱计数)
      */
     public static XYChart hexbin(DataFrame df, String xCol, String yCol, int gridsize) {
+        // gridsize 非正数 fail-fast(gridsize=0 时步长=Infinity、
+        // gx=Math.min(-1,0)=-1 产出负分箱 key,图表内容错误且静默成功)
+        if (gridsize <= 0) {
+            throw new IllegalArgumentException("gridsize 必须为正整数,实际:" + gridsize);
+        }
         // R6:同 line,成对收集(多入口同步)
         List<Double> xs = new ArrayList<>(), ys = new ArrayList<>();
         pairedNumeric(df, xCol, yCol, xs, ys);
@@ -526,6 +536,11 @@ public final class Plot {
      * @return XYChart XChart 散点对象
      */
     public static XYChart lagPlot(DataFrame df, String col, int lag) {
+        // 负 lag fail-fast(旧实现循环从负下标起,c.isNull(-1)
+        // 抛裸 IndexOutOfBoundsException,而非教学式 IAE)
+        if (lag < 0) {
+            throw new IllegalArgumentException("lag 必须为非负整数,实际:" + lag);
+        }
         Column c = df.getColumn(col);
         List<Double> xs = new ArrayList<>();
         List<Double> ys = new ArrayList<>();

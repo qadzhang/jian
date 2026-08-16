@@ -9,6 +9,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 // ┌─ What : XmlRegressionTest —— XML 读写回归测试集
 // │  Why  : 固化 XML 读写行为(因为空元素缺失语义、0 行保列(cols 属性)、含引号/
@@ -121,5 +122,41 @@ class XmlRegressionTest {
         assertThat(r.columnNames()).containsExactly("name");
         assertThat(r.getStringColumn("name").get(0)).isEqualTo("a<b");
         assertThat(r.getStringColumn("name").get(1)).isEqualTo("c&d");
+    }
+
+    // ======================== 列名往返与冲突 ========================
+
+    @Test
+    void 往返_列名含空格与元字符_经cols属性还原原名() throws Exception {
+        // 修复前:escapeName 清洗不可逆,'a b' 写出 <a_b> 读回变 a_b(往返改名)
+        DataFrame df = DataFrame.of(Schema.of("a b", DType.LONG, "c&d", DType.STRING),
+            new Object[][]{{1L, "x"}, {2L, "y"}});
+        Path p = tmp.resolve("roundtrip.xml");
+        Xml.write(df, p.toString()).go();
+        DataFrame back = Xml.read(p.toString()).go();
+        assertThat(back.columnNames()).containsExactly("a b", "c&d");
+        assertThat(((Number) back.getRow(0)[0]).intValue()).isEqualTo(1);   // Jackson 解析为 Integer
+        assertThat(back.getRow(0)[1]).isEqualTo("x");
+        assertThat(((Number) back.getRow(1)[0]).intValue()).isEqualTo(2);
+        assertThat(back.getRow(1)[1]).isEqualTo("y");
+    }
+
+    @Test
+    void 清洗冲突列名_写出抛IAE不静默丢列() {
+        // 'a b' 与 'a_b' 都清洗成 a_b → 修复前同名元素互相覆盖、读回静默丢一列
+        DataFrame df = DataFrame.of(Schema.of("a b", DType.LONG, "a_b", DType.LONG),
+            new Object[][]{{1L, 2L}});
+        assertThatThrownBy(() -> Xml.write(df, tmp.resolve("conflict.xml").toString()).go())
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("同名");
+    }
+
+    @Test
+    void 旧版无cols属性文件_按字段名读取仍兼容() throws Exception {
+        // 手写/旧版 XML(根元素无 cols 属性)走 fieldNames 路径,行为不变
+        DataFrame df = Xml.parse(
+            "<rows><row><a>1</a><b>x</b></row><row><a>2</a><b>y</b></row></rows>", "row");
+        assertThat(df.columnNames()).containsExactly("a", "b");
+        assertThat(df.rowCount()).isEqualTo(2);
     }
 }

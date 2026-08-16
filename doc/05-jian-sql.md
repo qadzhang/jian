@@ -257,3 +257,15 @@ DataFrame df = engine.dsl()
 - **orm**:insert/update/delete 全部过只读拦截(readOnly 抛 SecurityException);insert 自增主键回填;BigDecimal/Boolean/enum/LocalDate 字段映射。
 - **bridge**:按 ResultSetMetaData 映射 dtype(SMALLINT→INT 等);空结果集保留列。
 - 测试:engine 26 / expr 9 / orm 19 / bridge 11 @Test(口径见 [api-counts.md](api-counts.md))。
+
+### 实现说明:外部 AI 协作复审修复
+
+> 由 AI3 依 ai-code-testing 方法学复审(9 项;采纳 6、复核后否决 3)。
+
+| # | 模块 | 修复 | 行为变化 |
+|---|---|---|---|
+| 1 | jian-sql-orm | Session 沿类层级收集字段 | 父类(实体基类)的 @Id/@Column 字段参与映射(原 getDeclaredFields 只扫本类,父类字段静默丢失) |
+| 2 | jian-sql-orm | 生成键回填去掉 Number-only 早退 | String/enum 等 @Id 经 adaptValue 兜底回填(原静默跳过致实体 id 恒 null) |
+| 3 | jian-sql-engine | checkReadOnly 反引号 `` 双写转义 | MySQL `` 双反引号不再提前闭合配对(原可借此把 DROP 误剥成标识符内容绕过只读拦截);字符串剥除维持 ANSI/PG 语义并文档化 fail-closed 取舍 |
+| 4 | jian-sql-bridge | Types.OTHER/JAVA_OBJECT → OBJECT | 厂商扩展类型保原对象(原静默 toString 成 STRING) |
+| 5 | jian-sql-bridge + jian-io-sql | Clob 读取失败与 Blob 对称返 null | 两处同根因实现同步修复(原 Clob 失败返回 clob.toString() 非缺失垃圾串,Blob 失败返 null,同一读取失败两种语义) |

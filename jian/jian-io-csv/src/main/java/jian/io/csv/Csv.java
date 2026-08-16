@@ -411,17 +411,18 @@ public final class Csv {
     // │           路径 B(重复)→ 结果加 "名_计数",计数自增(第 2 个重复得 _1,第 3 个得 _2)。
     // │         数据走向:CSV 首记录字段 → names → dedupHeaderNames → DataFrame 列名。
     private static List<String> dedupHeaderNames(List<String> names) {
+        // 原计数式在"重复名 + 其 _k 变体"输入下失效
+        //(如 ["a","a","a_1"] → ["a","a_1","a_1"],去重后仍重复,Schema 抛
+        //"列名重复"导致整表拒读,恰好违背本方法"避免整个读取失败"的初衷);
+        // 改为 while 探测式:候选名已被占用就继续 _k 递增,输出绝对唯一 —— 与
+        // Clipboard.parseTsv / Html.tableToDataFrame 同款实现,三入口同口径。
         List<String> result = new ArrayList<>(names.size());
-        java.util.Map<String, Integer> seen = new java.util.LinkedHashMap<>();
+        java.util.Set<String> seen = new java.util.LinkedHashSet<>();
         for (String name : names) {
-            Integer count = seen.get(name);
-            if (count == null) {
-                result.add(name);
-                seen.put(name, 1);
-            } else {
-                result.add(name + "_" + count);   // 第 2 个重复 → _1,第 3 个 → _2
-                seen.put(name, count + 1);
-            }
+            String cand = name;
+            int k = 1;
+            while (!seen.add(cand)) cand = name + "_" + k++;   // 第 2 个重复 → _1,被占则 _2...
+            result.add(cand);
         }
         return result;
     }

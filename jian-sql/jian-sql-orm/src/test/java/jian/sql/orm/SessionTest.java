@@ -120,4 +120,59 @@ class SessionTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("非法列名");
     }
+
+    // ======================== 类层级字段 / String 主键回填 ========================
+
+    @Table("base_users")
+    static class BaseUser {
+        @Id public Long id;
+        @Column("created_at") public java.time.LocalDateTime createdAt;
+    }
+
+    @Table("base_users")
+    static class SubUser extends BaseUser {
+        @Column("name") public String name;
+    }
+
+    @Test
+    void 父类字段参与映射_不再静默丢弃() throws Exception {
+        try (Engine engine = Engine.create(DbType.H2, EngineConfig.builder()
+                .path("mem:orm_hier_" + System.nanoTime() + ";DB_CLOSE_DELAY=-1")
+                .user("sa").password("").build());
+             Connection conn = engine.connect(); Statement st = conn.createStatement()) {
+            st.execute("CREATE TABLE base_users (id BIGINT PRIMARY KEY, created_at TIMESTAMP, name VARCHAR(100))");
+            SubUser u = new SubUser();
+            u.id = 7L;
+            u.createdAt = java.time.LocalDateTime.of(2026, 1, 1, 12, 0);
+            u.name = "alice";
+            Session<SubUser> s = new Session<>(engine, SubUser.class);
+            s.insert(u);
+            // 修复前:父类 id/created_at 被静默丢弃,insert 抛"实体无 @Id 字段"
+            SubUser back = s.findById(7L);
+            assertThat(back.name).isEqualTo("alice");
+            assertThat(back.createdAt).isEqualTo(java.time.LocalDateTime.of(2026, 1, 1, 12, 0));
+        }
+    }
+
+    @Table("strid_users")
+    static class StrIdUser {
+        @Id public String id;
+        @Column("name") public String name;
+    }
+
+    @Test
+    void String主键生成键回填_不再静默跳过() throws Exception {
+        try (Engine engine = Engine.create(DbType.H2, EngineConfig.builder()
+                .path("mem:orm_strid_" + System.nanoTime() + ";DB_CLOSE_DELAY=-1")
+                .user("sa").password("").build());
+             Connection conn = engine.connect(); Statement st = conn.createStatement()) {
+            st.execute("CREATE TABLE strid_users (id BIGINT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100))");
+            StrIdUser u = new StrIdUser();
+            u.name = "bob";
+            Session<StrIdUser> s = new Session<>(engine, StrIdUser.class);
+            s.insert(u);
+            // 修复前:!Number 早退,u.id 静默保持 null;修复后经 adaptValue 字符串化回填
+            assertThat(u.id).isEqualTo("1");
+        }
+    }
 }

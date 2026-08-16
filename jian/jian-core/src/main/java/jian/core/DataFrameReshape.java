@@ -45,20 +45,20 @@ public final class DataFrameReshape {
         //   3. 聚合 + 散开成宽表(桶内聚合后按 columns 取值散到各列)
         Column indexCol = df.getColumn(index);
         Column columnsCol = df.getColumn(columns);
-        // 1. 收集 columns 列的不同值(保序;键缺失的行跳过)
+        // 1. 收集 columns 列的不同值(保序;键缺失的行跳过;±0.0 归一后判同)
         List<Object> colValues = new ArrayList<>();
         java.util.Set<Object> colSeen = new java.util.HashSet<>();
         for (int r = 0; r < df.rowCount(); r++) {
             if (indexCol.isNull(r) || columnsCol.isNull(r)) continue;  // dropna:跳过键缺失行
-            Object v = df.get(r, columns);
+            Object v = DataFrameStats.normUniqueKey(df.get(r, columns));
             if (colSeen.add(v)) colValues.add(v);
         }
-        // 2. 收集 index 列的不同值(保序;键缺失的行跳过)
+        // 2. 收集 index 列的不同值(保序;键缺失的行跳过;±0.0 归一后判同)
         List<Object> indexValues = new ArrayList<>();
         java.util.Set<Object> indexSeen = new java.util.HashSet<>();
         for (int r = 0; r < df.rowCount(); r++) {
             if (indexCol.isNull(r) || columnsCol.isNull(r)) continue;  // dropna:跳过键缺失行
-            Object v = df.get(r, index);
+            Object v = DataFrameStats.normUniqueKey(df.get(r, index));
             if (indexSeen.add(v)) indexValues.add(v);
         }
         // 3. 用 groupBy (index, columns) 聚合 values,缓存结果
@@ -86,23 +86,52 @@ public final class DataFrameReshape {
                 rows[i][j + 1] = cellMap.get(keyOf(indexValues.get(i), colValues.get(j)));
             }
         }
-        // 5. schema
+        // 5. schema(修复:不再一律 DOUBLE —— 按 aggFn 与 values 列 dtype 分派,
+        //    与 GroupBy.agg 同口径:count/nunique→LONG;first/last→源 dtype;
+        //    sum→BOOL 计数 LONG / 字符串拼接 STRING / 整数列 long 累计 LONG / 浮点 DOUBLE)
         Object[] nameType = new Object[(colValues.size() + 1) * 2];
         nameType[0] = index;
         nameType[1] = df.getColumn(index).dtype();
         for (int j = 0; j < colValues.size(); j++) {
             nameType[(j + 1) * 2] = String.valueOf(colValues.get(j));
-            nameType[(j + 1) * 2 + 1] = DType.DOUBLE;  // 聚合结果默认 DOUBLE
+            nameType[(j + 1) * 2 + 1] = aggDtype(valCol.dtype(), aggFn);
         }
         return DataFrame.of(Schema.of(nameType), rows);
     }
 
+    /**
+     * 聚合函数输出 dtype 分派(与 GroupBy.agg 的 schema 分派同口径,修复口径分裂)。
+     * @param srcDt DType 被聚合 values 列的源 dtype
+     * @param aggFn String 聚合函数名
+     * @return DType 输出列 dtype:count/nunique→LONG;first/last→源 dtype;
+     *         sum→BOOL 出 LONG(true 计数)/非数值出 STRING(拼接)/整数列出 LONG(long 累计,
+     *         对齐 pandas int64 sum)/DOUBLE 出 DOUBLE;其余(mean/min/max/...)→DOUBLE
+     */
+    private static DType aggDtype(DType srcDt, String aggFn) {
+        switch (aggFn) {
+            case "count":
+            case "nunique":
+                return DType.LONG;
+            case "first":
+            case "last":
+                return srcDt;
+            case "sum":
+                if (srcDt == DType.BOOL) return DType.LONG;
+                if (!srcDt.isNumeric()) return DType.STRING;
+                return (srcDt == DType.INT || srcDt == DType.LONG) ? DType.LONG : DType.DOUBLE;
+            default:
+                return DType.DOUBLE;
+        }
+    }
+
     private static List<Object> keyOf(Object i, Object c) {
         // 因为 "\0" 字符串拼接在值本身含 \0 时会被误拼成同一键
-        // (不同 (i,c) 组合被识别为同一键导致行错乱),所以用 List 作键。
+        // (不同 (i,c) 组合被识别为同一组导致行错乱),所以用 List 作键。
         // List.of 不接受 null 元素,改 Arrays.asList(允许 null,防御;
-        // 正常路径已在上游按 dropna 跳过键缺失的行,null 不会到达此处)
-        return java.util.Arrays.asList(i, c);
+        // 正常路径已在上游按 dropna 跳过键缺失的行,null 不会到达此处)。
+        // ±0.0 归一(与 dropDuplicates/merge/GroupBy 同口径,§10.16#6)
+        return java.util.Arrays.asList(DataFrameStats.normUniqueKey(i),
+                                       DataFrameStats.normUniqueKey(c));
     }
 
     /**
@@ -275,8 +304,11 @@ public final class DataFrameReshape {
 
     private static List<Object> keyOf(DataFrame df, int r, String[] subset) {
         // List 作键防 "\0" 拼接冲突
+        // 每个元素过 normUniqueKey 做 ±0.0 归一(与 merge 的 normKey / GroupBy 的 buildGroups
+        // 同口径,AGENTS §3.5 + §10.16#6"+0.0 与 -0.0 数值等价计 1";NaN 无需归一 ——
+        // Double.equals 底层 doubleToLongBits 已把所有 NaN 规范化为同一比特模式)
         List<Object> key = new ArrayList<>(subset.length);
-        for (String c : subset) key.add(df.get(r, c));
+        for (String c : subset) key.add(DataFrameStats.normUniqueKey(df.get(r, c)));
         return key;
     }
 
@@ -290,7 +322,28 @@ public final class DataFrameReshape {
                 // ±0.0 数值等价归一(同 GroupBy)
                 for (int i : idx) if (!c.isNull(i)) seen.add(DataFrameStats.normUniqueKey(c.get(i)));
                 return (long) seen.size();
-            case "sum": { double s = 0; for (int i : idx) if (!c.isNull(i)) s += c.getDouble(i); return s; }
+            case "sum": {
+                // 对齐 GroupBy.agg 的 sum 分派(修复口径分裂):
+                //   BOOL → true 计数(LONG);非数值 → 字符串拼接(STRING,pandas groupby.sum 同);
+                //   INT/LONG → long 精确累计(LONG,对齐 pandas int64 sum,总和 > 2^53 不失真);
+                //   DOUBLE → double 求和
+                if (c.dtype() == DType.BOOL) {
+                    long trueCnt = 0;
+                    for (int i : idx) if (!c.isNull(i) && (Boolean) c.get(i)) trueCnt++;
+                    return trueCnt;
+                }
+                if (!c.dtype().isNumeric()) {
+                    StringBuilder sb = new StringBuilder();
+                    for (int i : idx) if (!c.isNull(i)) sb.append(c.get(i));
+                    return sb.toString();
+                }
+                if (c.dtype() == DType.INT || c.dtype() == DType.LONG) {
+                    long s = 0;
+                    for (int i : idx) if (!c.isNull(i)) s += c.getLong(i);
+                    return s;
+                }
+                double s = 0; for (int i : idx) if (!c.isNull(i)) s += c.getDouble(i); return s;
+            }
             case "mean": { double s = 0; int n = 0; for (int i : idx) if (!c.isNull(i)) { s += c.getDouble(i); n++; } return n == 0 ? Double.NaN : s / n; }
             case "min": { double m = Double.POSITIVE_INFINITY; boolean any = false;
                 for (int i : idx) if (!c.isNull(i)) { any = true; if (c.getDouble(i) < m) m = c.getDouble(i); }
@@ -333,9 +386,9 @@ public final class DataFrameReshape {
         java.util.Set<Object> colSeen = new java.util.TreeSet<>(DataFrameReshape::compareObj);
         java.util.List<Object> colList = new java.util.ArrayList<>();
         for (int i = 0; i < n; i++) {
-            Object iv = df.get(i, index);
+            Object iv = DataFrameStats.normUniqueKey(df.get(i, index));
             if (indexSeen.add(iv)) indexUniq.add(iv);
-            Object cv = df.get(i, columns);
+            Object cv = DataFrameStats.normUniqueKey(df.get(i, columns));
             if (colSeen.add(cv)) colList.add(cv);
         }
         // 用 TreeSet 排序的列
