@@ -336,35 +336,35 @@
 
 > 本节是项目实际实现进度的"看板",与上面需求稿并列。详细实现说明见各分册末尾「实现说明」章节。
 
-### 已实现模块(全测试通过,实测 **@Test 1211**,全量 0 失败,见 [api-counts.md](api-counts.md))
+### 已实现模块(全测试通过,实测 **@Test 1244**,全量 0 失败,见 [api-counts.md](api-counts.md))
 
-> **测试口径说明**:**全仓 @Test 方法数实测 1211**(jian 1076 + jian-num 70 + jian-sql 65;含外部 AI 协作复审新增回归 +52 与 pandas 对照 +7)。其中 14 个 PG 集成测试经 `-Dtest.pg=true` 激活,默认 skip(不算 fail)。数字以 api-counts.md 为准。
+> **测试口径说明**:**全仓 @Test 方法数实测 1244**(jian 1104 + jian-num 70 + jian-sql 70;含外部 AI 协作复审新增回归 +52、pandas 对照 +7、真实场景第二轮抽象扩充 +30、多行 SELECT 聚合回归 +1、中文标识符保真 +2)。其中 14 个 PG 集成测试经 `-Dtest.pg=true` 激活,默认 skip(不算 fail)。数字以 api-counts.md 为准。
 
 | 模块 | 测试数 | 状态 |
 |---|---|---|
 | `jian-num` | 59 | ✅ 多 dtype Ndarray + Stats + StrOps + Matrix + Random + LinearFit |
 | `jian-core` | 571(见 [api-counts.md](api-counts.md),含 AI 复审回归 AuditRegressionTest) | ✅ DataFrame 完整(9 dtype 列 / query(含 in/not in)/ groupby / merge / pivot / melt / sort / 缺失 / 统计(经 StatsProvider SPI)/ eval / sql)+ 60+ 扩展方法(idxmax/sample/isin/where/mask/pivot/explode/join/merge_asof/corr/cov/skew/kurt/cumsum/diff/quantile/rank/clip/interpolate/astype 8种/Resampler/DatetimeIndex/Frequency/MultiIndex N级 等)+ 蜕变/差分/PBT/性能/边界等各类专项测试(数字为方法数,见 api-counts.md) |
 | `jian-num-bridge` | 11 | ✅ StatsProvider SPI(经 ServiceLoader 升级 jian-num 精确统计)|
-| `jian-io-csv` | 46 | ✅ CSV/TSV/FWF + 公式注入防护(默认开,OWASP 严格版含前导空白) |
+| `jian-io-csv` | 48 | ✅ CSV/TSV/FWF + 公式注入防护(默认开,OWASP 严格版含前导空白) |
 | `jian-io-json` | 28 | ✅ JSON 5 orient + json_normalize 拍平 |
 | `jian-io-excel` | 32 | ✅ xls/xlsx 多 sheet + 两阶段类型推断 + POI 兼容处理 |
-| `jian-io-html` | 9 | ✅ HTML 表格(jsoup 读)|
-| `jian-io-xml` | 12 | ✅ XML 读写(Jackson XML,写端名称清洗 + 值转义)|
-| `jian-io-sql` | 45 | ✅ DbType 定义 7 库,**3 库真测**(H2/SQLite 默认跑 + PG `-Dtest.pg=true` 激活;含 SQL 注入防护回归。MySQL/Doris/Oracle/Access 仅 DbType 定义,未 CI 验证)|
+| `jian-io-html` | 10 | ✅ HTML 表格(jsoup 读)|
+| `jian-io-xml` | 15 | ✅ XML 读写(Jackson XML,写端名称清洗 + 值转义)|
+| `jian-io-sql` | 47 | ✅ DbType 定义 7 库,**3 库真测**(H2/SQLite 默认跑 + PG `-Dtest.pg=true` 激活;含 SQL 注入防护回归 + 标识符按需加引号:中文/`AA_a啊` 列名表名保真往返,注入式标识符被引号化为字面量。MySQL/Doris/Oracle/Access 仅 DbType 定义,未 CI 验证)|
 | `jian-io-parquet` | 6 | ✅ Parquet 列存(parquet-avro + LocalFile)|
 | `jian-io-orc` | 8 | ✅ ORC 列存(orc-core 1.9.5 + hadoop-client-runtime 解决 shaded wstx)|
-| `jian-io-pickle` | 6 | ✅ 自定义 .jpk(JSON 内核 + CRC32)|
-| `jian-io-clipboard` | 8 | ✅ 跨平台 xclip/pbcopy/clip + 内存降级(stderr DISCARD 防子进程阻塞) |
+| `jian-io-pickle` | 7 | ✅ 自定义 .jpk(JSON 内核 + CRC32)|
+| `jian-io-clipboard` | 10 | ✅ 跨平台 xclip/pbcopy/clip + 内存降级(stderr DISCARD 防子进程阻塞) |
 | `jian-io-latex` | 6 | ✅ LaTeX 表格 |
-| `jian-export` | 33 | ✅ HTML/Markdown/LaTeX/控制台 + Styler 子系统(含 toExcel POI 条件格式)|
-| `jian-viz` | 28 | ✅ 13 种图(line/scatter/bar/hist/barh/area/pie/box/kde/hexbin/scatterMatrix/lag/autocorrelation;radviz/andrews/parallel_coordinates/bootstrap 4 种高维图 v2 规划)|
-| `jian-dsl` | 155(含 PrattLiteralOverflowTest) | ✅ L1/L2 Pratt(含 nvl/coalesce/ifnull)+ L3 SQL(可插拔引擎接口 SqlEngineInterface/SqlEngines;默认 SqlRegexEngine 支持 DISTINCT/LIMIT OFFSET/GROUP/HAVING/ORDER/JOIN/UNION ALL/子查询≤2 层;支持 CTE/CASE WHEN/派生表/集合运算(UNION/INTERSECT/EXCEPT)/USING 预处理;算术表达式列真实求值(委托 PrattEngine.eval);DML 的 WHERE/SELECT 异常显式抛出、不静默吞)|
-| `jian-sql-engine` | 26 | ✅ Engine + DbType(7 库)+ HikariCP + dsl()/sql() 入口 + 只读拦截防注释绕过 |
+| `jian-export` | 36 | ✅ HTML/Markdown/LaTeX/控制台 + Styler 子系统(含 toExcel POI 条件格式)|
+| `jian-viz` | 31 | ✅ 13 种图(line/scatter/bar/hist/barh/area/pie/box/kde/hexbin/scatterMatrix/lag/autocorrelation;radviz/andrews/parallel_coordinates/bootstrap 4 种高维图 v2 规划)|
+| `jian-dsl` | 156(含 PrattLiteralOverflowTest + 多行SELECT聚合回归) | ✅ L1/L2 Pratt(含 nvl/coalesce/ifnull)+ L3 SQL(可插拔引擎接口 SqlEngineInterface/SqlEngines;默认 SqlRegexEngine 支持 DISTINCT/LIMIT OFFSET/GROUP/HAVING/ORDER/JOIN/UNION ALL/子查询≤2 层;支持 CTE/CASE WHEN/派生表/集合运算(UNION/INTERSECT/EXCEPT)/USING 预处理;算术表达式列真实求值(委托 PrattEngine.eval);DML 的 WHERE/SELECT 异常显式抛出、不静默吞)|
+| `jian-sql-engine` | 28 | ✅ Engine + DbType(7 库)+ HikariCP + dsl()/sql() 入口 + 只读拦截防注释绕过 |
 | `jian-sql-expr` | 9 | ✅ SqlBuilder(jOOQ 3.21.6 运行时)|
-| `jian-sql-orm` | 19 | ✅ @Table/@Column/@Id + Session CRUD |
-| `jian-sql-bridge` | 11 | ✅ ResultSet/jOOQ Result → DataFrame |
-| `jian-facade` | 63 | ✅ 顶层 Jian 门面(read/write 按扩展名自动分发 + pandas 风格 read*/to* 全套 + L3 SQL 入口)|
-| **合计 Java** | **1211** | **22 模块**(jian 1076 + jian-num 70 + jian-sql 65;Python 124 全过(pandas 对照 d1-d80 + Hypothesis PBT + fuzz 16)另计;数字以 [api-counts.md](api-counts.md) 为准,只链接不抄写) |
+| `jian-sql-orm` | 21 | ✅ @Table/@Column/@Id + Session CRUD |
+| `jian-sql-bridge` | 12 | ✅ ResultSet/jOOQ Result → DataFrame |
+| `jian-facade` | 93 | ✅ 顶层 Jian 门面(read/write 按扩展名自动分发 + pandas 风格 read*/to* 全套 + L3 SQL 入口;含真实场景集 46 个:S1~S16 第一轮 + S17~S46 第二轮抽象场景 30 类,断言源码随 jar 分发)|
+| **合计 Java** | **1244** | **22 模块**(jian 1104 + jian-num 70 + jian-sql 70;Python 124 全过(pandas 对照 d1-d80 + Hypothesis PBT + fuzz 16)另计;数字以 [api-counts.md](api-counts.md) 为准,只链接不抄写) |
 
 ### 工程基线
 
@@ -794,6 +794,44 @@ META-INF/ai/
 | 19 | **resample().first()/.last() 对 BOOL 列** | 返回 DOUBLE(0.0/1.0) | 返回 bool | Resampler 的 first/last 走数值提取路径;BOOL 列时序首末取值罕见,避免大重构;sum/count 已对齐(BOOL sum→LONG true 计数) |
 
 > 修改 Column 缺失语义前,必须先读本表第 1/2 行与 AGENTS.md §3.5,再决定是否动契约。
+
+### 10.17 真实场景集登记表(46 个,双实现口径)
+
+> **本节是场景集的 md 事实来源**;jar 内 `META-INF/ai/scenarios.md` 是面向 AI 消费者的速查副本(随 jian-facade 分发),
+> 完整可执行断言源码在 `META-INF/ai/scenarios-src/`(13 个 JUnit 文件,`mvn test` 每次验证下表预期值)。
+>
+> **双实现红线(2026-08-17 起)**:每个场景必须同时给出 **链式版(pandas 风格)** 与 **SQL 版(Jian.sql 一条语句)** 两份实现,
+> 并做**差分断言**(两版结果逐行相等,任一侧回归都会被另一方抓住)。SQL 版覆盖场景的数据加工部分
+> (过滤/分组/聚合/连接/排序/TopN/透视=条件列+GROUP BY);导出样式(Styler/多 sheet/文件落盘)与窗口类
+> (rolling/resample 桶边界)属链式侧能力,SQL 版以"全局聚合交叉验证"等价锁定(如 S37:总和 − 窗外前值 == 末位窗口和)。
+
+**第一轮(S1~S16,pandas 真实用例网调)**
+
+| # | 场景 | # | 场景 |
+|---|---|---|---|
+| S1 | 门店×品类销售月度汇总 | S9 | HR 员工-部门多表合并 |
+| S2 | 银行流水 vs 公司账对账 | S10 | 支付重试重复订单去重 |
+| S3 | 问卷缺失值清洗 | S11 | 嵌套 JSON 订单拍平 |
+| S4 | API 日志按小时重采样 | S12 | 总表按区域拆分导出 |
+| S5 | 电商客户 RFM 分层 | S13 | SQL 直查内存表 |
+| S6 | 落地页 A/B 测试 | S14 | 汇率按生效日就近折算(merge_asof) |
+| S7 | 仓库安全库存预警 | S15 | 用户行为统计月报(corr/cumsum/diff) |
+| S8 | 成绩长宽透视与排名 | S16 | 财务月报样式导出(Styler 全链) |
+
+**第二轮(S17~S46,四 AI 网调 52 例 → 抽象合并 30 类,跨行业通用口径)**
+
+| 域 | 场景(测试类) |
+|---|---|
+| 文件⇄数据库(ScenarioFileDatabaseTest) | S17 表格导入库含校验分流与错误回执 · S18 库分析后导出带行列颜色 Excel · S19 库间迁移一致性校验(FULL OUTER JOIN) · S20 多源取数合并即席分析 |
+| 报表产出(ScenarioReportExportTest) | S21 定时多 sheet 报表 · S22 接口导出数据加工管道(过滤+脱敏) |
+| 对账与质量(ScenarioReconcileQualityTest) | S23 多系统三方对账 · S24 数据质量画像 · S25 中文脏数据清洗(NFKC/百分号/特殊值) · S26 增量数据保最新去重 |
+| 日志与监控(ScenarioOpsMonitoringTest) | S27 访问日志 TopN · S28 错误风暴统计 · S29 性能分位数版本对比 · S30 时序指标周期报表 · S31 慢查询排行 · S32 安全日志统计 · S33 可用性 SLA 月报 |
+| 时序处理(ScenarioTimeSeriesTest) | S34 高频降采样落库 · S35 时序异常点识别(z 分数) · S36 周期规律透视 · S37 滚动窗口指标 |
+| 统计分析(ScenarioStatsAnalysisTest) | S38 分组统计与组间对比 · S39 指标相关性分析 · S40 透视与排名 · S41 留存队列分析 · S42 漏斗转化分析 · S43 增长趋势追踪 · S44 嵌套结构拍平(explode) |
+| 审计合规(ScenarioAuditComplianceTest) | S45 依赖版本漏洞审计(readXml+JOIN) · S46 配置合规批量校验 |
+
+> SQL 对照过程中实测并修复的引擎缺陷:SELECT 聚合列表跨行书写时探测正则缺 `DOTALL`,
+> 误走非聚合分支(S39 触发);修复见 doc/07 实现说明,回归测试 `SqlAdvancedTest.多行SELECT聚合列表`。
 
 ---
 

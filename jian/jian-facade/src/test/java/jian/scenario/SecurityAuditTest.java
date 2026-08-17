@@ -58,26 +58,28 @@ class SecurityAuditTest {
 
     // 标识符注入防护:表名/列名进入 DDL/SELECT 拼接前必须过白名单(H2 内存库实测)
     @Test
-    void SQL标识符注入被白名单拒绝() throws Exception {
+    void SQL标识符注入被引号转义为字面量() throws Exception {
         try (Connection conn = DriverManager.getConnection("jdbc:h2:mem:sec_audit;DB_CLOSE_DELAY=-1", "sa", "")) {
             DataFrame df = DataFrame.of(Schema.of("id", DType.LONG, "name", DType.STRING),
                     new Object[][]{{1L, "a"}});
             Jian.toSql(df, conn, "t");   // 正常表名先建好,供 DROP 验证目标存在
-            // 表名注入:分号/引号/空格/-- 全拒
-            for (String evil : new String[]{"t; DROP TABLE t--", "t WHERE 1=1", "t'; --", "t\t"}) {
-                assertThatThrownBy(() -> Jian.toSql(df, conn, evil))
-                        .as("表名注入: %s", evil)
-                        .isInstanceOf(IllegalArgumentException.class)
-                        .hasMessageContaining("非法表名");
+            // 表名注入:分号/引号/空格/-- 被库引号符包裹 + 双写转义 → 整串成为字面量怪名表,
+            // 不产生任何 DROP/WHERE 语句;写入成功但目标表 t 安然无恙(注入挡在标识符层)
+            for (String evil : new String[]{"t; DROP TABLE t--", "t WHERE 1=1", "t'; --"}) {
+                Jian.toSql(df, conn, evil);
+                assertThat(Jian.readSqlTable(conn, evil).rowCount()).as("怪名表 %s 字面量往返", evil).isEqualTo(1);
             }
             var rs = conn.createStatement().executeQuery("SELECT count(*) FROM t");
             assertThat(rs.next()).isTrue();
-            assertThat(rs.getInt(1)).isEqualTo(1);   // 且目标表未被破坏(仍有 1 行)
-            // 列名注入:同拒;中文列名给出 rename 教学提示(quoted identifier 是 v2)
-            DataFrame bad = DataFrame.of(Schema.of("a;b", DType.LONG), new Object[][]{{1L}});
-            assertThatThrownBy(() -> Jian.toSql(bad, conn, "t2"))
+            assertThat(rs.getInt(1)).isEqualTo(1);   // 目标表未被破坏(仍有 1 行)
+            // 控制字符表名硬拒绝(引号也救不了不可见字符)
+            assertThatThrownBy(() -> Jian.toSql(df, conn, "t\t"))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("rename");
+                    .hasMessageContaining("控制字符");
+            // 列名注入:同口径被引号化为字面量列;a;b 成为一个真实存在的怪列名
+            DataFrame bad = DataFrame.of(Schema.of("a;b", DType.LONG), new Object[][]{{1L}});
+            Jian.toSql(bad, conn, "t2");
+            assertThat(Jian.readSqlTable(conn, "t2").columnNames()).containsExactly("a;b");
         }
     }
 

@@ -419,7 +419,7 @@ public interface DslEngine {  // jian-core 中定义
 
 - SELECT 表达式列(无括号)与未知列报错(不静默跳过);JOIN ON 多条件 + USING 多列。
 - UNION / 派生表括号感知;OFFSET 三方言分页;科学计数法字面量;引擎线程安全。
-- 测试:jian-dsl @Test **149**(口径见 [api-counts.md](api-counts.md))。
+- 测试:jian-dsl @Test **156**(口径见 [api-counts.md](api-counts.md))。
 
 ### 实现说明:外部 AI 协作复审修复
 
@@ -427,3 +427,5 @@ public interface DslEngine {  // jian-core 中定义
 |---|---|---|
 | 1 | SqlPreprocessor.sigOf 类型感知签名 | INTERSECT/EXCEPT 行签名带 dtype 标签 + 缺失独立哨兵:字符串 "null"/"NaN" 与真缺失/DOUBLE NaN 不再误判等;NULL=NULL 按 SQL 标准 "not distinct" 语义判等 |
 | 2 | tests-pbt 桥(JianJpypeBridge)S0 | LONG 列 null 经 nullMask 标记(原 null→0L 且 isNull 恒 false,pandas 对照在 LONG 缺失维度整体失明;d80 锁定) |
+| 3 | SqlEngine 聚合探测补 `DOTALL`(2026-08-17,场景集 S39 触发) | SELECT 聚合列表跨行书写(`sum(x) AS sx,\n sum(y) AS sy`)不再误判为非聚合分支抛 "SELECT 聚合列不存在";SQL 与换行无关的既有契约从此真正成立。回归:`SqlAdvancedTest.多行SELECT聚合列表`(单行/多行两写差分断言) |
+| 4 | 场景集 SQL 对照实测口径(2026-08-17,S17~S46 双实现) | ① 同一源列在一次 SELECT 里做多个聚合会互相覆盖(aggMap 按源列建键),多指标须拆多条 SQL;② `fn(CASE ...)` 聚合不支持,条件拆列由 assign 预置、聚合仍归 SQL;③ 表限定名(`a.x`)仅 ON 子句支持,JOIN 后重名列走 `_x/_y` 后缀。三条均已写入场景源码注释,供 AI 照抄时避坑 |

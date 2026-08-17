@@ -263,14 +263,14 @@ AI 生成代码有个核心难题叫 **oracle problem(预言机难题)**:很难�
 | `NullNaNPropagationTest` | 9 | 蜕变 | **NaN/缺失值全链路不失真**:get 不失真 + getDouble 返 NaN + getLong 返 MIN_VALUE + getRow 边界转 null + ffill/bfill + merge 补 null + 排序 + 算术传播 |
 | `ColumnarPerfTest` | 27 | 单元 + 回归 | 边界与回退路径的"重现代码"防回归 |
 | `tests-pbt/properties/test_jian_properties.py`(Python Hypothesis) | 24 | PBT 同行评议 | 与 jqwik 同样性质 + colSub/colDiv 双语言交叉验证(**v 含 NaN 边界注入**) |
-| `tests-pbt/properties/test_pandas_diff.py`(pandas 1.5.3) | 73 | pandas 对照(d1-d73) | 以 pandas 为 oracle,覆盖 head/tail/sortBy/filter/dropDuplicates/merge/concat/nlargest/nsmallest/select/drop/slice/colSub/colDiv/colLt/fillna/dropna/ffill/astype/groupBy/idxmax/idxmin/duplicated/sample/isin/where/mask/cumsum/diff/pct_change/clip/quantile/rank/round/prod/pivot/explode/merge_asof/resample/统计/Window 等算子(完整清单以该文件 test_d* 函数为准) |
+| `tests-pbt/properties/test_pandas_diff.py`(pandas 1.5.3) | 80 | pandas 对照(d1-d80) | 以 pandas 为 oracle,覆盖 head/tail/sortBy/filter/dropDuplicates/merge/concat/nlargest/nsmallest/select/drop/slice/colSub/colDiv/colLt/fillna/dropna/ffill/astype/groupBy/idxmax/idxmin/duplicated/sample/isin/where/mask/cumsum/diff/pct_change/clip/quantile/rank/round/prod/pivot/explode/merge_asof/resample/统计/Window 等算子(完整清单以该文件 test_d* 函数为准) |
 | `SqlPostgresTest`(PostgreSQL 18) | 14 | 真实 PG | 全 dtype 往返 / 参数化 / 4 种写入模式 / 缺失值 / **VARCHAR 自适应** / **大文本不截断** / **PG 小写列名** / 万行 / SQL 注入防护 |
 | 其它既有测试 | ~157 | 单元 | 模块正常功能(dsl/export/io/num/sql/viz/facade 各子模块) |
-| **合计 jian-core** | **545**(见 [doc/api-counts.md](doc/api-counts.md)) | | 60+ 扩展 DataFrame 方法(idxmax/sample/isin/where/mask/pivot/explode/join/merge_asof/corr/cov/skew/kurt/cumsum/diff/quantile/rank/clip/interpolate/astype 8种/Resampler/DatetimeIndex/Frequency/MultiIndex N级 等) |
-| **合计 Java 全量(22 模块)** | **1159**(@Test 方法数;surefire 执行 1285) | 22 模块 | 实测 @Test 数,两口径以 @Test 方法数为准(见 doc/api-counts.md);另有 jqwik @Property 展开 + PG skip 14 |
-| **合计 jian-io-sql** | **45** | H2+SQLite+PG | 3 库真测(H2/SQLite 默认跑;PG `-Dtest.pg=true` 激活,含 SQL 注入防护) |
-| **合计 jian-export** | **33** | | 含缺失值显示(空 vs "NaN")验证 |
-| **合计 Python 端** | **117** | Hypothesis+pandas | 24(PBT 同行评议) + 73(pandas 对照 d1-d73) + 16(fuzz) + 4(robustness),`pytest tests-pbt -q` |
+| **合计 jian-core** | **571**(见 [doc/api-counts.md](doc/api-counts.md)) | | 60+ 扩展 DataFrame 方法(idxmax/sample/isin/where/mask/pivot/explode/join/merge_asof/corr/cov/skew/kurt/cumsum/diff/quantile/rank/clip/interpolate/astype 8种/Resampler/DatetimeIndex/Frequency/MultiIndex N级 等) |
+| **合计 Java 全量(22 模块)** | **1244**(@Test 方法数;含 jian-facade 真实场景集 46 个:S1~S16 第一轮 + S17~S46 第二轮抽象场景 30 类,断言源码随 jar 分发) | 22 模块 | 实测 @Test 数,两口径以 @Test 方法数为准(见 doc/api-counts.md);另有 jqwik @Property 展开 + PG skip 14 |
+| **合计 jian-io-sql** | **47** | H2+SQLite+PG | 3 库真测(H2/SQLite 默认跑;PG `-Dtest.pg=true` 激活,含 SQL 注入防护 + 中文标识符引号保真) |
+| **合计 jian-export** | **36** | | 含缺失值显示(空 vs "NaN")验证 |
+| **合计 Python 端** | **124** | Hypothesis+pandas | 24(PBT 同行评议) + 80(pandas 对照 d1-d80) + 16(fuzz) + 4(robustness),`pytest tests-pbt -q` |
 
 ### 变异测试(PITest)已落地——测"测试本身是否有效"
 

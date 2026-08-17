@@ -209,4 +209,28 @@ class SqlAdvancedTest {
             SqlEngines.reset();  // 恢复默认
         }
     }
+    // ┌─ What : SELECT 聚合列表跨行书写的回归守护(全局聚合分支的 DOTALL 探测)
+    // │  Why  : 真实 SQL 的 SELECT 列表常换行对齐;探测正则缺 DOTALL 时 Java "." 不匹配 \n,
+    // │         聚合语句被误判为非聚合 → 抛 "SELECT 聚合列不存在"(场景集 S39 实测踩中)
+    // │  When : 任何含多行 SELECT 聚合的调用
+    // │  How  : 同一聚合语句单行/多行两写,结果必须一致(多行版修复前直接抛 IAE)。
+    @Test
+    void 多行SELECT聚合列表() {
+        DataFrame df = DataFrame.of(Schema.of("x", DType.LONG, "y", DType.LONG),
+                new Object[][]{{1L, 2L}, {2L, 4L}, {3L, 6L}});
+        DataFrame oneLine = Dsl.sql("SELECT sum(x) AS sx, sum(y) AS sy FROM ${t}", df);
+        DataFrame multiLine = Dsl.sql("""
+                SELECT sum(x) AS sx,
+                       sum(y) AS sy FROM ${t}
+                """, df);
+        assertThat(multiLine.columnNames()).containsExactly("sx", "sy");
+        assertThat(multiLine.rowCount()).isEqualTo(1);
+        assertThat(((Number) multiLine.getColumn("sx").get(0)).longValue())
+                .isEqualTo(((Number) oneLine.getColumn("sx").get(0)).longValue())
+                .isEqualTo(6L);
+        assertThat(((Number) multiLine.getColumn("sy").get(0)).longValue())
+                .isEqualTo(((Number) oneLine.getColumn("sy").get(0)).longValue())
+                .isEqualTo(12L);
+    }
+
 }

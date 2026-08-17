@@ -90,11 +90,9 @@ public final class Sql {
      */
     public static DataFrame readTable(Connection conn, String table) throws SQLException {
         // SQL 注入防护:JDBC PreparedStatement 不支持表名占位符(只支持值占位符),
-        // 所以表名只能用「白名单正则」校验(见 assertSafeTableName)。
-        // 不主动加 quote:不同数据库对 quoted identifier 的大小写敏感性不同
-        // (H2/Oracle 带 " 后变大小写敏感,与无 quote 建表大写不一致),保留默认折叠行为更稳。
-        assertSafeTableName(table);
-        return readQuery(conn, "SELECT * FROM " + table);
+        // 表名按需以库引号符包裹(quoteTable:引号双写转义)—— 中文表名可用且严格保真,
+        // 简单 ASCII 表名原样放行(保留各库默认折叠行为,既有裸 SQL 用法不受影响)。
+        return readQuery(conn, "SELECT * FROM " + quoteTable(conn, table));
     }
 
     // ┌─ What : SQL 标识符白名单校验(表名/列名)
@@ -134,12 +132,61 @@ public final class Sql {
      * @throws IllegalArgumentException 列名非法(含注入风险字符)
      */
     private static void assertSafeColumnName(String col) {
-        if (col == null || !COLUMN_NAME_PATTERN.matcher(col).matches()) {
-            // 报错教学化 —— 因为中文等 Unicode 列名不加 quote 在多数数据库本就非法
-            // (需 quoted identifier,v2 功能),所以拒绝是安全正确行为;提示先 rename
-            throw new IllegalArgumentException("非法列名(只允许 [A-Za-z_][A-Za-z0-9_]*,排除 ; ' -- 空格等注入元字符): "
-                    + col + ";中文列名请先 df.renameColumns(Map.of(旧名, ascii名)) 改为 ASCII 再写入(quoted identifier 为 v2 规划)");
+        if (col == null || COLUMN_NAME_PATTERN.matcher(col).matches()) return;
+        throw new IllegalArgumentException("非法列名(只允许 [A-Za-z_][A-Za-z0-9_]*,排除 ; ' -- 空格等注入元字符): " + col);
+    }
+
+    // ┌─ What : 标识符按需以库引号符包裹(quoted identifier,SQL 标准)
+    // │  Why  : 加引号与不加引号的语义不同 —— 不加引号的 AA_a 会被数据库按默认规则折叠
+    // │         (H2/Oracle→全大写,PG→全小写);加引号的 "AA_a啊" 则严格按输入保留
+    // │         (大小写 + 中文原样建列)。因此采取「按需加引号」:
+    //           ① 简单 ASCII 标识符([A-Za-z_][A-Za-z0-9_]*)→ 不加引号,保留各库
+    //              默认折叠行为(既有用法/裸 SQL 引用零破坏);
+    //           ② 其它(中文/大小写混合外的特殊字符/空格等)→ 按库引号符包裹,
+    //              引号字符本身双写转义(SQL 标准转义),列名与库内字段名往返一致。
+    // │         (原先对中文列名一刀切抛 IAE 的行为是缺陷 —— 主流库都支持中文标识符。)
+    // │  Who  : readTable / createTable / insertBatch / dropTableIfExists 所有标识符拼接点。
+    // │  When : 标识符(表名/列名)进入 SQL 拼接前。
+    // │  Where: jian-io-sql/Sql.java
+    // │  How  : 关键变量变化:id(原始名)→ 白名单匹配 → 命中则原样放行(路径①);
+    // │         未命中 → 空值/控制字符校验 → q(库引号符,PG/H2/SQLite 为 ",MySQL 为 `)
+    //         → q + id 内出现的 q 双写转义 + q(路径②)。
+    // │         逻辑路线(四条路径):
+    //           路径 A(简单 ASCII 白名单)→ 原样放行(库按默认规则折叠);
+    //           路径 B(id 为 null/空 或含控制字符)→ IAE(引号也救不了不可见字符,多为攻击载荷);
+    //           路径 C(驱动不提供引号符,返回空白)→ 无法安全包裹 → IAE(提示该库不支持);
+    //           路径 D(其余)→ 引号包裹 + 双写转义,严格保真。
+    // │         数据走向:Java 入参 → quoteIdentifier/quoteTable → 拼进 SELECT/DROP/CREATE/INSERT。
+    private static String quoteIdentifier(Connection conn, String id) throws SQLException {
+        if (id == null || id.isEmpty())
+            throw new IllegalArgumentException("标识符不能为空");
+        if (COLUMN_NAME_PATTERN.matcher(id).matches())
+            return id;   // 路径 A:简单 ASCII → 不加引号,保留库默认折叠行为
+        for (int i = 0; i < id.length(); i++) {
+            char ch = id.charAt(i);
+            if (ch < 0x20 || ch == 0x7F)
+                throw new IllegalArgumentException("标识符含控制字符: " + id);   // 路径 B
         }
+        String q = null;
+        try {
+            q = conn.getMetaData().getIdentifierQuoteString();
+        } catch (SQLException ignore) { /* 元数据不可得时按无引号符处理 */ }
+        if (q == null || q.isBlank())
+            throw new IllegalArgumentException(                                   // 路径 C
+                    "标识符含非简单字符但该数据库驱动不提供引号符,无法安全写入: " + id);
+        return q + id.replace(q, q + q) + q;   // 路径 D:引号双写转义,严格保真
+    }
+
+    /** 表名包裹:简单表名(schema.table 点号整体匹配白名单)不加引号;否则逐段包裹后以点号连接。 */
+    private static String quoteTable(Connection conn, String table) throws SQLException {
+        if (table == null || table.isEmpty())
+            throw new IllegalArgumentException("表名不能为空");
+        if (TABLE_NAME_PATTERN.matcher(table).matches())
+            return table;   // 简单形态(含 schema.table)→ 原样放行
+        int dot = table.indexOf('.');
+        if (dot <= 0 || dot == table.length() - 1)
+            return quoteIdentifier(conn, table);   // 无点号 → 整体按单标识符处理
+        return quoteIdentifier(conn, table.substring(0, dot)) + "." + quoteTable(conn, table.substring(dot + 1));
     }
 
     /**
@@ -245,8 +292,10 @@ public final class Sql {
      * @param mode 写出模式
      */
     public static void write(DataFrame df, Connection conn, String table, Mode mode) throws SQLException {
-        // SQL 注入防护:DROP/CREATE/INSERT 的表名都来自本参数,先白名单校验
-        assertSafeTableName(table);
+        // 表名校验与包裹在各拼接点完成(quoteTable);此处仅做空值快校验。
+        // tableExists 走 DatabaseMetaData 原始名探测,不经拼接。
+        if (table == null || table.isEmpty())
+            throw new IllegalArgumentException("表名不能为空");
         try {
             // 表存在检查
             boolean exists = tableExists(conn, table);
@@ -427,9 +476,9 @@ public final class Sql {
         try (Statement st = conn.createStatement()) {
             if (isOracle) {
                 // Oracle 19c 及以下不支持 IF EXISTS → 探测后按需 DROP(23c 起支持,保守取兼容写法)
-                if (tableExists(conn, table)) st.execute("DROP TABLE " + table);
+                if (tableExists(conn, table)) st.execute("DROP TABLE " + quoteTable(conn, table));
             } else {
-                st.execute("DROP TABLE IF EXISTS " + table);
+                st.execute("DROP TABLE IF EXISTS " + quoteTable(conn, table));
             }
         }
     }
@@ -447,19 +496,18 @@ public final class Sql {
      *  阈值 4000 = Oracle VARCHAR2 上限(所有库的公共安全上限)。 */
     private static void createTable(DataFrame df, Connection conn, String table) throws SQLException {
         String productName = conn.getMetaData().getDatabaseProductName();
-        StringBuilder sb = new StringBuilder("CREATE TABLE ").append(table).append(" (");
+        StringBuilder sb = new StringBuilder("CREATE TABLE ").append(quoteTable(conn, table)).append(" (");
         List<String> cols = df.columnNames();
         List<jian.core.DType> dtypes = df.dtypes();
         for (int c = 0; c < cols.size(); c++) {
             if (c > 0) sb.append(", ");
-            // SQL 注入防护:列名直接拼入 CREATE TABLE,先白名单校验
-            assertSafeColumnName(cols.get(c));
+            // 列名按库引号符包裹(quoteIdentifier):中文/大小写混合列名原样建列,往返一致
             // STRING 列:扫实际数据取 maxLen,按长度选 VARCHAR(n) 或大文本
             int maxLen = -1;
             if (dtypes.get(c) == jian.core.DType.STRING) {
                 maxLen = scanMaxStringLength(df.getColumn(cols.get(c)));
             }
-            sb.append(cols.get(c)).append(' ').append(dtypeToSqlType(dtypes.get(c), productName, maxLen));
+            sb.append(quoteIdentifier(conn, cols.get(c))).append(' ').append(dtypeToSqlType(dtypes.get(c), productName, maxLen));
         }
         sb.append(')');
         try (Statement st = conn.createStatement()) {
@@ -587,10 +635,14 @@ public final class Sql {
     /** 批量 INSERT。 */
     private static void insertBatch(DataFrame df, Connection conn, String table, int batchSize) throws SQLException {
         List<String> cols = df.columnNames();
-        // SQL 注入防护:列名直接拼入 INSERT INTO 列清单,先白名单校验(表名已在 write 校验)
-        for (String col : cols) assertSafeColumnName(col);
-        StringBuilder sb = new StringBuilder("INSERT INTO ").append(table).append(" (");
-        sb.append(String.join(",", cols));
+        // 列名/表名按库引号符包裹(与 CREATE TABLE 同口径,中文/大小写混合列名往返一致)
+        StringBuilder sb = new StringBuilder("INSERT INTO ").append(quoteTable(conn, table)).append(" (");
+        StringBuilder quotedCols = new StringBuilder();
+        for (int c = 0; c < cols.size(); c++) {
+            if (c > 0) quotedCols.append(',');
+            quotedCols.append(quoteIdentifier(conn, cols.get(c)));
+        }
+        sb.append(quotedCols);
         sb.append(") VALUES (");
         for (int c = 0; c < cols.size(); c++) sb.append(c == 0 ? "?" : ",?");
         sb.append(')');

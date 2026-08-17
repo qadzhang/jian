@@ -4,7 +4,7 @@
 - **library**: jian
 - **entryClass**: jian.Jian
 - **deps**: jian-core + 全部 io 子模块(csv/excel/html/json/parquet/orc/pickle/xml/latex/sql/clipboard)+ jian-export;带入全部传递依赖
-- **tests**: 63
+- **tests**: 93
 
 ## 摘要
 jian 顶层门面,聚合全部 read*/to*/write* 入口;用户 `import jian.Jian` 后单点访问,无需记各 io 类名(对齐 pandas 顶层 pd.*)。
@@ -27,8 +27,10 @@ jian 顶层门面,聚合全部 read*/to*/write* 入口;用户 `import jian.Jian`
 
 ## 快速上手
 
-> **15 个真实场景速查**(销售汇总/对账/清洗/重采样/RFM/AB 测试/透视/去重/JSON 拍平/SQL 直查/merge_asof...):
-> 见 jar 内 `META-INF/ai/scenarios.md`,JUnit 实现在 `src/test/java/jian/scenario/`。
+> **46 个真实场景速查**(第一轮 S1~S16:销售汇总/对账/清洗/重采样/RFM/AB 测试/透视/去重/JSON 拍平/SQL 直查/merge_asof...;
+> 第二轮 S17~S46:抽象口径 30 类——表格⇄数据库导入导出/多 sheet 报表/三方对账/质量画像/脏数据清洗/
+> 访问日志 TopN/性能分位对比/SLA 月报/降采样落库/z-score 异常/滚动窗口/留存漏斗/依赖漏洞审计等):
+> 见 jar 内 `META-INF/ai/scenarios.md`,JUnit 实现在 `src/test/java/jian/scenario/`(随 jar 分发完整断言源码)。
 ```java
 import jian.Jian;
 import jian.core.DataFrame;

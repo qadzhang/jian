@@ -159,52 +159,56 @@ class SqlTest {
     }
 
     /**
-     * SQL 注入防护:readTable 的表名只接受白名单
-     * [A-Za-z_][A-Za-z0-9_.]*,所有注入 payload 必须抛 IAE,不能进 SQL。
-     * 覆盖经典 OWASP payload:DROP TABLE 注入、引号注入、分号注入、union 注入、注释注入。
+     * SQL 注入防护(引号转义语义):readTable 对注入式表名按库引号符包裹 + 双写转义,
+     * 整串成为字面量标识符 → 引号内的 ; ' UNION -- 均无语法效力 → 库报"表不存在"(SQLException),
+     * 注入被挡在标识符层。控制字符/null 表名仍硬拒绝(IAE)。
      */
     @Test
-    void readTable_非法表名抛IAE挡住SQL注入() throws Exception {
+    void readTable_注入式表名被引号转义_查无此表() throws Exception {
         try (Connection conn = h2()) {
-            // 经典注入:; DROP TABLE
+            Sql.write(DataFrame.of(Schema.of("id", DType.INT), new Object[][]{{1}}),
+                    conn, "users", Sql.Mode.CREATE_OR_REPLACE);
+            // 经典注入:; DROP TABLE → 被引号包裹成一张字面量怪名表 → 查无此表
             assertThatThrownBy(() -> Sql.readTable(conn, "users; DROP TABLE users; --"))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("非法表名");
-            // 引号注入
+                    .isInstanceOf(java.sql.SQLException.class);
+            // 引号注入 / union 注入 / 注释注入:同口径,均为字面量怪名表 → 查无此表
             assertThatThrownBy(() -> Sql.readTable(conn, "users' OR '1'='1"))
-                    .isInstanceOf(IllegalArgumentException.class);
-            // union 注入
+                    .isInstanceOf(java.sql.SQLException.class);
             assertThatThrownBy(() -> Sql.readTable(conn, "users UNION SELECT password FROM secrets"))
-                    .isInstanceOf(IllegalArgumentException.class);
-            // 注释注入
+                    .isInstanceOf(java.sql.SQLException.class);
             assertThatThrownBy(() -> Sql.readTable(conn, "users--"))
-                    .isInstanceOf(IllegalArgumentException.class);
-            // null 表名
+                    .isInstanceOf(java.sql.SQLException.class);
+            // 原表安然无恙(注入没有产生任何副作用)
+            assertThat(Sql.readTable(conn, "users").rowCount()).isEqualTo(1);
+            // null 表名 / 控制字符表名仍硬拒绝(IAE)
             assertThatThrownBy(() -> Sql.readTable(conn, null))
                     .isInstanceOf(IllegalArgumentException.class);
-            // 数字开头表名
-            assertThatThrownBy(() -> Sql.readTable(conn, "1users"))
-                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> Sql.readTable(conn, "bad\tname"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("控制字符");
         }
     }
 
     /**
-     * write 的 DROP/CREATE/INSERT 表名也必须过白名单 —— 因为只校验 readTable 的表名时,
-     * write 仍可直接注入 "x; DROP TABLE secret; --",所以 write 全路径统一校验。
+     * write 的 DROP/CREATE/INSERT 表名同样按库引号符包裹 + 双写转义:
+     * "x; DROP TABLE secret; --" 成为一张字面量怪名表(不产生 DROP 语句),可写可读;
+     * 控制字符表名仍硬拒绝。三种写入模式(CREATE_OR_REPLACE/OVERWRITE/APPEND)同口径。
      */
     @Test
-    void write_非法表名抛IAE挡住SQL注入() throws Exception {
+    void write_注入式表名被引号转义_控制字符仍拒() throws Exception {
         try (Connection conn = h2()) {
             DataFrame df = DataFrame.of(Schema.of("id", DType.INT), new Object[][]{{1}});
             String evil = "x; DROP TABLE secret; --";
-            assertThatThrownBy(() -> Sql.write(df, conn, evil, Sql.Mode.CREATE_OR_REPLACE))
+            Sql.write(df, conn, evil, Sql.Mode.CREATE_OR_REPLACE);
+            assertThat(Sql.readTable(conn, evil).rowCount()).isEqualTo(1);   // 怪名表字面量往返
+            // OVERWRITE(DROP 路径)与 APPEND(INSERT 路径)同口径:字面量表可覆盖/追加
+            Sql.write(df, conn, evil, Sql.Mode.OVERWRITE);
+            Sql.write(df, conn, evil, Sql.Mode.APPEND);
+            assertThat(Sql.readTable(conn, evil).rowCount()).isEqualTo(2);
+            // 控制字符表名硬拒绝(引号也救不了不可见字符)
+            assertThatThrownBy(() -> Sql.write(df, conn, "bad\tname", Sql.Mode.CREATE_OR_REPLACE))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("非法表名");
-            // 所有模式统一拦截(OVERWRITE 走 DROP 路径,APPEND 走 INSERT 路径)
-            assertThatThrownBy(() -> Sql.write(df, conn, evil, Sql.Mode.OVERWRITE))
-                    .isInstanceOf(IllegalArgumentException.class);
-            assertThatThrownBy(() -> Sql.write(df, conn, evil, Sql.Mode.APPEND))
-                    .isInstanceOf(IllegalArgumentException.class);
+                    .hasMessageContaining("控制字符");
             // 合法表名放行
             Sql.write(df, conn, "safe_tbl", Sql.Mode.CREATE_OR_REPLACE);
             assertThat(Sql.readTable(conn, "safe_tbl").rowCount()).isEqualTo(1);
@@ -212,17 +216,24 @@ class SqlTest {
     }
 
     /**
-     * CREATE TABLE / INSERT 的列名也必须过白名单 —— 因为列名直接拼入 SQL 时,
-     * "id); DROP TABLE users; --" 形式可注入,所以列名同样走标识符白名单校验。
+     * CREATE TABLE / INSERT 的列名同样按库引号符包裹 + 双写转义:
+     * "id); DROP TABLE secret; --" 成为字面量列名(逐字保真往返),不产生任何注入语句;
+     * 控制字符列名仍硬拒绝。
      */
     @Test
-    void write_非法列名抛IAE挡住SQL注入() throws Exception {
+    void write_注入式列名被引号转义_控制字符仍拒() throws Exception {
         try (Connection conn = h2()) {
             String evilCol = "id); DROP TABLE secret; --";
             DataFrame df = DataFrame.of(Schema.of(evilCol, DType.INT), new Object[][]{{1}});
-            assertThatThrownBy(() -> Sql.write(df, conn, "t1", Sql.Mode.CREATE_OR_REPLACE))
+            Sql.write(df, conn, "t_evil_col", Sql.Mode.CREATE_OR_REPLACE);
+            DataFrame back = Sql.readTable(conn, "t_evil_col");
+            assertThat(back.columnNames()).containsExactly(evilCol);   // 恶意名逐字保真
+            assertThat(((Number) back.getColumn(evilCol).get(0)).intValue()).isEqualTo(1);
+            // 控制字符列名硬拒绝
+            DataFrame ctl = DataFrame.of(Schema.of("a\tb", DType.INT), new Object[][]{{1}});
+            assertThatThrownBy(() -> Sql.write(ctl, conn, "t_ctl", Sql.Mode.CREATE_OR_REPLACE))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("非法列名");
+                    .hasMessageContaining("控制字符");
             // 合法列名正常往返
             DataFrame ok = DataFrame.of(Schema.of("id", DType.INT, "name", DType.STRING),
                     new Object[][]{{1, "a"}});
@@ -246,15 +257,18 @@ class SqlTest {
             st.execute("CREATE SCHEMA IF NOT EXISTS schema");
             st.execute("CREATE TABLE schema.users(ID BIGINT)");
             st.execute("INSERT INTO schema.users VALUES (1)");
-            DataFrame r = Sql.readTable(conn, "schema.users");   // 点号表名经生产白名单放行
+            DataFrame r = Sql.readTable(conn, "schema.users");   // 点号表名(简单 ASCII)不加引号放行
             assertThat(r.rowCount()).isEqualTo(1);
             assertThat(r.getColumn("ID").get(0)).isEqualTo(1L);
-            // 拒绝路径:生产 Sql.readTable 的白名单(非本地副本)必须拦下注入式/非法表名
+            // 转义路径:注入式/带空格表名不再抛 IAE,而是被引号包裹成字面量 → 库报"表不存在"
             assertThatThrownBy(() -> Sql.readTable(conn, "users; DROP TABLE schema.users"))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("非法表名");
+                    .isInstanceOf(java.sql.SQLException.class);
             assertThatThrownBy(() -> Sql.readTable(conn, "bad name"))
-                    .isInstanceOf(IllegalArgumentException.class);
+                    .isInstanceOf(java.sql.SQLException.class);
+            // 控制字符表名仍硬拒绝(IAE)
+            assertThatThrownBy(() -> Sql.readTable(conn, "bad\tname"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("控制字符");
         }
     }
 }

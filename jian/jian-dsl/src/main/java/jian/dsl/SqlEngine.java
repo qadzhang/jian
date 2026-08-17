@@ -208,8 +208,11 @@ final class SqlEngine {
             // SELECT 列表统一归一化(剥反引号标识符 + 裸 = / <> 归一,
             // CASE 展开的三元 cond 常含 SQL 等号;反引号列名 `类别` 不归一化则无法解析)
             String selectPart = SqlPreprocessor.normalizeSqlExpr(stripDistinct(extractSelect(s)));
-            // 检测 SELECT 是否含聚合函数(如 mean(x), sum(y) 等,即使无 GROUP BY 也聚合)
-            if (selectPart.toLowerCase().matches(".*\\b(sum|avg|mean|count|min|max|median|std|var|first|last|nunique)\\s*\\(.*")) {
+            // 检测 SELECT 是否含聚合函数(如 mean(x), sum(y) 等,即使无 GROUP BY 也聚合)。
+            // 必须 DOTALL:真实 SQL 的 SELECT 列表常跨行,Java 正则默认 "." 不匹配 \n,
+            // 缺 DOTALL 时跨行聚合语句检测失败 → 误走非聚合分支 → "SELECT 聚合列不存在"
+            // (场景集 S39 多行 SELECT 实测踩中;单行语句不受影响)
+            if (AGG_DETECT_RE.matcher(selectPart.toLowerCase()).matches()) {
                 spec = parseSelectWithAgg(selectPart);
                 // 因为无 GROUP BY 的聚合查询里,非聚合列(如 SELECT cat, sum(val))被静默丢弃
                 // 会让用户拿到少列结果而无任何提示(静默丢列 = 无声数据丢失;SQLite 同场景报
@@ -320,6 +323,16 @@ final class SqlEngine {
     /** 聚合项正则(预编译;UCC:聚合参数支持中文)。 */
     private static final Pattern AGG_ITEM_RE =
             Pattern.compile("(?i)(\\w+)\\((\\*|[\\w.]+)\\)", Pattern.UNICODE_CHARACTER_CLASS);
+
+    /**
+     * SELECT 是否含聚合函数的整体探测(无 GROUP BY 的全局聚合走哪条分支由它决定)。
+     * @param DOTALL 必开:SELECT 列表跨行时 "\n" 会挡住默认 "." 的回溯路径,
+     *               导致检测失败误走非聚合分支(跨行聚合 SQL 实测踩中,回归测试
+     *               见 jian-dsl 的 SqlAdvancedTest.多行SELECT聚合列表)
+     */
+    private static final Pattern AGG_DETECT_RE = Pattern.compile(
+            ".*\\b(sum|avg|mean|count|min|max|median|std|var|first|last|nunique)\\s*\\(.*",
+            Pattern.DOTALL);
 
     /** 已知聚合函数名(selectColumns 分类与 executeSelect 聚合检测同口径;防普通函数误入聚合分支)。 */
     private static final java.util.Set<String> AGG_FNS = java.util.Set.of(

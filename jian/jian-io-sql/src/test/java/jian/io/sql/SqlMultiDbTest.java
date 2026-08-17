@@ -163,4 +163,19 @@ class SqlMultiDbTest {
             assertThat(r.getStringColumn("article").get(1)).isEqualTo("short");
         }
     }
+    // SQLite 中文标识符:按需以库引号符(")包裹,中文列名/表名原样建表、往返保真
+    // (与 H2 同机制;MySQL 方言库的引号符为 `,由驱动 getIdentifierQuoteString 决定)
+    @Test
+    void sqlite中文列名表名往返保真() throws Exception {
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            DataFrame d = DataFrame.of(Schema.of("门店", DType.STRING, "销售额", DType.LONG, "AA_a啊", DType.STRING),
+                    new Object[][]{{"北京店", 300L, "x"}});
+            Sql.write(d, conn, "销售明细", Sql.Mode.CREATE_OR_REPLACE);
+            DataFrame back = Sql.readTable(conn, "销售明细");
+            assertThat(back.columnNames()).containsExactly("门店", "销售额", "AA_a啊");   // 逐字保真
+            assertThat(((Number) back.getColumn("销售额").get(0)).longValue()).isEqualTo(300L);
+            assertThat(back.getColumn("门店").get(0)).isEqualTo("北京店");
+        }
+    }
+
 }

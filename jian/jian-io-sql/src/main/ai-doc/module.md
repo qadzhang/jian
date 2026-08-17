@@ -4,7 +4,7 @@
 - **library**: jian
 - **entryClass**: jian.io.sql.Sql
 - **deps**: jian-core;纯 JDK(仅用 JDBC API;数据库驱动由用户按需引入)
-- **tests**: 45
+- **tests**: 47
 
 ## 摘要
 JDBC 通用读写,对齐 pandas.read_sql / to_sql;一套代码适配 PostgreSQL / MySQL / Doris / SQLite / H2 / Oracle / Access 七库,方言自适应类型映射。
@@ -20,7 +20,7 @@ JDBC 通用读写,对齐 pandas.read_sql / to_sql;一套代码适配 PostgreSQL 
 
 ### 行为细节
 - write 异常自动 rollback(不悬挂半程批次);schema.table 两参探测;readQuery fetchSize=1000 hint
-- APPEND 失败附 CREATE_OR_REPLACE 指引;中文列名报错指向 df.renameColumns
+- APPEND 失败附 CREATE_OR_REPLACE 指引;标识符按需加引号(简单 ASCII 不加引号走库默认折叠,中文/特殊字符以库引号符包裹 + 双写转义,严格保真往返 —— "AA_a啊" 原样建列;注入元字符被引号化为字面量,控制字符仍硬拒绝)
 
 ### 行为细节(续 1)
 - tableExists 精确匹配(表名含 `_` 不被当 SQL 通配符误判)

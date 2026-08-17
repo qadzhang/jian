@@ -23,12 +23,12 @@
 
 | 维度 | 数量 | 统计命令 |
 |---|---|---|
-| Java `@Test`(全仓) | **1211** | `find jian jian-num jian-sql -path "*/src/test/java/*" -name "*.java" -exec grep -hE "^\s*@Test\b" {} + \| wc -l`(surefire 执行数随 @RepeatedTest/参数化多轮与 jqwik @Property 展开 —— 两个口径,以 @Test 方法数为准) |
+| Java `@Test`(全仓) | **1244** | `find jian jian-num jian-sql -path "*/src/test/java/*" -name "*.java" -exec grep -hE "^\s*@Test\b" {} + \| wc -l`(surefire 执行数随 @RepeatedTest/参数化多轮与 jqwik @Property 展开 —— 两个口径,以 @Test 方法数为准) |
 | ├ jian-core | **571** | `find jian/jian-core/src/test -name "*.java" -exec grep -hE "^\s*@Test\b" {} + \| wc -l`(含蜕变/差分/PBT/边界/回归与 AI 复审回归 AuditRegressionTest 等专项套件) |
-| ├ jian-dsl | **155** | 同上,换模块路径(含 EngineConformanceTest 19 双引擎矩阵;+3 为 PrattLiteralOverflowTest) |
-| ├ jian-facade | **63** | 同上(含 scenario 真实场景套件) |
+| ├ jian-dsl | **156** | 同上,换模块路径(含 EngineConformanceTest 19 双引擎矩阵;+3 PrattLiteralOverflowTest;+1 多行SELECT聚合回归) |
+| ├ jian-facade | **93** | 同上(含 scenario 真实场景套件:S1~S16 第一轮 + S17~S46 第二轮抽象场景 30 类;+30 为场景扩充) |
 | ├ jian-io-csv | **48** | 同上(含 CsvAdversarialFuzzTest 对抗模糊) |
-| ├ jian-io-sql | **45** | 同上 |
+| ├ jian-io-sql | **47** | 同上(+2:SQLite/PG 中文标识符保真) |
 | ├ jian-export | **36** | 同上 |
 | ├ jian-io-excel | **32** | 同上 |
 | ├ jian-io-json | **28** | 同上 |
@@ -48,7 +48,7 @@
 | └ jian-sql-expr | **9** | 同上 |
 | Python 测试 | **124** | `pytest tests-pbt -q`(**80 pandas 对照 d1~d80** + 24 Hypothesis + 16 fuzz + 4 robustness;+7 为 AI 复审对照 d74~d80) |
 
-> surefire 执行数(`@RepeatedTest`/参数化/jqwik `@Property` 展开后)与源码 @Test 方法数 **1211** 是两个口径,**以源码 @Test 方法数为准**。
+> surefire 执行数(`@RepeatedTest`/参数化/jqwik `@Property` 展开后)与源码 @Test 方法数 **1244** 是两个口径,**以源码 @Test 方法数为准**。
 
 ### API 方法数(jian-core)
 

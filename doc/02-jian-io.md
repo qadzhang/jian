@@ -526,6 +526,13 @@ CSV/JSON 读回的值统一为字符串,经 `Schema.infer` 推断:
 - **JSON**:UTF-8 BOM 读入剥离(与 Csv 统一);SPLIT 长行(>列数)对齐 pandas 抛 IAE(短行缺键填 null 不变);INDEX orient 数字串键按数值排序("0","1","2","10",文本键保持字典序);`normalize(json, null)` 不再 NPE;新增 `normalize(json, String... pathSegments)` 变参重载(key 可含 `.`);超大整数读入归 STRING;OBJECT 列 BigInteger 写出保精度(不再降 double)。
 - **Clipboard**:writeText 异常路径 destroyForcibly + stdout DISCARD(fd/进程回收);readText 失败退出码一次性提示;TSV 解析不再 trim(对齐 Csv,pandas read_clipboard 同);空表头字段兜底 `_0`/`_1`;`resetMemoryFallback()` 公开(命令恢复后可清降级缓存)。
 - **SQL**:write 异常路径 rollback(autoCommit=false 不再悬挂半程批次,H2 实测);tableExists 拆 `schema.table` 两参探测(APPEND 到 schema 表不再误判);readQuery 加 fetchSize=1000 hint(全内存模型边界不变);APPEND 失败附 CREATE_OR_REPLACE 重建指引;isTableMissing 补 MySQL 1146;中文列名报错指向 `df.renameColumns` 真实 API。
+- **标识符按需加引号(2026-08-17,修复"中文列名一刀切拒绝"缺陷)**:`Sql.write/readTable` 对简单 ASCII 标识符
+  ([A-Za-z_][A-Za-z0-9_]*,表名含 schema.table 点号)不加引号(走各库默认大小写折叠,既有裸 SQL 用法零破坏);
+  其余(中文/大小写外的特殊字符/空格)以 `DatabaseMetaData.getIdentifierQuoteString()` 的库引号符包裹
+  (PG/H2/SQLite 为 `"`,MySQL 为 `` ` ``),引号字符双写转义(SQL 标准)→ **严格按输入保真**
+  (`AA_a啊` 原样建列,大小写 + 中文往返一致)。注入语义同步升级:白名单拒绝 → 引号转义
+  (`t; DROP TABLE t--` 成为一张字面量怪名表,不产生任何 DROP 语句);控制字符/null 仍硬拒绝(IAE)。
+  真测:H2 + SQLite 默认套件(含中文表名/列名/`AA_a啊` 保真往返、注入式表名列名转义),PG 用例入 opt-in 套件。
 
 
 ---

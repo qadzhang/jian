@@ -358,4 +358,18 @@ class SqlPostgresTest {
         assertThat(((String) r.getColumn("article").get(0)).length()).isEqualTo(8000);
         assertThat(r.getStringColumn("article").get(1)).isEqualTo("short article");
     }
+    /**
+     * 中文/特殊标识符按库引号符(")包裹后严格保真(PG 引号内双写转义同标准)。
+     * ASCII 简单标识符仍不加引号 → 折叠小写(见上一测试);两口径并存。
+     */
+    @Test
+    void PG中文列名表名_引号保真往返() throws Exception {
+        DataFrame d = DataFrame.of(Schema.of("门店", DType.STRING, "AA_a啊", DType.LONG),
+                new Object[][]{{"北京店", 300L}});
+        Sql.write(d, conn, "销售明细", Sql.Mode.CREATE_OR_REPLACE);
+        DataFrame back = Sql.readTable(conn, "销售明细");
+        assertThat(back.columnNames()).containsExactly("门店", "AA_a啊");
+        assertThat(((Number) back.getColumn("AA_a啊").get(0)).longValue()).isEqualTo(300L);
+    }
+
 }

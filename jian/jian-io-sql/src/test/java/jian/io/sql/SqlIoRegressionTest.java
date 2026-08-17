@@ -96,12 +96,17 @@ class SqlIoRegressionTest {
     // ======================== 中文列名:报错指向真实 API ========================
 
     @Test
-    void 中文列名报错指向renameColumns真实API() {
-        DataFrame d = df("中文", new Object[]{1});
+    void 中文列名经引号包裹真实往返() {
+        // 修复回归:原先对中文列名一刀切抛 IAE(提示 renameColumns 改 ASCII)是缺陷 ——
+        // 主流库都支持中文标识符;现按需以库引号符包裹,中文/大小写混合列名原样建列、往返一致
+        DataFrame d = DataFrame.of(Schema.of("中文列", DType.LONG, "AA_a啊", DType.STRING),
+                new Object[][]{{1L, "v"}});
         try (Connection conn = h2()) {
-            assertThatThrownBy(() -> Sql.write(d, conn, "t_cn", Sql.Mode.CREATE_OR_REPLACE))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("renameColumns");   // 文案指向真实存在的 API
+            Sql.write(d, conn, "中文表", Sql.Mode.CREATE_OR_REPLACE);
+            DataFrame back = Sql.readTable(conn, "中文表");
+            assertThat(back.columnNames()).containsExactly("中文列", "AA_a啊");   // 大小写+中文逐字保真
+            assertThat(((Number) back.getColumn("中文列").get(0)).longValue()).isEqualTo(1L);
+            assertThat(back.getColumn("AA_a啊").get(0)).isEqualTo("v");
         } catch (SQLException e) {
             throw new RuntimeException(e);
         }
