@@ -433,6 +433,12 @@ public final class DataFrameMissing {
         return df.rebuild(newCols, df.index());
     }
 
+    /** 数值列(LONG/INT)填充值非 Number 的教学型报错(对齐 DataFrameConvert/Effective Java Item 75)。 */
+    private static IllegalArgumentException notNumberFill(String name, int i, Object v, String dtype) {
+        return new IllegalArgumentException(dtype + " 列填充失败:列 '" + name + "' 第 " + i
+                + " 行值 '" + v + "' 不是 " + dtype + " 可接受的类型(fill 值须为 Number)");
+    }
+
     /** 按 dtype 把 Object[] 转回具体 Column(与 ffillColumn 同模式)。 */
     private static Column toColumnByDtype(String name, Object[] arr, DType dtype) {
         switch (dtype) {
@@ -441,7 +447,17 @@ public final class DataFrameMissing {
                 for (int i = 0; i < arr.length; i++) {
                     if (arr[i] == null) d[i] = Double.NaN;
                     else if (arr[i] instanceof Number num) d[i] = num.doubleValue();
-                    else d[i] = Double.parseDouble(arr[i].toString());
+                    else {
+                        // 非数值对象(如 where/mask 填充的字符串):可解析数值串则解析,
+                        // 解析失败包教学型 IAE(带列/行/值,对齐 DataFrameConvert 口径与
+                        // Effective Java Item 75"失败信息要完整" —— 裸 NFE 无上下文)
+                        try {
+                            d[i] = Double.parseDouble(arr[i].toString());
+                        } catch (NumberFormatException e) {
+                            throw new IllegalArgumentException("DOUBLE 列填充失败:列 '" + name + "' 第 " + i
+                                    + " 行值 '" + arr[i] + "' 不是合法数值(fill 值须为 Number 或可解析的数值串)");
+                        }
+                    }
                 }
                 return new DoubleColumn(name, d);
             }
@@ -450,7 +466,8 @@ public final class DataFrameMissing {
                 boolean[] mask = new boolean[arr.length];
                 for (int i = 0; i < arr.length; i++) {
                     if (arr[i] == null) mask[i] = true;
-                    else l[i] = ((Number) arr[i]).longValue();
+                    else if (arr[i] instanceof Number num) l[i] = num.longValue();
+                    else throw notNumberFill(name, i, arr[i], "LONG");
                 }
                 return new LongColumn(name, l, mask);
             }
@@ -459,7 +476,8 @@ public final class DataFrameMissing {
                 boolean[] mask = new boolean[arr.length];
                 for (int i = 0; i < arr.length; i++) {
                     if (arr[i] == null) mask[i] = true;
-                    else v[i] = ((Number) arr[i]).intValue();
+                    else if (arr[i] instanceof Number num) v[i] = num.intValue();
+                    else throw notNumberFill(name, i, arr[i], "INT");
                 }
                 return new IntColumn(name, v, mask);
             }
@@ -473,7 +491,9 @@ public final class DataFrameMissing {
                 boolean[] mask = new boolean[arr.length];
                 for (int i = 0; i < arr.length; i++) {
                     if (arr[i] == null) mask[i] = true;
-                    else b[i] = (Boolean) arr[i];
+                    else if (arr[i] instanceof Boolean bv) b[i] = bv;
+                    else throw new IllegalArgumentException("BOOL 列填充失败:列 '" + name + "' 第 " + i
+                            + " 行值 '" + arr[i] + "' 不是 Boolean(fill 值须为 Boolean;astype 的字符串口径不适用于填充)");
                 }
                 return new BoolColumn(name, b, mask);
             }

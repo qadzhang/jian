@@ -22,6 +22,15 @@ class User {
     public User(Long id, String name, Integer age) { this.id = id; this.name = name; this.age = age; }
 }
 
+@Table("用户")
+class 中文用户 {
+    @Id @Column("编号") public Long 编号;
+    @Column("姓名") public String 姓名;
+    @Column("余额") public Long 余额;
+    public 中文用户() {}
+    public 中文用户(Long id, String name, Long bal) { this.编号 = id; this.姓名 = name; this.余额 = bal; }
+}
+
 class SessionTest {
 
     private Engine h2Engine() throws Exception {
@@ -104,21 +113,50 @@ class SessionTest {
     }
 
     @Test
-    void 恶意Table注解值抛IAE挡住SQL注入() {
-        // @Table/@Column 注解值直接拼入 SQL(标识符无参数化形式),必须过白名单
+    void 注入式标识符构造期放行_控制字符构造期硬拒() {
+        // 新语义(与 jian-io-sql 同防线):注入元字符表名/列名构造期不再白名单硬拒 ——
+        // 真正防线在 SQL 拼接期的 quoteTable/quoteIdentifier 按需引号包裹+双写转义,
+        // 注入串整体成为字面量标识符(引号内 ; -- 无语法效力);控制字符构造期即拒。
         @Table("x; DROP TABLE users; --")
-        class EvilTable {}
-        assertThatThrownBy(() -> new Session<>(null, (Class<EvilTable>) EvilTable.class))
+        class EvilTable { @Id @Column("id") public Long id; }
+        org.assertj.core.api.Assertions.assertThatCode(() -> new Session<>(null, (Class<EvilTable>) EvilTable.class))
+                .as("注入式表名构造期放行(防线后移到引号化)").doesNotThrowAnyException();
+
+        @Table("bad\tname")
+        class CtlTable { @Id @Column("id") public Long id; }
+        assertThatThrownBy(() -> new Session<>(null, (Class<CtlTable>) CtlTable.class))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("非法表名");
+                .hasMessageContaining("控制字符");
 
         @Table("ok_tbl")
-        class EvilCol {
-            @Id @Column("id); DROP TABLE users; --") public Long id;
-        }
-        assertThatThrownBy(() -> new Session<>(null, (Class<EvilCol>) EvilCol.class))
+        class CtlCol { @Id @Column("a\tb") public Long id; }
+        assertThatThrownBy(() -> new Session<>(null, (Class<CtlCol>) CtlCol.class))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("非法列名");
+                .hasMessageContaining("控制字符");
+    }
+
+    // ======================== 中文标识符(引号保真)========================
+
+    @Test
+    void 中文表名列名引号保真CRUD全链() throws Exception {
+        Engine engine = Engine.create(DbType.H2, EngineConfig.builder()
+                .path("mem:orm_cn_" + System.nanoTime() + ";DB_CLOSE_DELAY=-1")
+                .user("sa").password("").build());
+        try (engine; Connection conn = engine.connect(); Statement st = conn.createStatement()) {
+            st.execute("CREATE TABLE \"用户\" (\"编号\" BIGINT PRIMARY KEY, \"姓名\" VARCHAR(100), \"余额\" BIGINT)");
+            Session<中文用户> s = new Session<>(engine, 中文用户.class);
+            s.insert(new 中文用户(1L, "张三", 100L));
+            s.insert(new 中文用户(2L, "李四", 200L));
+            中文用户 u = s.findById(1L);
+            assertThat(u.姓名).isEqualTo("张三");
+            assertThat(u.余额).isEqualTo(100L);
+            assertThat(s.list()).hasSize(2);
+            u.余额 = 300L;
+            s.update(u);
+            assertThat(s.findById(1L).余额).isEqualTo(300L);
+            assertThat(s.delete(u)).isEqualTo(1);
+            assertThat(s.list()).hasSize(1);
+        }
     }
 
     // ======================== 类层级字段 / String 主键回填 ========================

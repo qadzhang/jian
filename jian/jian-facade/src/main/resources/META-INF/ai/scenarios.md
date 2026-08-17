@@ -132,7 +132,7 @@ DataFrame 预警 = Jian.readExcel("库存.xlsx").query("现库存 < 安全库存
 
 **用户可控值一律参数化,不要拼进表达式/SQL**:`Jian.query(df, "类别 == ${c}", Params.of("c", userInput))`
 (引擎对占位值做字面量化 + `''` 翻倍转义);测试里的 `WHERE 类别 = '食品'` 拼接均为自控常量示范。
-其它安全行为(XSS 转义 / SQL 标识符白名单 / readUrl 仅 http/https / ThreadLocal 容器警示)
+其它安全行为(XSS 转义 / SQL 标识符按需引号包裹+双写转义 / readUrl 仅 http/https / ThreadLocal 容器警示)
 见 `META-INF/ai/scenarios-src/jian/scenario/SecurityAuditTest.java`。
 
 ## 能力域覆盖

@@ -367,4 +367,26 @@ public class AuditRegressionTest {
         DataFrame r = df.astype("v", DType.INT);
         assertThat(r.getColumn("v").get(0)).isEqualTo(705032704);
     }
+    // 外部 AI 复审:where/mask 填充值类型不符时裸 NFE/CCE → 教学型 IAE(带列/行/值)
+    @Test
+    void whereMask填充值类型不符报教学型IAE() {
+        DataFrame d = DataFrame.of(Schema.of("v", DType.DOUBLE), new Object[][]{{1.0}, {2.0}});
+        assertThatThrownBy(() -> d.where(new boolean[]{true, false}, "abc"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("列 'v'").hasMessageContaining("DOUBLE").hasMessageContaining("abc");
+        DataFrame n = DataFrame.of(Schema.of("n", DType.LONG), new Object[][]{{1L}, {2L}});
+        assertThatThrownBy(() -> n.where(new boolean[]{true, false}, "abc"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("列 'n'").hasMessageContaining("LONG");
+        DataFrame b = DataFrame.of(Schema.of("f", DType.BOOL), new Object[][]{{true}, {false}});
+        assertThatThrownBy(() -> b.mask(new boolean[]{true, false}, "yes"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("BOOL");
+        // 合法数值串填充仍可用(既有行为不回归;where 语义:cond 真保留、假填 other)
+        java.lang.Object[] filled = DataFrame.of(Schema.of("v", DType.DOUBLE), new Object[][]{{1.0}, {2.0}})
+                .where(new boolean[]{true, false}, "9.5").getColumn("v").toObjectArray();
+        assertThat(((Number) filled[0]).doubleValue()).isEqualTo(1.0);
+        assertThat(((Number) filled[1]).doubleValue()).isEqualTo(9.5);
+    }
+
 }

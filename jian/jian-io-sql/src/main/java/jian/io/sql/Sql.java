@@ -81,9 +81,9 @@ public final class Sql {
     /**
      * 读整张表(对齐 pandas.read_sql_table)。
      * @param conn  java.sql.Connection,非 null
-     * @param table String 表名,非 null。**只允许 `[A-Za-z_][A-Za-z0-9_.]*`
-     *             白名单字符**(防 SQL 注入,见 AGENTS.md §3.7「安全规范」);schema.table
-     *             的点号允许;含其它字符(如分号、空格、引号)直接抛 IAE。
+     * @param table String 表名,非 null。标识符按 quoteTable 按需引号化(防 SQL 注入,见 AGENTS.md §3.7):
+     *             简单 ASCII([A-Za-z_][A-Za-z0-9_.]*)原样放行(保留各库默认折叠);含其它字符
+     *             (中文/分号/空格/引号等)按库引号符包裹 + 双写转义保真,不拒名;null/空/控制字符抛 IAE。
      * @return DataFrame 整表数据
      * @throws SQLException SQL 异常
      * @throws IllegalArgumentException 表名非法(含注入风险字符)
@@ -95,46 +95,19 @@ public final class Sql {
         return readQuery(conn, "SELECT * FROM " + quoteTable(conn, table));
     }
 
-    // ┌─ What : SQL 标识符白名单校验(表名/列名)
-    // │  Why  : 因为 write/createTable/insertBatch 要把用户传入的表名/列名拼接进
-    // │         DROP TABLE / CREATE TABLE / INSERT INTO,而标识符没有合法的"转义形式"
-    // │         (不像字符串字面量),所以用白名单校验防 SQL 注入 —— 比转义更安全、
-    // │         更简单,Java API 对入参有完全控制权。
-    // │  Who  : readTable / write / createTable / insertBatch 所有拼接标识符的入口
-    // │  When : 任何表名/列名进入 SQL 拼接前
+    // ┌─ What : 标识符「简单 ASCII 快路径」判定用正则(quoteTable/quoteIdentifier 的分路依据)
+    // │  Why  : 防注入手段是【按需引号包裹 + 双写转义】(见下方 quoteIdentifier 的 5W1H),
+    // │         不再是白名单拒绝 —— 白名单会把中文列名/表名一刀切拒绝(旧缺陷,已废止;
+    // │         死代码与过时注释若被后来者误接线会复活旧缺陷,依据 CWE-561/CWE-1116,
+    // │         故连同 assertSafe* 旧方法一并清除)。这两个正则只回答一个问题:标识符
+    //         是否为 [A-Za-z_][A-Za-z0-9_](表名额外允许 schema.table 点号)形态 ——
+    // │         是 → 不加引号原样放行(保留各库默认大小写折叠);否 → 走引号包裹分支。
+    // │  Who  : quoteTable(表名,含点号)/ quoteIdentifier(列名与单段表名)
     // │  Where: jian-io-sql/Sql.java
-    // │  How  : 关键变量变化:table(原始入参)→ 正则匹配 → 合法则原样放行 / 非法则抛 IAE。
-    // │         逻辑路线(两条路径):
-    // │           路径 A(匹配白名单)→ 返回,继续拼接 SQL;
-    // │           路径 B(null 或不匹配)→ 抛 IllegalArgumentException(带"非法表名/列名"提示)。
-    // │         数据走向:Java 入参(table/colName)→ assertSafe* → 拼接进 DROP/CREATE/INSERT 语句。
     private static final java.util.regex.Pattern TABLE_NAME_PATTERN =
             java.util.regex.Pattern.compile("[A-Za-z_][A-Za-z0-9_.]*");
     private static final java.util.regex.Pattern COLUMN_NAME_PATTERN =
             java.util.regex.Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
-
-    /**
-     * 表名白名单校验:只允许 [A-Za-z_][A-Za-z0-9_.]*(含 schema.table 的点号),
-     * 排除分号、引号、空格、-- 等所有 SQL 注入元字符。
-     * @param table String 表名,非 null
-     * @throws IllegalArgumentException 表名非法(含注入风险字符)
-     */
-    private static void assertSafeTableName(String table) {
-        if (table == null || !TABLE_NAME_PATTERN.matcher(table).matches()) {
-            throw new IllegalArgumentException("非法表名(只允许 [A-Za-z_][A-Za-z0-9_.]*): " + table);
-        }
-    }
-
-    /**
-     * 列名白名单校验:只允许 [A-Za-z_][A-Za-z0-9_]*,
-     * 排除分号、引号、空格、-- 等所有 SQL 注入元字符。
-     * @param col String 列名,非 null
-     * @throws IllegalArgumentException 列名非法(含注入风险字符)
-     */
-    private static void assertSafeColumnName(String col) {
-        if (col == null || COLUMN_NAME_PATTERN.matcher(col).matches()) return;
-        throw new IllegalArgumentException("非法列名(只允许 [A-Za-z_][A-Za-z0-9_]*,排除 ; ' -- 空格等注入元字符): " + col);
-    }
 
     // ┌─ What : 标识符按需以库引号符包裹(quoted identifier,SQL 标准)
     // │  Why  : 加引号与不加引号的语义不同 —— 不加引号的 AA_a 会被数据库按默认规则折叠
@@ -148,7 +121,7 @@ public final class Sql {
     // │  Who  : readTable / createTable / insertBatch / dropTableIfExists 所有标识符拼接点。
     // │  When : 标识符(表名/列名)进入 SQL 拼接前。
     // │  Where: jian-io-sql/Sql.java
-    // │  How  : 关键变量变化:id(原始名)→ 白名单匹配 → 命中则原样放行(路径①);
+    // │  How  : 关键变量变化:id(原始名)→ 简单 ASCII 形态匹配 → 命中则原样放行(路径①);
     // │         未命中 → 空值/控制字符校验 → q(库引号符,PG/H2/SQLite 为 ",MySQL 为 `)
     //         → q + id 内出现的 q 双写转义 + q(路径②)。
     // │         逻辑路线(四条路径):
@@ -177,7 +150,7 @@ public final class Sql {
         return q + id.replace(q, q + q) + q;   // 路径 D:引号双写转义,严格保真
     }
 
-    /** 表名包裹:简单表名(schema.table 点号整体匹配白名单)不加引号;否则逐段包裹后以点号连接。 */
+    /** 表名包裹:简单表名(schema.table 点号整体为简单 ASCII 形态)不加引号;否则逐段包裹后以点号连接。 */
     private static String quoteTable(Connection conn, String table) throws SQLException {
         if (table == null || table.isEmpty())
             throw new IllegalArgumentException("表名不能为空");
@@ -466,7 +439,7 @@ public final class Sql {
     // │         逻辑路线(两条路径):
     // │           路径 A(Oracle)→ 先 tableExists 探测,存在才执行 "DROP TABLE <t>"(无 IF EXISTS 后缀);
     // │           路径 B(其它库)→ 直接 "DROP TABLE IF EXISTS <t>"(表不存在也不报错)。
-    // │         数据走向:表名(已过 assertSafeTableName 白名单)→ Statement.execute → 数据库删表。
+    // │         数据走向:表名(经 quoteTable 按需加引号)→ Statement.execute → 数据库删表。
     private static void dropTableIfExists(Connection conn, String table) throws SQLException {
         boolean isOracle = false;
         try {

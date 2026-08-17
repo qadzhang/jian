@@ -243,10 +243,10 @@ class SqlTest {
     }
 
     /**
-     * 合法的 schema.table 应被生产白名单放行,注入式表名应被拒绝。
-     * 因为用本文件内的正则副本断言与生产 Sql.readTable 的白名单零耦合
-     * (白名单被删改时测试依旧全绿,是假守卫),所以走真链路验证:
-     * H2 建真实 SCHEMA.USERS 表 → readTable 放行且读回数据;注入表名 → 生产白名单抛 IAE。
+     * 合法的 schema.table(简单 ASCII)不加引号原样放行;注入式/带空格表名经生产
+     * Sql.readTable 的按需引号包裹成为字面量标识符 → 库报"表不存在"(SQLException),
+     * 注入挡在标识符层;控制字符表名仍硬拒绝(IAE)。走真链路验证(不用本地正则副本,
+     * 防守卫与实现脱钩)。
      */
     @Test
     void readTable_合法schema_表名放行() throws Exception {

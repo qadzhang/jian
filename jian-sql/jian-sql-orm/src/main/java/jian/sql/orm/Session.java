@@ -6,6 +6,7 @@ import jian.sql.expr.SqlBuilder;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
@@ -56,8 +57,10 @@ public final class Session<T> {
             throw new IllegalArgumentException("实体类 " + entityClass.getName() + " 缺少 @Table 注解");
         }
         // 因为 @Table/@Column 注解值会直接拼入 SELECT/INSERT/UPDATE/DELETE(标识符无参数化形式),
-        // 所以必须过白名单(与 Sql.java 同一套防线)
-        this.tableName = requireSafeTableName(t.value());
+        // 所以按需以库引号符包裹 + 双写转义(与 jian-io-sql Sql.quoteIdentifier 同族防线:
+        // 简单 ASCII 原样放行保留各库默认折叠,中文/特殊字符保真包裹,控制字符构造期即拒)
+        validateIdentifier(t.value(), "表名");
+        this.tableName = t.value();
         Field idF = null;
         List<FieldInfo> fs = new ArrayList<>();
         // 沿类层级收集字段(旧实现只扫本类 getDeclaredFields,
@@ -75,9 +78,10 @@ public final class Session<T> {
             Column colAnno = f.getAnnotation(Column.class);
             if (idAnno != null) {
                 idF = f;
-                fs.add(new FieldInfo(f, requireSafeColumnName(colAnno != null ? colAnno.value() : f.getName()), true));
+                { String cn = colAnno != null ? colAnno.value() : f.getName(); validateIdentifier(cn, "列名");
+                fs.add(new FieldInfo(f, cn, true)); }
             } else if (colAnno != null) {
-                fs.add(new FieldInfo(f, requireSafeColumnName(colAnno.value()), false));
+                { String cn = colAnno.value(); validateIdentifier(cn, "列名"); fs.add(new FieldInfo(f, cn, false)); }
             }
         }
         }
@@ -85,20 +89,58 @@ public final class Session<T> {
         this.fields = fs;
     }
 
-    /** 表名白名单(允许 schema.table 点号,对齐 Sql.java);违规抛 IAE。 */
-    private static String requireSafeTableName(String name) {
-        if (name == null || !name.matches("[A-Za-z_][A-Za-z0-9_.]*")) {
-            throw new IllegalArgumentException("非法表名(@Table 值,只允许 [A-Za-z_][A-Za-z0-9_.]*): " + name);
+    // ┌─ What : 标识符构造期校验(空值/控制字符 fail-fast)
+    // │  Why  : 引号包裹能化解注入元字符,但救不了空名与不可见控制字符;且应在构造期
+    // │         早于任何 SQL 拼接报错(与 jian-io-sql Sql.quoteIdentifier 路径 B 同口径)。
+    // │  How  : null/空串 → IAE;任一字符 <0x20 或 ==0x7F → IAE(带名字与"表名/列名"上下文)。
+    private static void validateIdentifier(String name, String what) {
+        if (name == null || name.isEmpty())
+            throw new IllegalArgumentException("非法" + what + "(@Table/@Column 值不能为空)");
+        for (int i = 0; i < name.length(); i++) {
+            char ch = name.charAt(i);
+            if (ch < 0x20 || ch == 0x7F)
+                throw new IllegalArgumentException("非法" + what + "(含控制字符): " + name);
         }
-        return name;
     }
 
-    /** 列名白名单(不含点号,对齐 Sql.java);违规抛 IAE。 */
-    private static String requireSafeColumnName(String name) {
-        if (name == null || !name.matches("[A-Za-z_][A-Za-z0-9_]*")) {
-            throw new IllegalArgumentException("非法列名(@Column 值,只允许 [A-Za-z_][A-Za-z0-9_]*): " + name);
+    /** 库引号符缓存(懒取一次并复用;PG/H2/SQLite 为 ",MySQL 为 `;空白=驱动不提供)。 */
+    private volatile String identQuote;
+
+    /** 取库引号符(经 engine 短连取元数据后缓存,避免每条 SQL 都开连接)。 */
+    private String quoteChar() throws SQLException {
+        String q = identQuote;
+        if (q == null) {
+            try (Connection c = engine.connect()) {
+                String meta = c.getMetaData().getIdentifierQuoteString();
+                q = (meta == null) ? "" : meta;
+            }
+            identQuote = q;
         }
-        return name;
+        return q;
+    }
+
+    // ┌─ What : 标识符按需以库引号符包裹(jian-io-sql Sql.quoteIdentifier 的同族实现)
+    // │  Why  : 简单 ASCII([A-Za-z_][A-Za-z0-9_]*,表名含 schema.table 点号)不加引号,
+    // │         保留各库默认大小写折叠(既有用法零破坏);中文/特殊字符以库引号符包裹 +
+    // │         引号双写转义,严格按输入保真("AA_a啊" 原样建表建列)—— ORM 与 io-sql
+    // │         行为一致(jOOQ/SQLAlchemy 等主流 ORM 同为按需引号化,官方文档明言引号
+    // │         同时是防标识符注入的手段)。控制字符已在构造期 validateIdentifier 拒绝。
+    // │  How  : 简单 ASCII 形态命中 → 原样返回;否则 q + name 内的 q 双写 + q;
+    // │         驱动不提供引号符且名字非简单 ASCII → IAE(该库无法安全写入该标识符)。
+    private String quoteIdentifier(String id) throws SQLException {
+        if (id.matches("[A-Za-z_][A-Za-z0-9_]*")) return id;
+        String q = quoteChar();
+        if (q.isEmpty())
+            throw new IllegalArgumentException("标识符含非简单字符但该数据库驱动不提供引号符,无法安全写入: " + id);
+        return q + id.replace(q, q + q) + q;
+    }
+
+    /** 表名引号化(schema.table 点号形态逐段包裹后以点号连接)。 */
+    private String quoteTable(String table) throws SQLException {
+        if (table.matches("[A-Za-z_][A-Za-z0-9_.]*")) return table;
+        int dot = table.indexOf('.');
+        if (dot <= 0 || dot == table.length() - 1) return quoteIdentifier(table);
+        return quoteIdentifier(table.substring(0, dot)) + "." + quoteTable(table.substring(dot + 1));
     }
 
     /**
@@ -112,7 +154,7 @@ public final class Session<T> {
         if (idField == null) throw new IllegalStateException("实体无 @Id 字段");
         try (Connection conn = engine.connect();
              PreparedStatement ps = conn.prepareStatement(
-                     "SELECT * FROM " + tableName + " WHERE " + idColumnName() + " = ?")) {
+                     "SELECT * FROM " + quoteTable(tableName) + " WHERE " + idColumnName() + " = ?")) {
             ps.setObject(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) return null;
@@ -125,7 +167,7 @@ public final class Session<T> {
     public List<T> list() throws Exception {
         try (Connection conn = engine.connect();
              Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery("SELECT * FROM " + tableName)) {
+             ResultSet rs = st.executeQuery("SELECT * FROM " + quoteTable(tableName))) {
             List<T> out = new ArrayList<>();
             while (rs.next()) out.add(mapRow(rs));
             return out;
@@ -157,13 +199,13 @@ public final class Session<T> {
             idVal = idField.get(entity);
         }
         boolean generatedKey = (idField != null && idVal == null);
-        StringBuilder sql = new StringBuilder("INSERT INTO ").append(tableName).append(" (");
+        StringBuilder sql = new StringBuilder("INSERT INTO ").append(quoteTable(tableName)).append(" (");
         StringBuilder ph = new StringBuilder();
         boolean first = true;
         for (FieldInfo fi : fields) {
             if (generatedKey && fi.isId) continue;   // 主键交给库生成,不进列清单
             if (!first) { sql.append(','); ph.append(','); }
-            sql.append(fi.columnName);
+            sql.append(quoteIdentifier(fi.columnName));
             ph.append('?');
             first = false;
         }
@@ -230,14 +272,14 @@ public final class Session<T> {
      */
     public int update(T entity) throws Exception {
         if (idField == null) throw new IllegalStateException("实体无 @Id 字段,无法 update");
-        StringBuilder sql = new StringBuilder("UPDATE ").append(tableName).append(" SET ");
+        StringBuilder sql = new StringBuilder("UPDATE ").append(quoteTable(tableName)).append(" SET ");
         // 因为主键同时进 SET 与 WHERE 语义错("SET id=?,name=? WHERE id=?",对齐 SQLAlchemy 只对非 PK 列 SET),
         // 所以 SET 子句跳过 @Id 主键
         boolean first = true;
         for (FieldInfo fi : fields) {
             if (fi.isId) continue;
             if (!first) sql.append(',');
-            sql.append(fi.columnName).append("=?");
+            sql.append(quoteIdentifier(fi.columnName)).append("=?");
             first = false;
         }
         sql.append(" WHERE ").append(idColumnName()).append("=?");
@@ -267,7 +309,7 @@ public final class Session<T> {
      */
     public int delete(T entity) throws Exception {
         if (idField == null) throw new IllegalStateException("实体无 @Id 字段,无法 delete");
-        String sql = "DELETE FROM " + tableName + " WHERE " + idColumnName() + " = ?";
+        String sql = "DELETE FROM " + quoteTable(tableName) + " WHERE " + idColumnName() + " = ?";
         engine.checkReadOnly(sql);   // 写 SQL 过只读防线
         try (Connection conn = engine.connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -370,9 +412,9 @@ public final class Session<T> {
         return v;
     }
 
-    private String idColumnName() {
-        for (FieldInfo fi : fields) if (fi.isId) return fi.columnName;
-        return idField.getName();
+    private String idColumnName() throws SQLException {
+        for (FieldInfo fi : fields) if (fi.isId) return quoteIdentifier(fi.columnName);
+        return quoteIdentifier(idField.getName());
     }
 
     /** 字段元数据。 */

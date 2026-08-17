@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 // │  Where: jian-facade/src/test/java/jian/scenario/SecurityAuditTest.java
 // │  How  : 覆盖面:
 // │           XSS:toHtml 对 <script> 五字符转义(存储型 XSS 防护,Web 报表场景)
-// │           标识符注入:表名/列名白名单拒绝(PreparedStatement 不支持标识符占位)
+// │           标识符注入:表名/列名按需引号转义保真(quoted identifier,中文/注入串收为字面量)
 // │           URL scheme:readUrl 拒绝 file://(SSRF/本地文件读取面收窄)
 // │           ThreadLocal:容器线程复用下引擎泄漏行为 + reset 恢复(行为锁,警示见 SqlEngines javadoc)
 // │           参数化:Jian.query 用户输入走 Params 占位(非拼接)
@@ -56,7 +56,7 @@ class SecurityAuditTest {
         java.nio.file.Files.deleteIfExists(html);
     }
 
-    // 标识符注入防护:表名/列名进入 DDL/SELECT 拼接前必须过白名单(H2 内存库实测)
+    // 标识符注入防护:表名/列名进入 DDL/SELECT 拼接前按库引号符包裹 + 双写转义(H2 内存库实测)
     @Test
     void SQL标识符注入被引号转义为字面量() throws Exception {
         try (Connection conn = DriverManager.getConnection("jdbc:h2:mem:sec_audit;DB_CLOSE_DELAY=-1", "sa", "")) {

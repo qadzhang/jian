@@ -4,12 +4,16 @@
 - **library**: jian-sql
 - **entryClass**: jian.sql.orm.Session
 - **deps**: jian-sql-engine(Engine 提供连接);JDBC API;反射读注解(纯 JDK)
-- **tests**: 19
+- **tests**: 22
 
 ## 摘要
 轻量 ORM,对齐规范 §2.3 / SQLAlchemy Session;用 `@Table`/`@Column`/`@Id` 注解映射实体到表,Session 提供 findById/list/insert/update/delete。
 
 ## 能力
+
+- 标识符与 jian-io-sql 同防线:@Table/@Column 值按需以库引号符包裹 + 双写转义 —— 简单 ASCII
+  原样放行(保留各库默认折叠),中文表名/列名(如 @Table("用户")/@Column("姓名"))严格保真;
+  注入式注解值被引号化为字面量标识符;空值/控制字符构造期即拒(IAE)
 - 注解:`@Table("name")` 标类对应表、`@Column("name")` 标字段对应列、`@Id` 标主键字段
 - Session:`findById(id)` 按 @Id 主键查单条;`list()` 查全表
 - Session:`insert(entity)` / `update(entity)` / `delete(entity)`,均用 PreparedStatement 参数化(防注入)

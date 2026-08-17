@@ -589,3 +589,4 @@ double[] ema = df.getSeries("price").ewm(0.3).mean();
 | 11 | DATETIME/DATE 构造与转换统一(`toDateTimeValue`/`toDateValue`) | `DataFrame.of` 显式时间 schema 接受跨类型元素:LocalDate→DATETIME 走 atStartOfDay、LocalDateTime→DATE 走 toLocalDate(原先强转 (String) 抛 CCE);与 astype 完全同口径 |
 | 12 | 构造数值列非法字符串报错统一(`toNumberChecked`) | INT/LONG/DOUBLE 构造对非法字符串抛带列名/行号/值的 IAE(原裸 NumberFormatException,与 astype 的教学型报错分裂) |
 | 13 | `astype INT` 对 BigInteger/BigDecimal 超 long 域 fail-fast | 超域抛 IAE(原裸 `intValue()` 静默回绕致数据损坏);long 域内超 int 的回绕**对齐 pandas/numpy 静默截断**(实测 5e9→705032704),不制造新差异 |
+| 14 | where/mask 填充值类型不符教学型报错(外部 AI 复审)| `toColumnByDtype` 的 DOUBLE/LONG/INT/BOOL 四分支:非 Number/Boolean 的填充值从裸 NFE/CCE 改为带列名/行号/值的 IAE(对齐 DataFrameConvert 口径与 Effective Java Item 75);DOUBLE 的可解析数值串行为保留 |

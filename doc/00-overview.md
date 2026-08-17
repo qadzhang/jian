@@ -336,14 +336,14 @@
 
 > 本节是项目实际实现进度的"看板",与上面需求稿并列。详细实现说明见各分册末尾「实现说明」章节。
 
-### 已实现模块(全测试通过,实测 **@Test 1244**,全量 0 失败,见 [api-counts.md](api-counts.md))
+### 已实现模块(全测试通过,实测 **@Test 1246**,全量 0 失败,见 [api-counts.md](api-counts.md))
 
-> **测试口径说明**:**全仓 @Test 方法数实测 1244**(jian 1104 + jian-num 70 + jian-sql 70;含外部 AI 协作复审新增回归 +52、pandas 对照 +7、真实场景第二轮抽象扩充 +30、多行 SELECT 聚合回归 +1、中文标识符保真 +2)。其中 14 个 PG 集成测试经 `-Dtest.pg=true` 激活,默认 skip(不算 fail)。数字以 api-counts.md 为准。
+> **测试口径说明**:**全仓 @Test 方法数实测 1246**(jian 1105 + jian-num 70 + jian-sql 71;含外部 AI 协作复审新增回归 +52、pandas 对照 +7、真实场景第二轮抽象扩充 +30、多行 SELECT 聚合回归 +1、中文标识符保真 +2、AI 复审教学型报错与 ORM 中文实体 +2)。其中 14 个 PG 集成测试经 `-Dtest.pg=true` 激活,默认 skip(不算 fail)。数字以 api-counts.md 为准。
 
 | 模块 | 测试数 | 状态 |
 |---|---|---|
 | `jian-num` | 59 | ✅ 多 dtype Ndarray + Stats + StrOps + Matrix + Random + LinearFit |
-| `jian-core` | 571(见 [api-counts.md](api-counts.md),含 AI 复审回归 AuditRegressionTest) | ✅ DataFrame 完整(9 dtype 列 / query(含 in/not in)/ groupby / merge / pivot / melt / sort / 缺失 / 统计(经 StatsProvider SPI)/ eval / sql)+ 60+ 扩展方法(idxmax/sample/isin/where/mask/pivot/explode/join/merge_asof/corr/cov/skew/kurt/cumsum/diff/quantile/rank/clip/interpolate/astype 8种/Resampler/DatetimeIndex/Frequency/MultiIndex N级 等)+ 蜕变/差分/PBT/性能/边界等各类专项测试(数字为方法数,见 api-counts.md) |
+| `jian-core` | 572(见 [api-counts.md](api-counts.md),含 AI 复审回归 AuditRegressionTest) | ✅ DataFrame 完整(9 dtype 列 / query(含 in/not in)/ groupby / merge / pivot / melt / sort / 缺失 / 统计(经 StatsProvider SPI)/ eval / sql)+ 60+ 扩展方法(idxmax/sample/isin/where/mask/pivot/explode/join/merge_asof/corr/cov/skew/kurt/cumsum/diff/quantile/rank/clip/interpolate/astype 8种/Resampler/DatetimeIndex/Frequency/MultiIndex N级 等)+ 蜕变/差分/PBT/性能/边界等各类专项测试(数字为方法数,见 api-counts.md) |
 | `jian-num-bridge` | 11 | ✅ StatsProvider SPI(经 ServiceLoader 升级 jian-num 精确统计)|
 | `jian-io-csv` | 48 | ✅ CSV/TSV/FWF + 公式注入防护(默认开,OWASP 严格版含前导空白) |
 | `jian-io-json` | 28 | ✅ JSON 5 orient + json_normalize 拍平 |
@@ -361,10 +361,10 @@
 | `jian-dsl` | 156(含 PrattLiteralOverflowTest + 多行SELECT聚合回归) | ✅ L1/L2 Pratt(含 nvl/coalesce/ifnull)+ L3 SQL(可插拔引擎接口 SqlEngineInterface/SqlEngines;默认 SqlRegexEngine 支持 DISTINCT/LIMIT OFFSET/GROUP/HAVING/ORDER/JOIN/UNION ALL/子查询≤2 层;支持 CTE/CASE WHEN/派生表/集合运算(UNION/INTERSECT/EXCEPT)/USING 预处理;算术表达式列真实求值(委托 PrattEngine.eval);DML 的 WHERE/SELECT 异常显式抛出、不静默吞)|
 | `jian-sql-engine` | 28 | ✅ Engine + DbType(7 库)+ HikariCP + dsl()/sql() 入口 + 只读拦截防注释绕过 |
 | `jian-sql-expr` | 9 | ✅ SqlBuilder(jOOQ 3.21.6 运行时)|
-| `jian-sql-orm` | 21 | ✅ @Table/@Column/@Id + Session CRUD |
+| `jian-sql-orm` | 22 | ✅ @Table/@Column/@Id + Session CRUD;标识符与 jian-io-sql 同防线(按需引号包裹,中文表名列名保真,H2 真测) |
 | `jian-sql-bridge` | 12 | ✅ ResultSet/jOOQ Result → DataFrame |
 | `jian-facade` | 93 | ✅ 顶层 Jian 门面(read/write 按扩展名自动分发 + pandas 风格 read*/to* 全套 + L3 SQL 入口;含真实场景集 46 个:S1~S16 第一轮 + S17~S46 第二轮抽象场景 30 类,断言源码随 jar 分发)|
-| **合计 Java** | **1244** | **22 模块**(jian 1104 + jian-num 70 + jian-sql 70;Python 124 全过(pandas 对照 d1-d80 + Hypothesis PBT + fuzz 16)另计;数字以 [api-counts.md](api-counts.md) 为准,只链接不抄写) |
+| **合计 Java** | **1246** | **22 模块**(jian 1105 + jian-num 70 + jian-sql 71;Python 124 全过(pandas 对照 d1-d80 + Hypothesis PBT + fuzz 16)另计;数字以 [api-counts.md](api-counts.md) 为准,只链接不抄写) |
 
 ### 工程基线
 
@@ -800,7 +800,7 @@ META-INF/ai/
 > **本节是场景集的 md 事实来源**;jar 内 `META-INF/ai/scenarios.md` 是面向 AI 消费者的速查副本(随 jian-facade 分发),
 > 完整可执行断言源码在 `META-INF/ai/scenarios-src/`(13 个 JUnit 文件,`mvn test` 每次验证下表预期值)。
 >
-> **双实现红线(2026-08-17 起)**:每个场景必须同时给出 **链式版(pandas 风格)** 与 **SQL 版(Jian.sql 一条语句)** 两份实现,
+> **双实现红线**:每个场景必须同时给出 **链式版(pandas 风格)** 与 **SQL 版(Jian.sql 一条语句)** 两份实现,
 > 并做**差分断言**(两版结果逐行相等,任一侧回归都会被另一方抓住)。SQL 版覆盖场景的数据加工部分
 > (过滤/分组/聚合/连接/排序/TopN/透视=条件列+GROUP BY);导出样式(Styler/多 sheet/文件落盘)与窗口类
 > (rolling/resample 桶边界)属链式侧能力,SQL 版以"全局聚合交叉验证"等价锁定(如 S37:总和 − 窗外前值 == 末位窗口和)。

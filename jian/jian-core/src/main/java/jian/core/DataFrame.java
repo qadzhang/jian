@@ -1691,8 +1691,9 @@ public final class DataFrame {
      * 重命名列(对齐 pandas df.rename(columns=dict))。
      * <p>数据走向:映射表逐列查名 → 命中的列经 {@link Column#rename} 产新实例(不可变优先),
      * 未命中的列原实例复用 → rebuild 重建(列数据零拷贝,仅换名)。
-     * <p>设计说明:jian-io-sql 的列名白名单(ASCII)拒绝中文列名时,报错指引调用本方法
-     * 改成 ASCII 名后再写库。
+     * <p>设计说明:jian-io-sql 与 jian-sql-orm 已支持中文列名/表名按需引号保真写库
+     * (见 Sql.quoteIdentifier/Session.quoteIdentifier),改名不再是为写库而必须的步骤;
+     * 本方法回归纯粹的业务改名用途(对齐 pandas rename)。
      * @param mapping Map&lt;String,String&gt; 旧列名 → 新列名;非 null;新名须非 null;
      *                只改映射中出现的列,其余保持原名
      * @return DataFrame 全部列按映射改名后的新实例

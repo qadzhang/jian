@@ -267,7 +267,7 @@ AI 生成代码有个核心难题叫 **oracle problem(预言机难题)**:很难�
 | `SqlPostgresTest`(PostgreSQL 18) | 14 | 真实 PG | 全 dtype 往返 / 参数化 / 4 种写入模式 / 缺失值 / **VARCHAR 自适应** / **大文本不截断** / **PG 小写列名** / 万行 / SQL 注入防护 |
 | 其它既有测试 | ~157 | 单元 | 模块正常功能(dsl/export/io/num/sql/viz/facade 各子模块) |
 | **合计 jian-core** | **571**(见 [doc/api-counts.md](doc/api-counts.md)) | | 60+ 扩展 DataFrame 方法(idxmax/sample/isin/where/mask/pivot/explode/join/merge_asof/corr/cov/skew/kurt/cumsum/diff/quantile/rank/clip/interpolate/astype 8种/Resampler/DatetimeIndex/Frequency/MultiIndex N级 等) |
-| **合计 Java 全量(22 模块)** | **1244**(@Test 方法数;含 jian-facade 真实场景集 46 个:S1~S16 第一轮 + S17~S46 第二轮抽象场景 30 类,断言源码随 jar 分发) | 22 模块 | 实测 @Test 数,两口径以 @Test 方法数为准(见 doc/api-counts.md);另有 jqwik @Property 展开 + PG skip 14 |
+| **合计 Java 全量(22 模块)** | **1246**(@Test 方法数;含 jian-facade 真实场景集 46 个:S1~S16 第一轮 + S17~S46 第二轮抽象场景 30 类,断言源码随 jar 分发) | 22 模块 | 实测 @Test 数,两口径以 @Test 方法数为准(见 doc/api-counts.md);另有 jqwik @Property 展开 + PG skip 14 |
 | **合计 jian-io-sql** | **47** | H2+SQLite+PG | 3 库真测(H2/SQLite 默认跑;PG `-Dtest.pg=true` 激活,含 SQL 注入防护 + 中文标识符引号保真) |
 | **合计 jian-export** | **36** | | 含缺失值显示(空 vs "NaN")验证 |
 | **合计 Python 端** | **124** | Hypothesis+pandas | 24(PBT 同行评议) + 80(pandas 对照 d1-d80) + 16(fuzz) + 4(robustness),`pytest tests-pbt -q` |

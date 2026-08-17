@@ -604,7 +604,7 @@ pandas 把 NaN 和 null 在数值列里等价处理(NaN 表示缺失,null 也变
 | 形态 | 主要威胁面 | jian 的防护(测试锁定) |
 |---|---|---|
 | **本地 jar**(java -cp 单文件/脚本) | 公式注入(CSV/Excel 打开即执行)、XXE/zip bomb、慢 URL 挂起 | `= + - @` 前缀转义(§3.7.3,CsvEdgeCase/ExcelEdgeCase 实测);Jackson 默认配置无外部实体;POI 自带 zip bomb 检测;readUrl 10s 超时 + 8MB 上限 + 仅 http/https |
-| **Tomcat / Spring Boot** | 存储型 XSS(报表 toHtml)、SQL 注入(标识符/值)、SSRF(readUrl)、ThreadLocal 跨请求泄漏、redeploy 类卸载受阻 | toHtml 五字符转义;表名/列名白名单(标识符无合法转义形式,白名单是唯一安全解);值参数化 `Jian.query(df, expr, Params)`(占位字面量化 + '' 翻倍);`Engine.checkReadOnly` 拦写;SqlEngines 警示;ServiceLoader 不缓存 |
+| **Tomcat / Spring Boot** | 存储型 XSS(报表 toHtml)、SQL 注入(标识符/值)、SSRF(readUrl)、ThreadLocal 跨请求泄漏、redeploy 类卸载受阻 | toHtml 五字符转义;标识符按需引号包裹+双写转义(jian-io-sql/ORM 的 JDBC 路径,简单 ASCII 原样放行、中文保真,注入元字符被引号化为字面量,控制字符硬拒);值参数化 `Jian.query(df, expr, Params)`(占位字面量化 + '' 翻倍);`Engine.checkReadOnly` 拦写;SqlEngines 警示;ServiceLoader 不缓存 |
 | 通用(SCA) | 依赖 CVE | hadoop-common 3.3.6(columnar 附加 jar,本地 IO 子集使用、无网络面,风险缓解;升级随 orc/parquet 兼容矩阵);jackson/POI/jsoup/HikariCP 均为较新稳定版 |
 
 > 用户可控值**一律** `Jian.query(df, "列 == ${名}", Params.of(...))` 参数化,禁止拼进表达式/SQL(场景示例见 `META-INF/ai/scenarios.md` 安全写法节)。

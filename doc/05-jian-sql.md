@@ -269,3 +269,4 @@ DataFrame df = engine.dsl()
 | 3 | jian-sql-engine | checkReadOnly 反引号 `` 双写转义 | MySQL `` 双反引号不再提前闭合配对(原可借此把 DROP 误剥成标识符内容绕过只读拦截);字符串剥除维持 ANSI/PG 语义并文档化 fail-closed 取舍 |
 | 4 | jian-sql-bridge | Types.OTHER/JAVA_OBJECT → OBJECT | 厂商扩展类型保原对象(原静默 toString 成 STRING) |
 | 5 | jian-sql-bridge + jian-io-sql | Clob 读取失败与 Blob 对称返 null | 两处同根因实现同步修复(原 Clob 失败返回 clob.toString() 非缺失垃圾串,Blob 失败返 null,同一读取失败两种语义) |
+| 6 | jian-sql-orm | Session 标识符按需引号化(外部 AI 复审) | @Table/@Column 值由白名单硬拒(中文即 IAE)改为与 jian-io-sql 同防线:简单 ASCII 原样放行,中文/特殊字符按库引号符包裹 + 双写转义保真(jOOQ/SQLAlchemy 同为按需引号化);控制字符构造期即拒;注入式注解值成为字面量标识符;中文实体 CRUD 全链 H2 真测 |
